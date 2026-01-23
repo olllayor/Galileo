@@ -1074,6 +1074,90 @@ export const App: React.FC = () => {
   }, [document, currentPath, isDirty]);
 
   useEffect(() => {
+    const handlePaste = (event: ClipboardEvent) => {
+      const clipboardData = event.clipboardData;
+      if (!clipboardData) return;
+      if (isEditableTarget(event.target)) return;
+
+      const files = Array.from(clipboardData.files || []);
+      const imageFiles = files.filter(file => file.type.startsWith('image/') || isLikelyImageName(file.name));
+
+      if (imageFiles.length > 0) {
+        event.preventDefault();
+        void (async () => {
+          try {
+            for (let i = 0; i < imageFiles.length; i += 1) {
+              const file = imageFiles[i];
+              const dataUrl = await readFileAsDataUrl(file);
+              const mime = file.type || getMimeType(file.name);
+              await insertImageNode({
+                src: dataUrl,
+                mime,
+                name: file.name,
+                index: i,
+              });
+            }
+          } catch (error) {
+            console.error('Paste image error:', error);
+          }
+        })();
+        return;
+      }
+
+      const items = Array.from(clipboardData.items || []);
+      const imageItem = items.find(item => item.type.startsWith('image/'));
+      if (imageItem) {
+        const file = imageItem.getAsFile();
+        if (file) {
+          event.preventDefault();
+          void (async () => {
+            try {
+              const dataUrl = await readFileAsDataUrl(file);
+              await insertImageNode({
+                src: dataUrl,
+                mime: file.type || getMimeType(file.name),
+                name: file.name,
+              });
+            } catch (error) {
+              console.error('Paste image error:', error);
+            }
+          })();
+        }
+        return;
+      }
+
+      const paths = extractFilePaths(clipboardData);
+      if (paths.length > 0) {
+        event.preventDefault();
+        void (async () => {
+          try {
+            for (let i = 0; i < paths.length; i += 1) {
+              const path = paths[i];
+              if (!isLikelyImageName(path)) continue;
+              const base64 = await invoke<string>('load_binary', { path });
+              const mime = getMimeType(path);
+              const dataUrl = `data:${mime};base64,${base64}`;
+              const name = path.split(/[/\\\\]/).pop();
+              await insertImageNode({
+                src: dataUrl,
+                mime,
+                name,
+                originalPath: path,
+                index: i,
+              });
+            }
+          } catch (error) {
+            console.error('Paste image error:', error);
+          }
+        })();
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [insertImageNode]);
+
+  useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (!isDirty) return;
       event.preventDefault();

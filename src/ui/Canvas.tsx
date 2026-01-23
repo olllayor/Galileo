@@ -45,6 +45,9 @@ export const Canvas: React.FC<CanvasProps> = ({
   onMouseUp,
   onWheel,
 }) => {
+  const checkerSize = 16;
+  const checkerColor = '#e1e1e1';
+  const baseColor = '#f7f7f7';
   const drawCommands = useMemo(() => {
     return buildDrawList(document);
   }, [document]);
@@ -93,7 +96,16 @@ export const Canvas: React.FC<CanvasProps> = ({
   };
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', backgroundColor: '#f0f0f0' }}>
+    <div style={{
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      height: '100%',
+      backgroundColor: baseColor,
+      backgroundImage: `linear-gradient(90deg, ${checkerColor} 50%, transparent 50%), linear-gradient(${checkerColor} 50%, transparent 50%)`,
+      backgroundSize: `${checkerSize}px ${checkerSize}px`,
+      backgroundPosition: `0 0, ${checkerSize / 2}px ${checkerSize / 2}px`,
+    }}>
       <div style={{ position: 'relative', width, height, overflow: 'hidden' }}>
         <canvas
           ref={canvasRef}
@@ -106,7 +118,6 @@ export const Canvas: React.FC<CanvasProps> = ({
           onWheel={handleWheel}
           onContextMenu={handleContextMenu}
           style={{
-            backgroundColor: 'white',
             cursor: cursor || 'default',
             boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
           }}
