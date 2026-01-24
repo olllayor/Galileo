@@ -115,7 +115,6 @@ export const createDocument = (): Document => ({
       position: { x: 0, y: 0 },
       size: { width: 1280, height: 800 },
       children: [],
-      fill: { type: 'solid', value: '#ffffff' },
       visible: true,
     },
   },

@@ -1158,6 +1158,47 @@ export const App: React.FC = () => {
   }, [insertImageNode]);
 
   useEffect(() => {
+    const handleDragOver = (event: DragEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const handleDrop = (event: DragEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const files = event.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+
+      void (async () => {
+        try {
+          for (let i = 0; i < files.length; i += 1) {
+            const file = files[i];
+            if (!file.type.startsWith('image/')) continue;
+
+            const dataUrl = await readFileAsDataUrl(file);
+            await insertImageNode({
+              src: dataUrl,
+              mime: file.type || getMimeType(file.name),
+              name: file.name,
+              index: i,
+            });
+          }
+        } catch (error) {
+          console.error('Drop image error:', error);
+        }
+      })();
+    };
+
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('drop', handleDrop);
+    return () => {
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('drop', handleDrop);
+    };
+  }, [insertImageNode]);
+
+  useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (!isDirty) return;
       event.preventDefault();

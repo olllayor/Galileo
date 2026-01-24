@@ -1,4 +1,5 @@
 import React from 'react';
+import { Cursor, Square, TextAlignLeft, ArrowCounterClockwise, ArrowClockwise, Save, Folder, Image } from 'akar-icons';
 
 interface ToolbarProps {
   activeTool: 'select' | 'rectangle' | 'text';
@@ -24,9 +25,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onImport,
 }) => {
   const tools = [
-    { id: 'select' as const, label: 'Select (V)', icon: '↖' },
-    { id: 'rectangle' as const, label: 'Rectangle (R)', icon: '▭' },
-    { id: 'text' as const, label: 'Text (T)', icon: 'T' },
+    { id: 'select' as const, label: 'Select (V)', icon: <Cursor strokeWidth={2} size={20} /> },
+    { id: 'rectangle' as const, label: 'Rectangle (R)', icon: <Square strokeWidth={2} size={20} /> },
+    { id: 'text' as const, label: 'Text (T)', icon: <TextAlignLeft strokeWidth={2} size={20} /> },
   ];
 
   return (
@@ -87,7 +88,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         }}
         title="Undo (Ctrl+Z)"
       >
-        ↺
+        <ArrowCounterClockwise strokeWidth={2} size={20} />
       </button>
 
       <button
@@ -110,7 +111,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         }}
         title="Redo (Ctrl+Shift+Z)"
       >
-        ↻
+        <ArrowClockwise strokeWidth={2} size={20} />
       </button>
 
       <div style={{ height: '1px', backgroundColor: '#444', margin: '8px 0' }} />
@@ -134,7 +135,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         }}
         title="Save (Ctrl+S)"
       >
-        💾
+        <Save strokeWidth={2} size={20} />
       </button>
 
       <button
@@ -156,7 +157,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         }}
         title="Load (Ctrl+O)"
       >
-        📂
+        <Folder strokeWidth={2} size={20} />
       </button>
 
       <button
@@ -178,7 +179,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         }}
         title="Import (Ctrl+I)"
       >
-        🖼️
+        <Image strokeWidth={2} size={20} />
       </button>
     </div>
   );

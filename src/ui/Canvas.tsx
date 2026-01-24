@@ -45,7 +45,7 @@ export const Canvas: React.FC<CanvasProps> = ({
   onMouseUp,
   onWheel,
 }) => {
-  const checkerSize = 16;
+  const checkerSize = 10;
   const checkerColor = '#e1e1e1';
   const baseColor = '#f7f7f7';
   const drawCommands = useMemo(() => {
@@ -95,6 +95,9 @@ export const Canvas: React.FC<CanvasProps> = ({
     event.preventDefault();
   };
 
+  const bgPosX = (view.pan.x % checkerSize) + checkerSize / 2;
+  const bgPosY = (view.pan.y % checkerSize) + checkerSize / 2;
+
   return (
     <div style={{
       display: 'flex',
@@ -104,7 +107,7 @@ export const Canvas: React.FC<CanvasProps> = ({
       backgroundColor: baseColor,
       backgroundImage: `linear-gradient(90deg, ${checkerColor} 50%, transparent 50%), linear-gradient(${checkerColor} 50%, transparent 50%)`,
       backgroundSize: `${checkerSize}px ${checkerSize}px`,
-      backgroundPosition: `0 0, ${checkerSize / 2}px ${checkerSize / 2}px`,
+      backgroundPosition: `${bgPosX}px ${bgPosY}px, ${bgPosX - checkerSize / 2}px ${bgPosY - checkerSize / 2}px`,
     }}>
       <div style={{ position: 'relative', width, height, overflow: 'hidden' }}>
         <canvas
