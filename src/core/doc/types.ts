@@ -92,6 +92,7 @@ export const nodeSchema = z.object({
 
   locked: z.boolean().optional(),
   visible: z.boolean().optional(),
+  aspectRatioLocked: z.boolean().optional(),
 });
 
 export type Node = z.infer<typeof nodeSchema>;

@@ -1,4 +1,5 @@
 import React from 'react';
+import { LockOn, LockOff } from 'akar-icons';
 import type { Document, Layout, Node } from '../core/doc/types';
 import { findParentNode } from '../core/doc';
 
@@ -54,6 +55,26 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   ) => {
     const current = selectedNode[parent];
     if (!current || Number.isNaN(value)) return;
+
+    // Handle aspect ratio lock for size changes
+    if (parent === 'size' && selectedNode.aspectRatioLocked) {
+      const currentSize = selectedNode.size;
+      const aspectRatio = currentSize.width / currentSize.height;
+      
+      if (field === 'width') {
+        const newHeight = value / aspectRatio;
+        onUpdateNode(selectedNode.id, {
+          size: { width: value, height: Math.max(1, Math.round(newHeight)) },
+        });
+        return;
+      } else if (field === 'height') {
+        const newWidth = value * aspectRatio;
+        onUpdateNode(selectedNode.id, {
+          size: { width: Math.max(1, Math.round(newWidth)), height: value },
+        });
+        return;
+      }
+    }
 
     onUpdateNode(selectedNode.id, {
       [parent]: { ...current, [field]: value },
@@ -308,7 +329,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
       <div style={{ marginBottom: '16px' }}>
         <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#444' }}>Layout</h4>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '8px', marginBottom: '8px', alignItems: 'end' }}>
           <div>
             <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
               Width
@@ -326,6 +347,34 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               }}
             />
           </div>
+          {selectedNode.type === 'image' && (
+            <button
+              type="button"
+              onClick={() => handleInputChange('aspectRatioLocked', !selectedNode.aspectRatioLocked)}
+              title={selectedNode.aspectRatioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
+              style={{
+                padding: '6px 8px',
+                backgroundColor: selectedNode.aspectRatioLocked ? '#007bff' : 'transparent',
+                color: selectedNode.aspectRatioLocked ? '#fff' : '#666',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+                fontSize: '14px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '32px',
+                height: '32px',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              {selectedNode.aspectRatioLocked ? (
+                <LockOn size={16} strokeWidth={2} />
+              ) : (
+                <LockOff size={16} strokeWidth={2} />
+              )}
+            </button>
+          )}
           <div>
             <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
               Height

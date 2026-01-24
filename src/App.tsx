@@ -57,6 +57,7 @@ type DragState =
     startBounds: { x: number; y: number; width: number; height: number };
     initialPosition: { x: number; y: number };
     initialSize: { width: number; height: number };
+    lockAspectRatio: boolean;
   }
   | {
     mode: 'marquee';
@@ -106,42 +107,122 @@ const computeResizeBounds = (
   handle: ResizeHandle,
   deltaX: number,
   deltaY: number,
-  minSize = 1
+  minSize = 1,
+  lockAspectRatio = false
 ): { x: number; y: number; width: number; height: number } => {
   let { x, y, width, height } = startBounds;
+  const startAspectRatio = startBounds.width / startBounds.height;
 
-  if (handle.includes('w')) {
-    const nextX = x + deltaX;
-    const nextWidth = width - deltaX;
-    if (nextWidth >= minSize) {
-      x = nextX;
-      width = nextWidth;
+  if (lockAspectRatio) {
+    // For corner handles, use the dominant delta direction
+    if (handle === 'nw' || handle === 'ne' || handle === 'sw' || handle === 'se') {
+      // Determine which delta is larger to decide the dominant direction
+      const absX = Math.abs(deltaX);
+      const absY = Math.abs(deltaY);
+      
+      let newWidth = width;
+      let newHeight = height;
+      
+      if (absX > absY) {
+        // Width is dominant
+        if (handle.includes('w')) {
+          newWidth = width - deltaX;
+        } else {
+          newWidth = width + deltaX;
+        }
+        newHeight = newWidth / startAspectRatio;
+      } else {
+        // Height is dominant
+        if (handle.includes('n')) {
+          newHeight = height - deltaY;
+        } else {
+          newHeight = height + deltaY;
+        }
+        newWidth = newHeight * startAspectRatio;
+      }
+      
+      // Ensure minimum size
+      if (newWidth < minSize || newHeight < minSize) {
+        if (newWidth < minSize) {
+          newWidth = minSize;
+          newHeight = newWidth / startAspectRatio;
+        } else {
+          newHeight = minSize;
+          newWidth = newHeight * startAspectRatio;
+        }
+      }
+      
+      // Update position based on handle
+      if (handle.includes('w')) {
+        x = x + (width - newWidth);
+      }
+      if (handle.includes('n')) {
+        y = y + (height - newHeight);
+      }
+      
+      width = newWidth;
+      height = newHeight;
     } else {
-      x = x + (width - minSize);
-      width = minSize;
+      // For edge handles, maintain aspect ratio based on that edge
+      if (handle === 'e' || handle === 'w') {
+        const newWidth = handle === 'w' ? width - deltaX : width + deltaX;
+        const newHeight = newWidth / startAspectRatio;
+        
+        if (newWidth >= minSize && newHeight >= minSize) {
+          if (handle === 'w') {
+            x = x + (width - newWidth);
+          }
+          width = newWidth;
+          height = newHeight;
+        }
+      } else if (handle === 'n' || handle === 's') {
+        const newHeight = handle === 'n' ? height - deltaY : height + deltaY;
+        const newWidth = newHeight * startAspectRatio;
+        
+        if (newWidth >= minSize && newHeight >= minSize) {
+          if (handle === 'n') {
+            y = y + (height - newHeight);
+          }
+          width = newWidth;
+          height = newHeight;
+        }
+      }
     }
-  }
-
-  if (handle.includes('e')) {
-    const nextWidth = width + deltaX;
-    width = Math.max(minSize, nextWidth);
-  }
-
-  if (handle.includes('n')) {
-    const nextY = y + deltaY;
-    const nextHeight = height - deltaY;
-    if (nextHeight >= minSize) {
-      y = nextY;
-      height = nextHeight;
-    } else {
-      y = y + (height - minSize);
-      height = minSize;
+  } else {
+    // Original free-form resize logic
+    if (handle.includes('w')) {
+      const nextX = x + deltaX;
+      const nextWidth = width - deltaX;
+      if (nextWidth >= minSize) {
+        x = nextX;
+        width = nextWidth;
+      } else {
+        x = x + (width - minSize);
+        width = minSize;
+      }
     }
-  }
 
-  if (handle.includes('s')) {
-    const nextHeight = height + deltaY;
-    height = Math.max(minSize, nextHeight);
+    if (handle.includes('e')) {
+      const nextWidth = width + deltaX;
+      width = Math.max(minSize, nextWidth);
+    }
+
+    if (handle.includes('n')) {
+      const nextY = y + deltaY;
+      const nextHeight = height - deltaY;
+      if (nextHeight >= minSize) {
+        y = nextY;
+        height = nextHeight;
+      } else {
+        y = y + (height - minSize);
+        height = minSize;
+      }
+    }
+
+    if (handle.includes('s')) {
+      const nextHeight = height + deltaY;
+      height = Math.max(minSize, nextHeight);
+    }
   }
 
   return { x, y, width, height };
@@ -415,6 +496,7 @@ export const App: React.FC = () => {
             originalPath,
           },
           visible: true,
+          aspectRatioLocked: true,
         },
       },
     } as Command);
@@ -465,6 +547,7 @@ export const App: React.FC = () => {
             startBounds,
             initialPosition: { ...node.position },
             initialSize: { ...node.size },
+            lockAspectRatio: Boolean(node.aspectRatioLocked || info.shiftKey),
           });
           setPreviewDocument(document);
           return true;
@@ -716,7 +799,14 @@ export const App: React.FC = () => {
     if (dragState?.mode === 'resize') {
       const deltaX = worldX - dragState.startWorld.x;
       const deltaY = worldY - dragState.startWorld.y;
-      const rawBounds = computeResizeBounds(dragState.startBounds, dragState.handle, deltaX, deltaY);
+      const rawBounds = computeResizeBounds(
+        dragState.startBounds,
+        dragState.handle,
+        deltaX,
+        deltaY,
+        1,
+        dragState.lockAspectRatio
+      );
       const snapTargets = buildSiblingSnapTargets(
         dragState.baseDoc,
         dragState.nodeId,
@@ -823,7 +913,14 @@ export const App: React.FC = () => {
     if (dragState.mode === 'resize') {
       const deltaX = info.worldX - dragState.startWorld.x;
       const deltaY = info.worldY - dragState.startWorld.y;
-      const rawBounds = computeResizeBounds(dragState.startBounds, dragState.handle, deltaX, deltaY);
+      const rawBounds = computeResizeBounds(
+        dragState.startBounds,
+        dragState.handle,
+        deltaX,
+        deltaY,
+        1,
+        dragState.lockAspectRatio
+      );
       const snapTargets = buildSiblingSnapTargets(
         dragState.baseDoc,
         dragState.nodeId,
