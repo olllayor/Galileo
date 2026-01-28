@@ -1,5 +1,15 @@
 import React from 'react';
-import { LockOn, LockOff } from 'akar-icons';
+import { 
+  LockOn, 
+  LockOff,
+  AlignLeft,
+  AlignHorizontalCenter,
+  AlignRight,
+  AlignTop,
+  AlignVerticalCenter,
+  AlignBottom,
+  ArrowClockwise
+} from 'akar-icons';
 import type { Document, Layout, Node } from '../core/doc/types';
 import { findParentNode } from '../core/doc';
 
@@ -140,7 +150,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
   const defaultFill = selectedNode.type === 'text' ? '#000000' : '#888888';
   const effectiveOpacity = selectedNode.opacity ?? 1;
-  const rotationValue = 0;
+  const rotationValue = selectedNode.rotation ?? 0;
   const layout = selectedNode.layout;
 
   return (
@@ -151,192 +161,151 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       borderLeft: '1px solid #ddd',
       overflowY: 'auto',
     }}>
-      <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: '600' }}>
-        Properties
-      </h3>
 
-      <div style={{ marginBottom: '16px' }}>
-        <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>
-          ID
-        </label>
-        <input
-          type="text"
-          value={selectedNode.id}
-          disabled
-          style={{
-            width: '100%',
-            padding: '6px',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            fontSize: '12px',
-            backgroundColor: '#e9e9e9',
-          }}
-        />
-      </div>
-
-      <div style={{ marginBottom: '16px' }}>
-        <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>
-          Type
-        </label>
-        <input
-          type="text"
-          value={selectedNode.type}
-          disabled
-          style={{
-            width: '100%',
-            padding: '6px',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            fontSize: '12px',
-            backgroundColor: '#e9e9e9',
-          }}
-        />
-      </div>
-
-      {selectedNode.name !== undefined && (
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>
-            Name
-          </label>
-          <input
-            type="text"
-            value={selectedNode.name || ''}
-            onChange={(e) => handleInputChange('name', e.target.value)}
-            style={{
-              width: '100%',
-              padding: '6px',
-              border: '1px solid #ddd',
-              borderRadius: '4px',
-              fontSize: '12px',
-            }}
-          />
-        </div>
-      )}
-
-      <div style={{ marginBottom: '16px' }}>
-        <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#444' }}>Position</h4>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-          <div>
-            <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
-              X
-            </label>
-            <input
-              type="number"
-              value={selectedNode.position.x}
-              onChange={(e) => handleNestedInputChange('position', 'x', Number(e.target.value))}
-              style={{
-                width: '100%',
-                padding: '6px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '12px',
-              }}
-            />
-          </div>
-          <div>
-            <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
-              Y
-            </label>
-            <input
-              type="number"
-              value={selectedNode.position.y}
-              onChange={(e) => handleNestedInputChange('position', 'y', Number(e.target.value))}
-              style={{
-                width: '100%',
-                padding: '6px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '12px',
-              }}
-            />
-          </div>
-        </div>
-        <div style={{ marginBottom: '8px' }}>
-          <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
-            Rotation (deg)
-          </label>
-          <input
-            type="number"
-            value={rotationValue}
-            disabled
-            style={{
-              width: '100%',
-              padding: '6px',
-              border: '1px solid #ddd',
-              borderRadius: '4px',
-              fontSize: '12px',
-              backgroundColor: '#e9e9e9',
-            }}
-          />
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '8px' }}>
-          <div>
-            <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
-              Align Horizontal
-            </label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+          <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#444' }}>Alignment</h4>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+             <div style={{ 
+               display: 'flex', 
+               gap: '1px', 
+               backgroundColor: '#ddd', 
+               padding: '1px', 
+               borderRadius: '4px',
+               flex: 1
+             }}>
               {(['start', 'center', 'end'] as const).map(alignment => (
                 <button
                   key={`h-${alignment}`}
                   type="button"
                   onClick={() => handleAlign('horizontal', alignment)}
                   disabled={!parentNode}
+                  title={`Align Horizontal ${alignment}`}
                   style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                     padding: '6px',
                     backgroundColor: '#ffffff',
-                    border: '1px solid #ccc',
-                    borderRadius: '4px',
+                    border: 'none',
+                    borderRadius: '3px',
                     fontSize: '11px',
                     cursor: parentNode ? 'pointer' : 'not-allowed',
                     opacity: parentNode ? 1 : 0.6,
+                    height: '28px',
                   }}
                 >
-                  {alignment === 'start' ? 'Left' : alignment === 'center' ? 'Center' : 'Right'}
+                  {alignment === 'start' && <AlignLeft size={16} />}
+                  {alignment === 'center' && <AlignHorizontalCenter size={16} />}
+                  {alignment === 'end' && <AlignRight size={16} />}
                 </button>
               ))}
             </div>
-          </div>
 
-          <div>
-            <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
-              Align Vertical
-            </label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+            <div style={{ 
+               display: 'flex', 
+               gap: '1px', 
+               backgroundColor: '#ddd', 
+               padding: '1px', 
+               borderRadius: '4px',
+               flex: 1
+             }}>
               {(['start', 'center', 'end'] as const).map(alignment => (
                 <button
                   key={`v-${alignment}`}
                   type="button"
                   onClick={() => handleAlign('vertical', alignment)}
                   disabled={!parentNode}
+                  title={`Align Vertical ${alignment}`}
                   style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                     padding: '6px',
                     backgroundColor: '#ffffff',
-                    border: '1px solid #ccc',
-                    borderRadius: '4px',
+                    border: 'none',
+                    borderRadius: '3px',
                     fontSize: '11px',
                     cursor: parentNode ? 'pointer' : 'not-allowed',
                     opacity: parentNode ? 1 : 0.6,
+                    height: '28px',
                   }}
                 >
-                  {alignment === 'start' ? 'Top' : alignment === 'center' ? 'Middle' : 'Bottom'}
+                  {alignment === 'start' && <AlignTop size={16} />}
+                  {alignment === 'center' && <AlignVerticalCenter size={16} />}
+                  {alignment === 'end' && <AlignBottom size={16} />}
                 </button>
               ))}
             </div>
           </div>
+
+          <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#444' }}>Transform</h4>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
+                X
+              </label>
+              <input
+                type="number"
+                value={Math.round(selectedNode.position.x)}
+                onChange={(e) => handleNestedInputChange('position', 'x', Number(e.target.value))}
+                style={{
+                  width: '100%',
+                  padding: '6px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
+                Y
+              </label>
+              <input
+                type="number"
+                value={Math.round(selectedNode.position.y)}
+                onChange={(e) => handleNestedInputChange('position', 'y', Number(e.target.value))}
+                style={{
+                  width: '100%',
+                  padding: '6px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                }}
+              />
+            </div>
+          </div>
+          <div style={{ marginBottom: '8px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
+              <ArrowClockwise size={12} /> Rotation (deg)
+            </label>
+            <input
+              type="number"
+              value={rotationValue}
+              onChange={(e) => handleInputChange('rotation', Number(e.target.value))}
+              style={{
+                width: '100%',
+                padding: '6px',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+                fontSize: '12px',
+              }}
+            />
+          </div>
         </div>
-      </div>
 
       <div style={{ marginBottom: '16px' }}>
         <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#444' }}>Layout</h4>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: '8px', marginBottom: '8px', alignItems: 'end' }}>
           <div>
             <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
-              Width
+              W
             </label>
             <input
               type="number"
-              value={selectedNode.size.width}
+              value={Math.round(selectedNode.size.width)}
               onChange={(e) => handleNestedInputChange('size', 'width', Number(e.target.value))}
               style={{
                 width: '100%',
@@ -365,6 +334,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 justifyContent: 'center',
                 width: '32px',
                 height: '32px',
+                marginBottom: '1px',
                 transition: 'all 0.2s ease',
               }}
             >
@@ -377,11 +347,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
           )}
           <div>
             <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
-              Height
+              H
             </label>
             <input
               type="number"
-              value={selectedNode.size.height}
+              value={Math.round(selectedNode.size.height)}
               onChange={(e) => handleNestedInputChange('size', 'height', Number(e.target.value))}
               style={{
                 width: '100%',
@@ -534,64 +504,62 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 
       <div style={{ marginBottom: '16px' }}>
         <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#444' }}>Appearance</h4>
-        <div style={{ marginBottom: '8px' }}>
-          <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
-            Opacity
-          </label>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px', gap: '8px', alignItems: 'center' }}>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={effectiveOpacity}
-              onChange={(e) => handleInputChange('opacity', clamp(Number(e.target.value), 0, 1))}
-            />
-            <input
-              type="number"
-              min={0}
-              max={1}
-              step={0.01}
-              value={effectiveOpacity}
-              onChange={(e) => {
-                const value = Number(e.target.value);
-                if (Number.isNaN(value)) return;
-                handleInputChange('opacity', clamp(value, 0, 1));
-              }}
-              style={{
-                width: '100%',
-                padding: '6px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '12px',
-              }}
-            />
-          </div>
-        </div>
-
-        {selectedNode.type === 'rectangle' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
           <div>
             <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
-              Corner Radius
+              Opacity
             </label>
-            <input
-              type="number"
-              value={selectedNode.cornerRadius ?? 0}
-              onChange={(e) => {
-                const value = Number(e.target.value);
-                if (Number.isNaN(value)) return;
-                handleInputChange('cornerRadius', value);
-              }}
-              style={{
-                width: '100%',
-                padding: '6px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '12px',
-              }}
-            />
+            <div style={{ position: 'relative' }}>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={Math.round(effectiveOpacity * 100)}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  if (!Number.isNaN(val)) {
+                    handleInputChange('opacity', clamp(val / 100, 0, 1));
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  padding: '6px',
+                  paddingRight: '20px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                }}
+              />
+              <span style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', fontSize: '11px', color: '#888' }}>
+                %
+              </span>
+            </div>
           </div>
-        )}
+
+          {(selectedNode.type === 'rectangle' || selectedNode.type === 'frame' || selectedNode.type === 'image' || selectedNode.type === 'componentInstance') && (
+            <div>
+              <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
+                Corner Radius
+              </label>
+              <input
+                type="number"
+                value={selectedNode.cornerRadius ?? 0}
+                onChange={(e) => {
+                  const value = Number(e.target.value);
+                  if (Number.isNaN(value)) return;
+                  handleInputChange('cornerRadius', value);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '6px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                }}
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ marginBottom: '16px' }}>

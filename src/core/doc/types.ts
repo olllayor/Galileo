@@ -66,6 +66,7 @@ export const nodeSchema = z.object({
 
   position: positionSchema,
   size: sizeSchema,
+  rotation: z.number().optional(),
 
   layout: layoutSchema.optional(),
 
