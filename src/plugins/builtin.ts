@@ -19,7 +19,7 @@ export const builtinPlugins: PluginRegistration[] = [
       },
       ui: { width: 980, height: 640 },
     },
-    entryUrl: '/plugins/mockrocket/index.html?v=3',
+    entryUrl: '/plugins/mockrocket/index.html?v=4',
     source: 'builtin',
   },
 ];

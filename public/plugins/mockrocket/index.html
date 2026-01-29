@@ -376,7 +376,52 @@
             candidate = child;
           }
         });
-        return candidate;
+        if (candidate) return candidate;
+        return pickScreenMeshByGeometry(root);
+      };
+
+      const pickScreenMeshByGeometry = (root) => {
+        if (!state.camera) return null;
+        const modelBox = new THREE.Box3().setFromObject(root);
+        const modelCenter = new THREE.Vector3();
+        modelBox.getCenter(modelCenter);
+        const cameraDir = new THREE.Vector3()
+          .subVectors(state.camera.position, modelCenter)
+          .normalize();
+
+        let best = null;
+        let bestScore = -Infinity;
+
+        root.traverse((child) => {
+          if (!child.isMesh) return;
+          const box = new THREE.Box3().setFromObject(child);
+          const size = new THREE.Vector3();
+          box.getSize(size);
+          const dims = [size.x, size.y, size.z].sort((a, b) => b - a);
+          const area = dims[0] * dims[1];
+          const thickness = dims[2];
+          if (!isFinite(area) || area <= 0) return;
+          if (!isFinite(thickness) || thickness <= 0) return;
+          if (dims[0] < 0.2 || dims[1] < 0.2) return;
+          if (thickness > dims[0] * 0.4) return;
+
+          const center = new THREE.Vector3();
+          box.getCenter(center);
+          const fromCenter = new THREE.Vector3().subVectors(center, modelCenter).normalize();
+          const towardCamera = Math.max(0, cameraDir.dot(fromCenter));
+
+          const aspect = dims[0] / Math.max(1e-4, dims[1]);
+          const targetAspect = 2.15;
+          const aspectScore = 1 / (1 + Math.abs(aspect - targetAspect));
+
+          const score = (area / Math.max(thickness, 1e-3)) * (1 + towardCamera * 1.5) * aspectScore;
+          if (score > bestScore) {
+            bestScore = score;
+            best = child;
+          }
+        });
+
+        return best;
       };
 
       const applyTextureToMesh = (mesh, texture) => {
@@ -385,6 +430,13 @@
         materials.forEach((material) => {
           if (!material) return;
           material.map = texture;
+          if ('color' in material) {
+            material.color = new THREE.Color(0xffffff);
+          }
+          if ('transparent' in material) {
+            material.transparent = false;
+            material.opacity = 1;
+          }
           if ('emissive' in material) {
             material.emissive = new THREE.Color(0xffffff);
             material.emissiveMap = texture;
@@ -572,6 +624,13 @@
 
           const texture = await createTextureFromSnapshot(snapshot);
           state.selectionTexture = texture;
+          if (!state.screenMesh && state.model) {
+            state.screenMesh = findScreenMesh(state.model);
+          }
+          if (!state.screenMesh) {
+            setStatus('Screen mesh not detected. Try a different device model.');
+            return;
+          }
           applyTextureToMesh(state.screenMesh, texture);
           setStatus('Selection loaded.');
         } catch (error) {
