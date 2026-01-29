@@ -1,10 +1,11 @@
 import { produce, enablePatches, Patch } from 'immer';
 import type { Command } from './types';
-import type { Document, Node } from '../doc/types';
+import type { Asset, Document, Node } from '../doc/types';
 
 type DraftDocument = {
   rootId: string;
   nodes: Record<string, Node>;
+  assets: Record<string, Asset>;
 };
 
 enablePatches();
@@ -82,6 +83,12 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
       if (node) {
         Object.assign(node, props);
       }
+      break;
+    }
+
+    case 'createAsset': {
+      const { id, asset } = cmd.payload;
+      draft.assets[id] = asset;
       break;
     }
 

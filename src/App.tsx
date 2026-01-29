@@ -1,8 +1,11 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { Toolbar } from './ui/Toolbar';
 import { Canvas } from './ui/Canvas';
 import { PropertiesPanel } from './ui/PropertiesPanel';
+import { ContextMenu, type ContextMenuItem } from './ui/ContextMenu';
+import { PluginModal } from './ui/PluginModal';
+import { PluginManagerModal } from './ui/PluginManagerModal';
 import { useDocument } from './hooks/useDocument';
 import { findNodeAtPosition, createRectangleTool, createTextTool } from './interaction/tools';
 import {
@@ -21,6 +24,23 @@ import { getHandleCursor, hitTestHandle } from './interaction/handles';
 import type { ResizeHandle } from './interaction/handles';
 import { applyResizeSnapping, applySnapping, buildSiblingSnapTargets } from './interaction/snapping';
 import type { SnapGuide, SnapTargets } from './interaction/snapping';
+import { exportNodeSnapshot } from './render/export';
+import { builtinPlugins } from './plugins/builtin';
+import {
+  type PluginManifest,
+  type PluginRegistration,
+  type PluginPermission,
+  type RpcRequest,
+  type RpcResponse,
+  type SelectionGetResult,
+} from './plugins/types';
+import {
+  loadStoredPlugins,
+  saveStoredPlugins,
+  loadRecentPluginIds,
+  recordRecentPlugin,
+  type StoredPlugin,
+} from './plugins/storage';
 
 const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
@@ -302,6 +322,18 @@ const getMimeType = (path: string): string => {
   }
 };
 
+const buildDataUrl = (mime: string, dataBase64: string): string => {
+  return `data:${mime};base64,${dataBase64}`;
+};
+
+const parseDataUrl = (dataUrl: string): { mime: string; dataBase64: string } | null => {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) {
+    return null;
+  }
+  return { mime: match[1], dataBase64: match[2] };
+};
+
 const getImageSize = (src: string): Promise<{ width: number; height: number }> => {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -313,6 +345,24 @@ const getImageSize = (src: string): Promise<{ width: number; height: number }> =
     };
     img.src = src;
   });
+};
+
+const joinPath = (base: string, segment: string): string => {
+  if (base.endsWith('/') || base.endsWith('\\')) {
+    return `${base}${segment}`;
+  }
+  return `${base}/${segment}`;
+};
+
+const resolveStoredPlugin = (stored: StoredPlugin): PluginRegistration | null => {
+  if (!stored.path) return null;
+  const entryPath = joinPath(stored.path, stored.manifest.entry);
+  return {
+    manifest: stored.manifest,
+    entryUrl: convertFileSrc(entryPath),
+    source: stored.source,
+    path: stored.path,
+  };
 };
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'icns']);
@@ -368,6 +418,16 @@ const isEditableTarget = (target: EventTarget | null): boolean => {
   return tag === 'input' || tag === 'textarea' || target.isContentEditable;
 };
 
+const hasPermission = (manifest: PluginManifest, permission: PluginPermission): boolean => {
+  return manifest.permissions?.includes(permission) ?? false;
+};
+
+const isRpcRequest = (value: unknown): value is RpcRequest => {
+  if (typeof value !== 'object' || value === null) return false;
+  const req = value as RpcRequest;
+  return req.rpc === 1 && typeof req.id === 'string' && typeof req.method === 'string';
+};
+
 export const App: React.FC = () => {
   const {
     document,
@@ -396,8 +456,21 @@ export const App: React.FC = () => {
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
   const [snapDisabled, setSnapDisabled] = useState(false);
   const [currentPath, setCurrentPath] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [plugins, setPlugins] = useState<PluginRegistration[]>(() => {
+    const stored = loadStoredPlugins()
+      .map(resolveStoredPlugin)
+      .filter((plugin): plugin is PluginRegistration => Boolean(plugin));
+    return [...builtinPlugins, ...stored];
+  });
+  const [recentPluginIds, setRecentPluginIds] = useState<string[]>(loadRecentPluginIds());
+  const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
+  const [activePlugin, setActivePlugin] = useState<PluginRegistration | null>(null);
+  const pluginIframeRef = useRef<HTMLIFrameElement | null>(null);
   const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasSize = { width: 1280, height: 800 };
+  const isDev = import.meta.env.DEV;
 
   const displayDocument = previewDocument ?? document;
   const selectedNode = selectedIds.length === 1 ? displayDocument.nodes[selectedIds[0]] : null;
@@ -412,6 +485,15 @@ export const App: React.FC = () => {
     () => getSelectionBounds(displayDocument, selectionIds, worldMap),
     [displayDocument, selectionIds, worldMap]
   );
+  const pluginMap = useMemo(() => {
+    return new Map(plugins.map(plugin => [plugin.manifest.id, plugin]));
+  }, [plugins]);
+  const recentPlugins = useMemo(() => {
+    return recentPluginIds
+      .map(id => pluginMap.get(id))
+      .filter((plugin): plugin is PluginRegistration => Boolean(plugin));
+  }, [pluginMap, recentPluginIds]);
+  const devPlugins = useMemo(() => plugins.filter(plugin => plugin.source === 'dev'), [plugins]);
   const fileName = useMemo(() => {
     if (!currentPath) return 'Untitled';
     const parts = currentPath.split(/[/\\\\]/);
@@ -441,27 +523,112 @@ export const App: React.FC = () => {
     return 'default';
   }, [dragState, hoverHandle, hoverNodeId, activeTool]);
 
+  useEffect(() => {
+    if (recentPluginIds.length === 0 && builtinPlugins.length > 0) {
+      const seeded = [builtinPlugins[0].manifest.id];
+      localStorage.setItem('galileo.plugins.recents.v1', JSON.stringify(seeded));
+      setRecentPluginIds(seeded);
+    }
+  }, [recentPluginIds.length]);
+
+  useEffect(() => {
+    const wrapper = canvasWrapperRef.current;
+    if (!wrapper) return;
+
+    const isInsideCanvas = (target: EventTarget | null): boolean => {
+      if (!wrapper) return false;
+      if (!(target instanceof Node)) return false;
+      return wrapper.contains(target);
+    };
+
+    const openAt = (event: MouseEvent) => {
+      event.preventDefault();
+      setContextMenu({ x: event.clientX, y: event.clientY });
+    };
+
+    const handleContextMenuEvent = (event: MouseEvent) => {
+      if (!isInsideCanvas(event.target)) return;
+      openAt(event);
+    };
+
+    const handleMouseDownEvent = (event: MouseEvent) => {
+      if (!isInsideCanvas(event.target)) return;
+      if (event.button === 2 || (event.button === 0 && event.ctrlKey)) {
+        openAt(event);
+      }
+    };
+
+    const handleAuxClickEvent = (event: MouseEvent) => {
+      if (!isInsideCanvas(event.target)) return;
+      if (event.button === 2) {
+        openAt(event);
+      }
+    };
+
+    window.addEventListener('contextmenu', handleContextMenuEvent, true);
+    window.addEventListener('mousedown', handleMouseDownEvent, true);
+    window.addEventListener('auxclick', handleAuxClickEvent, true);
+    return () => {
+      window.removeEventListener('contextmenu', handleContextMenuEvent, true);
+      window.removeEventListener('mousedown', handleMouseDownEvent, true);
+      window.removeEventListener('auxclick', handleAuxClickEvent, true);
+    };
+  }, []);
+
   const insertImageNode = useCallback(async (
     {
       src,
+      dataBase64,
       mime,
+      width,
+      height,
       name,
       originalPath,
       index = 0,
+      position,
+      maxDimension = 800,
     }: {
-      src: string;
+      src?: string;
+      dataBase64?: string;
       mime?: string;
+      width?: number;
+      height?: number;
       name?: string;
       originalPath?: string;
       index?: number;
+      position?: { x: number; y: number };
+      maxDimension?: number;
     }
-  ) => {
-    const size = await getImageSize(src);
-    const maxDimension = 800;
-    const scale = Math.min(1, maxDimension / Math.max(size.width, size.height));
+  ): Promise<string> => {
+    let resolvedMime = mime;
+    let resolvedBase64 = dataBase64;
+    let resolvedSrc = src;
+
+    if (!resolvedBase64 && resolvedSrc && resolvedSrc.startsWith('data:')) {
+      const parsed = parseDataUrl(resolvedSrc);
+      if (parsed) {
+        resolvedMime = resolvedMime || parsed.mime;
+        resolvedBase64 = parsed.dataBase64;
+      }
+    }
+
+    if (!resolvedSrc && resolvedBase64 && resolvedMime) {
+      resolvedSrc = buildDataUrl(resolvedMime, resolvedBase64);
+    }
+
+    if (!resolvedSrc) {
+      throw new Error('Image source missing');
+    }
+
+    let naturalSize = width && height ? { width, height } : null;
+    if (!naturalSize) {
+      naturalSize = await getImageSize(resolvedSrc);
+    }
+
+    const scale = Math.min(1, maxDimension / Math.max(naturalSize.width, naturalSize.height));
     const scaledSize = {
-      width: Math.max(1, Math.round(size.width * scale)),
-      height: Math.max(1, Math.round(size.height * scale)),
+      width: Math.max(1, Math.round(naturalSize.width * scale)),
+      height: Math.max(1, Math.round(naturalSize.height * scale)),
     };
 
     const centerWorld = {
@@ -470,17 +637,52 @@ export const App: React.FC = () => {
     };
 
     const offset = index * 24;
-    const position = {
+    const resolvedPosition = position ?? {
       x: centerWorld.x - scaledSize.width / 2 + offset,
       y: centerWorld.y - scaledSize.height / 2 + offset,
     };
 
     const newId = generateId();
-    executeCommand({
+    const assetId = resolvedBase64 && resolvedMime ? generateId() : null;
+    const commands: Command[] = [];
+
+    if (assetId && resolvedBase64 && resolvedMime) {
+      commands.push({
+        id: generateId(),
+        timestamp: Date.now(),
+        source: 'user',
+        description: 'Create image asset',
+        type: 'createAsset',
+        payload: {
+          id: assetId,
+          asset: {
+            type: 'image',
+            mime: resolvedMime,
+            dataBase64: resolvedBase64,
+            width: naturalSize.width,
+            height: naturalSize.height,
+          },
+        },
+      } as Command);
+    }
+
+    const imageProps = assetId
+      ? {
+        mime: resolvedMime,
+        originalPath,
+        assetId,
+      }
+      : {
+        src: resolvedSrc,
+        mime: resolvedMime,
+        originalPath,
+      };
+
+    commands.push({
       id: generateId(),
       timestamp: Date.now(),
       source: 'user',
-      description: 'Import image',
+      description: 'Insert image',
       type: 'createNode',
       payload: {
         id: newId,
@@ -488,20 +690,351 @@ export const App: React.FC = () => {
         node: {
           type: 'image',
           name: name || 'Image',
-          position,
+          position: resolvedPosition,
           size: scaledSize,
-          image: {
-            src,
-            mime,
-            originalPath,
-          },
+          image: imageProps,
           visible: true,
           aspectRatioLocked: true,
         },
       },
     } as Command);
+
+    const command: Command = commands.length > 1 ? {
+      id: generateId(),
+      timestamp: Date.now(),
+      source: 'user',
+      description: 'Insert image asset',
+      type: 'batch',
+      payload: { commands },
+    } : commands[0];
+
+    executeCommand(command);
     selectNode(newId);
+    return newId;
   }, [canvasSize.height, canvasSize.width, document.rootId, executeCommand, selectNode, view.pan.x, view.pan.y, view.zoom]);
+
+  const getDefaultInsertPosition = useCallback(() => {
+    const primaryId = selectionIds[0];
+    if (primaryId) {
+      const bounds = getNodeWorldBounds(document, primaryId);
+      if (bounds) {
+        return {
+          x: bounds.x + bounds.width + 24,
+          y: bounds.y,
+        };
+      }
+    }
+
+    return {
+      x: 40,
+      y: 40,
+    };
+  }, [document, selectionIds]);
+
+  const runPlugin = useCallback((plugin: PluginRegistration) => {
+    setActivePlugin(plugin);
+    setRecentPluginIds(recordRecentPlugin(plugin));
+  }, []);
+
+  const handleLoadDevPlugin = useCallback(async () => {
+    try {
+      const folder = await invoke<string>('show_open_folder');
+      if (!folder) {
+        return;
+      }
+
+      const manifestPath = joinPath(folder, 'plugin.json');
+      const raw = await invoke<string>('load_text', { path: manifestPath });
+      const manifest = JSON.parse(raw) as PluginManifest;
+      if (!manifest?.id || !manifest.entry || !manifest.name) {
+        alert('Invalid plugin manifest.');
+        return;
+      }
+
+      const entryPath = joinPath(folder, manifest.entry);
+      const entryUrl = convertFileSrc(entryPath);
+      const plugin: PluginRegistration = {
+        manifest,
+        entryUrl,
+        source: 'dev',
+        path: folder,
+      };
+
+      setPlugins(prev => {
+        const filtered = prev.filter(p => p.manifest.id !== manifest.id);
+        return [...filtered, plugin];
+      });
+
+      const stored = loadStoredPlugins().filter(p => p.manifest.id !== manifest.id);
+      stored.push({ manifest, source: 'dev', path: folder });
+      saveStoredPlugins(stored);
+    } catch (error) {
+      console.error('Failed to load dev plugin', error);
+      alert('Failed to load dev plugin.');
+    }
+  }, []);
+
+  const handleRemovePlugin = useCallback((plugin: PluginRegistration) => {
+    setPlugins(prev => prev.filter(p => p.manifest.id !== plugin.manifest.id));
+    const stored = loadStoredPlugins().filter(p => p.manifest.id !== plugin.manifest.id);
+    saveStoredPlugins(stored);
+    setActivePlugin(prev => (prev?.manifest.id === plugin.manifest.id ? null : prev));
+    setRecentPluginIds(prev => {
+      const next = prev.filter(id => id !== plugin.manifest.id);
+      localStorage.setItem('galileo.plugins.recents.v1', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const handleSetVisibility = useCallback((visible: boolean) => {
+    if (selectionIds.length === 0) {
+      return;
+    }
+    const commands = selectionIds.map(id => ({
+      id: generateId(),
+      timestamp: Date.now(),
+      source: 'user' as const,
+      description: visible ? 'Show node' : 'Hide node',
+      type: 'setProps' as const,
+      payload: {
+        id,
+        props: { visible },
+      },
+    }));
+
+    executeCommand(
+      commands.length === 1
+        ? (commands[0] as Command)
+        : ({
+          id: generateId(),
+          timestamp: Date.now(),
+          source: 'user',
+          description: visible ? 'Show nodes' : 'Hide nodes',
+          type: 'batch',
+          payload: { commands: commands as Command[] },
+        } as Command)
+    );
+  }, [executeCommand, selectionIds]);
+
+  const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
+    const recentItems: ContextMenuItem[] = recentPlugins.length > 0
+      ? recentPlugins.map(plugin => ({
+        label: plugin.manifest.name,
+        onSelect: () => runPlugin(plugin),
+      }))
+      : [{ label: 'No recent plugins', enabled: false }];
+
+    const allPluginItems: ContextMenuItem[] = plugins.length > 0
+      ? plugins.map(plugin => ({
+        label: plugin.manifest.name,
+        onSelect: () => runPlugin(plugin),
+      }))
+      : [{ label: 'No plugins installed', enabled: false }];
+
+    const hasSelection = selectionIds.length > 0;
+    const anyHidden = selectionIds.some(id => document.nodes[id]?.visible === false);
+    const anyVisible = selectionIds.some(id => document.nodes[id]?.visible !== false);
+
+    const showHideItems: ContextMenuItem[] = [
+      { label: 'Show', enabled: anyHidden, onSelect: () => handleSetVisibility(true) },
+      { label: 'Hide', enabled: anyVisible, onSelect: () => handleSetVisibility(false) },
+    ];
+
+    const devItems: ContextMenuItem[] = [
+      { label: 'Load Dev Plugin...', onSelect: handleLoadDevPlugin },
+      ...(devPlugins.length > 0 ? [{ separator: true } as ContextMenuItem] : []),
+      ...devPlugins.map(plugin => ({
+        label: plugin.manifest.name,
+        onSelect: () => runPlugin(plugin),
+      })),
+    ];
+
+    return [
+      { label: 'Copy', enabled: false },
+      { label: 'Paste', enabled: false },
+      { label: 'Paste Replace', enabled: false },
+      { separator: true },
+      { label: 'Group Selection', enabled: hasSelection && selectionIds.length > 1 },
+      { label: 'Show/Hide', submenu: showHideItems },
+      { separator: true },
+      {
+        label: 'Plugins',
+        submenu: [
+          { label: 'Recents', submenu: recentItems },
+          { label: 'All plugins', submenu: allPluginItems },
+          ...(isDev ? [{ label: 'Development', submenu: devItems }] : []),
+          { separator: true },
+          { label: 'Manage plugins...', onSelect: () => setPluginManagerOpen(true) },
+        ],
+      },
+    ];
+  }, [
+    devPlugins,
+    document.nodes,
+    handleLoadDevPlugin,
+    handleSetVisibility,
+    isDev,
+    recentPlugins,
+    plugins,
+    runPlugin,
+    selectionIds,
+  ]);
+
+  const handlePluginRpcRequest = useCallback(async (
+    request: RpcRequest,
+    plugin: PluginRegistration
+  ): Promise<RpcResponse> => {
+    const fail = (code: string, message: string): RpcResponse => ({
+      rpc: 1,
+      id: request.id,
+      ok: false,
+      error: { code, message },
+    });
+
+    try {
+      switch (request.method) {
+        case 'host.getInfo': {
+          return {
+            rpc: 1,
+            id: request.id,
+            ok: true,
+            result: {
+              apiVersion: '1.0',
+              appVersion: '0.1.0',
+            },
+          };
+        }
+
+        case 'selection.get': {
+          if (!hasPermission(plugin.manifest, 'selection:read')) {
+            return fail('permission_denied', 'selection:read is required');
+          }
+          const ids = selectionIds;
+          const nodes = ids
+            .map(id => document.nodes[id])
+            .filter(Boolean)
+            .map(node => ({
+              id: node.id,
+              type: node.type,
+              name: node.name,
+              size: { width: node.size.width, height: node.size.height },
+            }));
+
+          const result: SelectionGetResult = {
+            ids,
+            primaryId: ids.length > 0 ? ids[0] : null,
+            nodes,
+          };
+          return { rpc: 1, id: request.id, ok: true, result };
+        }
+
+        case 'export.snapshot': {
+          if (!hasPermission(plugin.manifest, 'export:snapshot')) {
+            return fail('permission_denied', 'export:snapshot is required');
+          }
+          const params = (request.params || {}) as {
+            nodeId?: string;
+            scale?: number;
+            format?: 'png';
+            background?: 'transparent' | 'solid';
+          };
+          const targetId = params.nodeId || selectionIds[0];
+          if (!targetId) {
+            return fail('no_selection', 'No selection to export');
+          }
+
+          const snapshot = await exportNodeSnapshot(document, targetId, {
+            scale: params.scale,
+            format: params.format,
+            background: params.background,
+          });
+          return { rpc: 1, id: request.id, ok: true, result: snapshot };
+        }
+
+        case 'document.insertImage': {
+          if (!hasPermission(plugin.manifest, 'document:write')) {
+            return fail('permission_denied', 'document:write is required');
+          }
+          const params = (request.params || {}) as {
+            dataBase64: string;
+            mime: string;
+            width: number;
+            height: number;
+            position?: { x: number; y: number };
+            name?: string;
+          };
+          if (!params.dataBase64 || !params.mime) {
+            return fail('invalid_params', 'dataBase64 and mime are required');
+          }
+          const insertPosition = params.position ?? getDefaultInsertPosition();
+          const newNodeId = await insertImageNode({
+            dataBase64: params.dataBase64,
+            mime: params.mime,
+            width: params.width,
+            height: params.height,
+            name: params.name || plugin.manifest.name,
+            position: insertPosition,
+            maxDimension: 1200,
+          });
+          return { rpc: 1, id: request.id, ok: true, result: { newNodeId } };
+        }
+
+        case 'fs.saveFile': {
+          if (!hasPermission(plugin.manifest, 'fs:save')) {
+            return fail('permission_denied', 'fs:save is required');
+          }
+          const params = (request.params || {}) as {
+            suggestedName?: string;
+            mime?: string;
+            dataBase64: string;
+          };
+          if (!params.dataBase64) {
+            return fail('invalid_params', 'dataBase64 is required');
+          }
+          const savedPath = await invoke<string>('show_save_image_dialog', {
+            suggestedName: params.suggestedName,
+          });
+          if (!savedPath) {
+            return fail('cancelled', 'Save cancelled');
+          }
+          await invoke('save_binary', {
+            path: savedPath,
+            dataBase64: params.dataBase64,
+          });
+          return { rpc: 1, id: request.id, ok: true, result: { savedPath } };
+        }
+
+        default:
+          return fail('unknown_method', `Unknown method ${request.method}`);
+      }
+    } catch (error) {
+      console.error('Plugin RPC error', error);
+      return fail('internal_error', error instanceof Error ? error.message : 'Unknown error');
+    }
+  }, [document, getDefaultInsertPosition, insertImageNode, selectionIds]);
+
+  useEffect(() => {
+    if (!activePlugin) {
+      return;
+    }
+
+    const handler = (event: MessageEvent) => {
+      if (event.source !== pluginIframeRef.current?.contentWindow) {
+        return;
+      }
+      if (!isRpcRequest(event.data)) {
+        return;
+      }
+
+      void (async () => {
+        const response = await handlePluginRpcRequest(event.data, activePlugin);
+        event.source?.postMessage(response, '*');
+      })();
+    };
+
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [activePlugin, handlePluginRpcRequest]);
 
   const measureTextSize = useCallback(
     (text: string, fontSize: number, fontFamily: string, fontWeight: string) => {
@@ -620,11 +1153,12 @@ export const App: React.FC = () => {
     setSnapGuides([]);
 
     if (info.button === 2 || (info.buttons & 2) === 2) {
-      setDragState({
-        mode: 'pan',
-        startScreen: { x: screenX, y: screenY },
-        startPan: { ...panOffset },
-      });
+      setContextMenu({ x: info.clientX, y: info.clientY });
+      return;
+    }
+
+    if (info.button === 0 && info.ctrlKey) {
+      setContextMenu({ x: info.clientX, y: info.clientY });
       return;
     }
 
@@ -738,6 +1272,11 @@ export const App: React.FC = () => {
       }
     }
   }, [activeTool, displayDocument, document, executeCommand, handleSelectionPointerDown, panOffset, selectNode, selectionBounds, selectionIds, setActiveTool, view, zoom, measureTextSize]);
+
+  const handleCanvasContextMenu = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY });
+  }, []);
 
   const handleCanvasMouseMove = useCallback((info: CanvasPointerInfo) => {
     const { worldX, worldY, screenX, screenY } = info;
@@ -1070,10 +1609,9 @@ export const App: React.FC = () => {
 
       const base64 = await invoke<string>('load_binary', { path });
       const mime = getMimeType(path);
-      const dataUrl = `data:${mime};base64,${base64}`;
       const name = path.split(/[/\\\\]/).pop();
       await insertImageNode({
-        src: dataUrl,
+        dataBase64: base64,
         mime,
         name,
         originalPath: path,
@@ -1233,10 +1771,9 @@ export const App: React.FC = () => {
               if (!isLikelyImageName(path)) continue;
               const base64 = await invoke<string>('load_binary', { path });
               const mime = getMimeType(path);
-              const dataUrl = `data:${mime};base64,${base64}`;
               const name = path.split(/[/\\\\]/).pop();
               await insertImageNode({
-                src: dataUrl,
+                dataBase64: base64,
                 mime,
                 name,
                 originalPath: path,
@@ -1471,7 +2008,11 @@ export const App: React.FC = () => {
           onImport={handleImportImage}
         />
 
-        <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+        <div
+          ref={canvasWrapperRef}
+          style={{ flex: 1, overflow: 'hidden', position: 'relative' }}
+          onContextMenu={handleCanvasContextMenu}
+        >
           <Canvas
             width={canvasSize.width}
             height={canvasSize.height}
@@ -1492,6 +2033,7 @@ export const App: React.FC = () => {
             onMouseMove={handleCanvasMouseMove}
             onMouseUp={handleCanvasMouseUp}
             onWheel={handleCanvasWheel}
+            onContextMenu={handleCanvasContextMenu}
           />
 
           <div style={{
@@ -1530,6 +2072,33 @@ export const App: React.FC = () => {
           onUpdateNode={handleUpdateNode}
         />
       </div>
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenuItems}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {activePlugin && (
+        <PluginModal
+          plugin={activePlugin}
+          iframeRef={pluginIframeRef}
+          onClose={() => setActivePlugin(null)}
+        />
+      )}
+
+      {pluginManagerOpen && (
+        <PluginManagerModal
+          plugins={plugins}
+          onClose={() => setPluginManagerOpen(false)}
+          onLoadDev={handleLoadDevPlugin}
+          onRemove={handleRemovePlugin}
+          showDev={isDev}
+        />
+      )}
     </div>
   );
 };

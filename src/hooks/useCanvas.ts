@@ -8,6 +8,8 @@ export interface CanvasView {
 }
 
 export interface CanvasPointerInfo {
+  clientX: number;
+  clientY: number;
   screenX: number;
   screenY: number;
   worldX: number;
@@ -97,6 +99,8 @@ export const useCanvas = ({
       const { x, y } = toWorld(screenX, screenY);
 
       onMouseDown?.({
+        clientX: event.clientX,
+        clientY: event.clientY,
         screenX,
         screenY,
         worldX: x,
@@ -123,6 +127,8 @@ export const useCanvas = ({
       const { x, y } = toWorld(screenX, screenY);
 
       onMouseMove?.({
+        clientX: event.clientX,
+        clientY: event.clientY,
         screenX,
         screenY,
         worldX: x,
@@ -149,6 +155,8 @@ export const useCanvas = ({
       const { x, y } = toWorld(screenX, screenY);
 
       onMouseUp?.({
+        clientX: event.clientX,
+        clientY: event.clientY,
         screenX,
         screenY,
         worldX: x,

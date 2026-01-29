@@ -1,6 +1,6 @@
 import { documentSchema, type Document } from './types';
 
-export const CURRENT_DOCUMENT_VERSION = 1;
+export const CURRENT_DOCUMENT_VERSION = 2;
 
 export type DocumentParseResult =
   | { ok: true; doc: Document; warnings: string[] }
@@ -47,7 +47,12 @@ const migrateDocument = (raw: unknown): DocumentParseResult => {
   let migrated = raw as Document;
 
   if (version < CURRENT_DOCUMENT_VERSION) {
-    warnings.push(`Document version ${version} < ${CURRENT_DOCUMENT_VERSION}; no migrations applied yet`);
+    warnings.push(`Document version ${version} < ${CURRENT_DOCUMENT_VERSION}; migrated to ${CURRENT_DOCUMENT_VERSION}`);
+    migrated = {
+      ...(raw as Record<string, unknown>),
+      version: CURRENT_DOCUMENT_VERSION,
+      assets: (raw as { assets?: unknown }).assets ?? {},
+    } as Document;
   }
 
   const parsed = documentSchema.safeParse(migrated);

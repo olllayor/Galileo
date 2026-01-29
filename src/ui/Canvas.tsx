@@ -25,6 +25,7 @@ interface CanvasProps {
   onMouseMove?: (info: CanvasPointerInfo) => void;
   onMouseUp?: (info: CanvasPointerInfo) => void;
   onWheel?: (info: CanvasWheelInfo) => void;
+  onContextMenu?: (event: React.MouseEvent<HTMLCanvasElement>) => void;
 }
 
 export const Canvas: React.FC<CanvasProps> = ({
@@ -44,6 +45,7 @@ export const Canvas: React.FC<CanvasProps> = ({
   onMouseMove,
   onMouseUp,
   onWheel,
+  onContextMenu,
 }) => {
   const checkerSize = 10;
   const checkerColor = '#e1e1e1';
@@ -93,6 +95,7 @@ export const Canvas: React.FC<CanvasProps> = ({
 
   const handleContextMenu = (event: React.MouseEvent<HTMLCanvasElement>) => {
     event.preventDefault();
+    onContextMenu?.(event);
   };
 
   const bgPosX = (view.pan.x % checkerSize) + checkerSize / 2;

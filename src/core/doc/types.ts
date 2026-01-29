@@ -82,9 +82,10 @@ export const nodeSchema = z.object({
 
   image: z
     .object({
-      src: z.string(),
+      src: z.string().optional(),
       mime: z.string().optional(),
       originalPath: z.string().optional(),
+      assetId: z.string().optional(),
     })
     .optional(),
 
@@ -98,16 +99,29 @@ export const nodeSchema = z.object({
 
 export type Node = z.infer<typeof nodeSchema>;
 
+export const imageAssetSchema = z.object({
+  type: z.literal('image'),
+  mime: z.string(),
+  dataBase64: z.string().optional(),
+  width: z.number(),
+  height: z.number(),
+});
+
+export const assetSchema = z.discriminatedUnion('type', [imageAssetSchema]);
+
+export type Asset = z.infer<typeof assetSchema>;
+
 export const documentSchema = z.object({
   version: z.number().int().nonnegative(),
   rootId: z.string(),
   nodes: z.record(z.string(), nodeSchema),
+  assets: z.record(z.string(), assetSchema),
 });
 
 export type Document = z.infer<typeof documentSchema>;
 
 export const createDocument = (): Document => ({
-  version: 1,
+  version: 2,
   rootId: 'root',
   nodes: {
     root: {
@@ -120,6 +134,7 @@ export const createDocument = (): Document => ({
       visible: true,
     },
   },
+  assets: {},
 });
 
 export const validateDocument = (doc: unknown): doc is Document => {

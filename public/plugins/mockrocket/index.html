@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MockRocket</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #1d1d1d;
+        color: #f5f5f5;
+        overflow: hidden;
+      }
+      .app {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        background: #2a2a2a;
+        border-bottom: 1px solid #3a3a3a;
+        flex-wrap: wrap;
+        row-gap: 8px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+        font-size: 13px;
+        margin-right: 10px;
+      }
+      .brand-badge {
+        width: 18px;
+        height: 18px;
+        border-radius: 5px;
+        background: linear-gradient(135deg, #ff4bd8, #6b5bff);
+      }
+      .divider {
+        width: 1px;
+        height: 22px;
+        background: #3a3a3a;
+        margin: 0 4px;
+      }
+      .topbar button,
+      .topbar select {
+        border: 1px solid transparent;
+        background: #3a3a3a;
+        color: #f5f5f5;
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .topbar button.primary {
+        background: #4f8ef7;
+      }
+      .topbar button.ghost {
+        background: transparent;
+        border: 1px solid #4a4a4a;
+      }
+      .topbar button.disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+      .warn {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: #f4b24b;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: rgba(244, 178, 75, 0.15);
+      }
+      .content {
+        flex: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 280px;
+        gap: 10px;
+        padding: 10px;
+        background: #262626;
+      }
+      .viewport {
+        position: relative;
+        border-radius: 12px;
+        overflow: hidden;
+        background: repeating-conic-gradient(#3b3b3b 0% 25%, #2d2d2d 0% 50%) 0% / 24px 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #glCanvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+        cursor: grab;
+      }
+      #glCanvas.dragging {
+        cursor: grabbing;
+      }
+      .viewport-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .section {
+        background: #1b1b1b;
+        border-radius: 10px;
+        padding: 10px;
+        border: 1px solid #2c2c2c;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: rgba(255, 255, 255, 0.6);
+      }
+      .thumb {
+        width: 100%;
+        height: 88px;
+        background: #121212;
+        border-radius: 8px;
+        border: 1px dashed #3a3a3a;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+      .thumb img {
+        max-width: 100%;
+        max-height: 100%;
+      }
+      .section button,
+      .section select,
+      .section input {
+        width: 100%;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid #333333;
+        background: #262626;
+        color: #f5f5f5;
+        font-size: 12px;
+      }
+      .position-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+      }
+      .icon-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 6px;
+        border-radius: 8px;
+        border: 1px solid #333333;
+        background: #262626;
+        cursor: pointer;
+      }
+      .swatches {
+        display: flex;
+        gap: 6px;
+      }
+      .swatch {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        border: 2px solid #2c2c2c;
+        cursor: pointer;
+      }
+      .toggle {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 12px;
+      }
+      .toggle input {
+        width: auto;
+      }
+      .status {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.6);
+        line-height: 1.3;
+        max-height: 44px;
+        overflow: hidden;
+      }
+      .status-inline {
+        margin-left: auto;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.6);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 220px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="topbar">
+        <div class="brand">
+          <span class="brand-badge"></span>
+          MockRocket - 3D Mockups
+        </div>
+        <button id="loadSelection" class="primary">Load selection</button>
+        <button class="ghost">Draw guide frame</button>
+        <div class="warn">8 trial exports left</div>
+        <button class="disabled">Activate</button>
+        <select id="scaleSelect">
+          <option value="1">1x</option>
+          <option value="2" selected>2x</option>
+          <option value="3">3x</option>
+        </select>
+        <div class="divider"></div>
+        <button id="download">Download</button>
+        <button id="insert" class="ghost">Export to Galileo</button>
+        <div class="status-inline" id="status"></div>
+      </div>
+      <div class="content">
+        <div class="viewport" id="viewport">
+          <canvas id="glCanvas"></canvas>
+          <div class="viewport-overlay" id="viewportOverlay">Drag to rotate</div>
+        </div>
+        <div class="sidebar">
+          <div class="section">
+            <div class="label">Selection</div>
+            <div class="thumb">
+              <img id="selectionPreview" alt="Selection preview" />
+              <span id="selectionEmpty">Select a frame</span>
+            </div>
+            <button id="refreshSelection">Refresh selection</button>
+          </div>
+          <div class="section">
+            <div class="label">Device</div>
+            <select id="deviceSelect">
+              <option value="iphone_16_free">iPhone 16 (free)</option>
+            </select>
+            <div class="label">Position</div>
+            <div class="position-row">
+              <button class="icon-btn" data-rot="front" title="Front">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5f5f5" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="3"/></svg>
+              </button>
+              <button class="icon-btn" data-rot="flat" title="Flat">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5f5f5" stroke-width="2"><rect x="3" y="9" width="18" height="6" rx="2"/></svg>
+              </button>
+              <button class="icon-btn" data-rot="tilt" title="Tilt">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5f5f5" stroke-width="2"><rect x="6" y="4" width="12" height="16" rx="3" transform="rotate(18 12 12)"/></svg>
+              </button>
+              <button class="icon-btn" data-rot="perspective" title="Perspective">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5f5f5" stroke-width="2"><path d="M6 4h12l-2 16H8L6 4Z"/></svg>
+              </button>
+            </div>
+            <div class="label">Colors</div>
+            <div class="swatches">
+              <div class="swatch" style="background:#1f1f1f;"></div>
+              <div class="swatch" style="background:#707070;"></div>
+              <div class="swatch" style="background:#cbb07b;"></div>
+              <div class="swatch" style="background:#f5f5f5; border-color:#555;"></div>
+              <div class="swatch" style="background:linear-gradient(135deg,#ff4bd8,#6b5bff);"></div>
+            </div>
+            <div class="toggle">
+              <span>Clay device</span>
+              <input type="checkbox" />
+            </div>
+            <div class="label">Environment</div>
+            <div class="toggle">
+              <span>Floor shadow</span>
+              <input type="checkbox" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="./lib/three.min.js"></script>
+    <script src="./lib/DRACOLoader.legacy.js"></script>
+    <script src="./lib/GLTFLoader.legacy.js"></script>
+    <script>
+      const { GLTFLoader, DRACOLoader } = THREE;
+
+      const selectionPreview = document.getElementById('selectionPreview');
+      const selectionEmpty = document.getElementById('selectionEmpty');
+      const statusEl = document.getElementById('status');
+      const scaleSelect = document.getElementById('scaleSelect');
+      const viewportOverlay = document.getElementById('viewportOverlay');
+      const glCanvas = document.getElementById('glCanvas');
+      const viewport = document.getElementById('viewport');
+
+      const pending = new Map();
+      const rpc = {
+        call(method, params) {
+          const id = (crypto.randomUUID && crypto.randomUUID()) || `rpc_${Date.now()}_${Math.random()}`;
+          const payload = { rpc: 1, id, method, params };
+          window.parent.postMessage(payload, '*');
+          return new Promise((resolve, reject) => {
+            pending.set(id, { resolve, reject });
+            setTimeout(() => {
+              if (pending.has(id)) {
+                pending.delete(id);
+                reject(new Error('RPC timeout'));
+              }
+            }, 10000);
+          });
+        },
+      };
+
+      window.addEventListener('message', (event) => {
+        const data = event.data;
+        if (!data || data.rpc !== 1 || !data.id) return;
+        const entry = pending.get(data.id);
+        if (!entry) return;
+        pending.delete(data.id);
+        if (data.ok) {
+          entry.resolve(data.result);
+        } else {
+          entry.reject(new Error(data.error?.message || 'RPC error'));
+        }
+      });
+
+      const state = {
+        selectionSnapshot: null,
+        selectionTexture: null,
+        output: null,
+        model: null,
+        screenMesh: null,
+        renderer: null,
+        scene: null,
+        camera: null,
+        rotationX: -0.2,
+        rotationY: -0.4,
+        dragging: false,
+        lastX: 0,
+        lastY: 0,
+      };
+
+      const setStatus = (text) => {
+        statusEl.textContent = text || '';
+      };
+
+      setStatus('Ready');
+
+      const findScreenMesh = (root) => {
+        let candidate = null;
+        const keys = ['screen', 'display', 'glass'];
+        root.traverse((child) => {
+          if (!child.isMesh) return;
+          const name = (child.name || '').toLowerCase();
+          const matName = (child.material?.name || '').toLowerCase();
+          if (keys.some(key => name.includes(key) || matName.includes(key))) {
+            candidate = child;
+          }
+        });
+        return candidate;
+      };
+
+      const applyTextureToMesh = (mesh, texture) => {
+        if (!mesh || !texture) return;
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        materials.forEach((material) => {
+          if (!material) return;
+          material.map = texture;
+          if ('emissive' in material) {
+            material.emissive = new THREE.Color(0xffffff);
+            material.emissiveMap = texture;
+            material.emissiveIntensity = 1;
+          }
+          material.needsUpdate = true;
+        });
+      };
+
+      const setupScene = () => {
+        const renderer = new THREE.WebGLRenderer({
+          canvas: glCanvas,
+          antialias: true,
+          alpha: true,
+          preserveDrawingBuffer: true,
+        });
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.setPixelRatio(window.devicePixelRatio || 1);
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
+        camera.position.set(0, 0, 5);
+
+        const ambient = new THREE.AmbientLight(0xffffff, 0.9);
+        const hemisphere = new THREE.HemisphereLight(0xffffff, 0x333333, 0.6);
+        const directional = new THREE.DirectionalLight(0xffffff, 1.4);
+        directional.position.set(2, 3, 5);
+        scene.add(ambient, hemisphere, directional);
+
+        state.renderer = renderer;
+        state.scene = scene;
+        state.camera = camera;
+      };
+
+      const fitCameraToObject = (object, offset = 1.6) => {
+        const box = new THREE.Box3().setFromObject(object);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const fov = state.camera.fov * (Math.PI / 180);
+        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+        cameraZ *= offset;
+        state.camera.position.set(center.x, center.y, center.z + cameraZ);
+        state.camera.near = Math.max(0.1, maxDim / 100);
+        state.camera.far = Math.max(1000, maxDim * 10);
+        state.camera.lookAt(center);
+        state.camera.updateProjectionMatrix();
+      };
+
+      const createFallbackModel = () => {
+        const geometry = new THREE.BoxGeometry(1, 2, 0.1);
+        const material = new THREE.MeshStandardMaterial({ color: 0x5566ff });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.name = 'fallback_phone';
+        return mesh;
+      };
+
+      const loadModel = async () => {
+        const loader = new GLTFLoader();
+        const draco = new DRACOLoader();
+        draco.setDecoderPath(new URL('./lib/draco/', window.location.href).href);
+        loader.setDRACOLoader(draco);
+        try {
+          const modelUrl = new URL('./models/iphone_16_free.glb', window.location.href).href;
+          const gltf = await loader.loadAsync(modelUrl);
+          const model = gltf.scene || gltf.scenes?.[0];
+          if (!model) {
+            throw new Error('GLB scene is empty');
+          }
+          const box = new THREE.Box3().setFromObject(model);
+          const size = new THREE.Vector3();
+          box.getSize(size);
+          const center = new THREE.Vector3();
+          box.getCenter(center);
+          model.position.sub(center);
+
+          let meshCount = 0;
+          model.traverse((child) => {
+            if (!child.isMesh) return;
+            meshCount += 1;
+            child.frustumCulled = false;
+            if (child.material) {
+              const materials = Array.isArray(child.material) ? child.material : [child.material];
+              materials.forEach((mat) => {
+                if (!mat) return;
+                mat.side = THREE.DoubleSide;
+                mat.needsUpdate = true;
+              });
+            }
+          });
+
+          state.model = model;
+          state.scene.add(model);
+
+          state.screenMesh = findScreenMesh(model);
+          if (!state.screenMesh) {
+            setStatus('Screen mesh not detected. Texture will not apply.');
+          } else if (state.selectionTexture) {
+            applyTextureToMesh(state.screenMesh, state.selectionTexture);
+          }
+
+          fitCameraToObject(model);
+          setStatus(meshCount > 0 ? 'Model loaded.' : 'Model loaded, but no meshes found.');
+          return;
+        } catch (error) {
+          console.error('Failed to load GLB', error);
+          if (!state.model) {
+            const fallback = createFallbackModel();
+            state.model = fallback;
+            state.scene.add(fallback);
+            fitCameraToObject(fallback);
+          }
+          setStatus('Failed to load model. Using fallback.');
+        }
+      };
+
+      const updateCamera = () => {
+        const width = viewport.clientWidth;
+        const height = viewport.clientHeight;
+        state.renderer.setSize(width, height, false);
+        state.camera.aspect = width / height;
+        state.camera.updateProjectionMatrix();
+      };
+
+      const render = () => {
+        if (!state.renderer || !state.scene || !state.camera) return;
+        if (state.model) {
+          state.model.rotation.set(state.rotationX, state.rotationY, 0);
+        }
+        state.renderer.render(state.scene, state.camera);
+      };
+
+      const animate = () => {
+        render();
+        requestAnimationFrame(animate);
+      };
+
+      const createTextureFromSnapshot = async (snapshot) => {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+            const texture = new THREE.Texture(img);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.needsUpdate = true;
+            texture.flipY = false;
+            resolve(texture);
+          };
+          img.onerror = () => reject(new Error('Failed to load selection snapshot'));
+          img.src = `data:${snapshot.mime};base64,${snapshot.dataBase64}`;
+        });
+      };
+
+      const loadSelection = async () => {
+        try {
+          const selection = await rpc.call('selection.get');
+          if (!selection.primaryId) {
+            selectionPreview.src = '';
+            selectionEmpty.style.display = 'block';
+            state.selectionSnapshot = null;
+            return;
+          }
+
+          const snapshot = await rpc.call('export.snapshot', {
+            nodeId: selection.primaryId,
+            scale: 2,
+            format: 'png',
+            background: 'transparent',
+          });
+
+          state.selectionSnapshot = snapshot;
+          selectionPreview.src = `data:${snapshot.mime};base64,${snapshot.dataBase64}`;
+          selectionEmpty.style.display = 'none';
+          viewportOverlay.style.display = 'none';
+
+          const texture = await createTextureFromSnapshot(snapshot);
+          state.selectionTexture = texture;
+          applyTextureToMesh(state.screenMesh, texture);
+          setStatus('Selection loaded.');
+        } catch (error) {
+          setStatus(error.message);
+        }
+      };
+
+      const generateOutput = () => {
+        if (!state.renderer) return null;
+        const scale = Number(scaleSelect.value || 1);
+        const width = viewport.clientWidth;
+        const height = viewport.clientHeight;
+
+        state.renderer.setSize(width * scale, height * scale, false);
+        state.camera.aspect = (width * scale) / (height * scale);
+        state.camera.updateProjectionMatrix();
+        render();
+
+        const dataUrl = state.renderer.domElement.toDataURL('image/png');
+
+        state.renderer.setSize(width, height, false);
+        state.camera.aspect = width / height;
+        state.camera.updateProjectionMatrix();
+        render();
+
+        return {
+          mime: 'image/png',
+          dataBase64: dataUrl.split(',')[1],
+          width: width * scale,
+          height: height * scale,
+        };
+      };
+
+      const handleGenerate = () => {
+        if (!state.selectionSnapshot) {
+          setStatus('Load a selection first.');
+          return;
+        }
+        const output = generateOutput();
+        if (!output) {
+          setStatus('Failed to generate output.');
+          return;
+        }
+        state.output = output;
+        setStatus('Mockup generated.');
+      };
+
+      const handleInsert = async () => {
+        if (!state.output) {
+          setStatus('Generate a mockup first.');
+          return;
+        }
+        try {
+          await rpc.call('document.insertImage', {
+            dataBase64: state.output.dataBase64,
+            mime: state.output.mime,
+            width: state.output.width,
+            height: state.output.height,
+            name: 'MockRocket Mockup',
+          });
+          setStatus('Inserted into canvas.');
+        } catch (error) {
+          setStatus(error.message);
+        }
+      };
+
+      const handleDownload = async () => {
+        if (!state.output) {
+          setStatus('Generate a mockup first.');
+          return;
+        }
+        try {
+          await rpc.call('fs.saveFile', {
+            suggestedName: 'mockrocket-mockup.png',
+            mime: state.output.mime,
+            dataBase64: state.output.dataBase64,
+          });
+          setStatus('Saved file.');
+        } catch (error) {
+          setStatus(error.message);
+        }
+      };
+
+      const handlePointerDown = (event) => {
+        state.dragging = true;
+        state.lastX = event.clientX;
+        state.lastY = event.clientY;
+        glCanvas.classList.add('dragging');
+      };
+
+      const handlePointerMove = (event) => {
+        if (!state.dragging) return;
+        const dx = event.clientX - state.lastX;
+        const dy = event.clientY - state.lastY;
+        state.lastX = event.clientX;
+        state.lastY = event.clientY;
+        state.rotationY += dx * 0.005;
+        state.rotationX += dy * 0.005;
+        state.rotationX = Math.max(-1.2, Math.min(0.2, state.rotationX));
+      };
+
+      const handlePointerUp = () => {
+        state.dragging = false;
+        glCanvas.classList.remove('dragging');
+      };
+
+      document.querySelectorAll('.icon-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const mode = btn.dataset.rot;
+          if (mode === 'front') {
+            state.rotationX = 0;
+            state.rotationY = 0;
+          }
+          if (mode === 'flat') {
+            state.rotationX = -1.1;
+            state.rotationY = 0;
+          }
+          if (mode === 'tilt') {
+            state.rotationX = -0.4;
+            state.rotationY = -0.5;
+          }
+          if (mode === 'perspective') {
+            state.rotationX = -0.6;
+            state.rotationY = 0.7;
+          }
+          render();
+        });
+      });
+
+      document.getElementById('loadSelection').addEventListener('click', loadSelection);
+      document.getElementById('refreshSelection').addEventListener('click', loadSelection);
+      document.getElementById('download').addEventListener('click', handleDownload);
+      document.getElementById('insert').addEventListener('click', handleInsert);
+
+      glCanvas.addEventListener('pointerdown', handlePointerDown);
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', handlePointerUp);
+
+      setupScene();
+      loadModel().then(() => {
+        updateCamera();
+        animate();
+      });
+
+      window.addEventListener('resize', updateCamera);
+    </script>
+  </body>
+</html>

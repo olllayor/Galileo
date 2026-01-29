@@ -1,4 +1,4 @@
-import type { Node } from '../doc/types';
+import type { Asset, Node } from '../doc/types';
 
 export interface BaseCommand {
   id: string;
@@ -49,6 +49,14 @@ export interface SetPropsCommand extends BaseCommand {
   };
 }
 
+export interface CreateAssetCommand extends BaseCommand {
+  type: 'createAsset';
+  payload: {
+    id: string;
+    asset: Asset;
+  };
+}
+
 export interface BatchCommand extends BaseCommand {
   type: 'batch';
   payload: {
@@ -62,6 +70,7 @@ export type Command =
   | MoveNodeCommand
   | ResizeNodeCommand
   | SetPropsCommand
+  | CreateAssetCommand
   | BatchCommand;
 
 export const isCommand = (value: unknown): value is Command => {
