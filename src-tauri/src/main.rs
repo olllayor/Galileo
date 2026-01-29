@@ -1,6 +1,6 @@
 use std::fs;
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Manager, path::BaseDirectory};
 use base64::{engine::general_purpose, Engine as _};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -85,6 +85,16 @@ fn load_binary(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn load_resource_binary(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    let resolved = app
+        .path()
+        .resolve(path, BaseDirectory::Resource)
+        .map_err(|e| e.to_string())?;
+    let bytes = fs::read(&resolved).map_err(|e| e.to_string())?;
+    Ok(general_purpose::STANDARD.encode(bytes))
+}
+
+#[tauri::command]
 fn load_text(path: String) -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| e.to_string())
 }
@@ -119,6 +129,7 @@ fn main() {
             show_open_folder,
             show_import_dialog,
             load_binary,
+            load_resource_binary,
             load_text,
             show_save_image_dialog,
             save_binary,

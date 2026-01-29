@@ -74,16 +74,6 @@
         opacity: 0.6;
         cursor: default;
       }
-      .warn {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 12px;
-        color: #f4b24b;
-        padding: 4px 8px;
-        border-radius: 999px;
-        background: rgba(244, 178, 75, 0.15);
-      }
       .content {
         flex: 1;
         display: grid;
@@ -231,7 +221,6 @@
         </div>
         <button id="loadSelection" class="primary">Load selection</button>
         <button class="ghost">Draw guide frame</button>
-        <div class="warn">8 trial exports left</div>
         <button class="disabled">Activate</button>
         <select id="scaleSelect">
           <option value="1">1x</option>
@@ -299,9 +288,9 @@
       </div>
     </div>
 
-    <script src="./lib/three.min.js"></script>
-    <script src="./lib/DRACOLoader.legacy.js"></script>
-    <script src="./lib/GLTFLoader.legacy.js"></script>
+    <script src="./lib/three.min.js?v=2"></script>
+    <script src="./lib/DRACOLoader.legacy.js?v=2"></script>
+    <script src="./lib/GLTFLoader.legacy.js?v=2"></script>
     <script>
       const { GLTFLoader, DRACOLoader } = THREE;
 
@@ -343,6 +332,16 @@
           entry.reject(new Error(data.error?.message || 'RPC error'));
         }
       });
+
+      const base64ToArrayBuffer = (base64) => {
+        const binary = atob(base64);
+        const len = binary.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i += 1) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+      };
 
       const state = {
         selectionSnapshot: null,
@@ -451,8 +450,16 @@
         draco.setDecoderPath(new URL('./lib/draco/', window.location.href).href);
         loader.setDRACOLoader(draco);
         try {
-          const modelUrl = new URL('./models/iphone_16_free.glb', window.location.href).href;
-          const gltf = await loader.loadAsync(modelUrl);
+          setStatus('Loading model...');
+          const asset = await rpc.call('asset.load', {
+            scope: 'bundle',
+            path: 'models/iphone_16_free.glb',
+            encoding: 'base64',
+          });
+          const buffer = base64ToArrayBuffer(asset.dataBase64);
+          const gltf = await new Promise((resolve, reject) => {
+            loader.parse(buffer, '', resolve, reject);
+          });
           const model = gltf.scene || gltf.scenes?.[0];
           if (!model) {
             throw new Error('GLB scene is empty');
@@ -500,7 +507,8 @@
             state.scene.add(fallback);
             fitCameraToObject(fallback);
           }
-          setStatus('Failed to load model. Using fallback.');
+          const message = error instanceof Error ? error.message : 'Failed to load model.';
+          setStatus(`${message} Using fallback.`);
         }
       };
 

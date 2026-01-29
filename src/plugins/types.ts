@@ -2,7 +2,9 @@ export type PluginPermission =
   | 'selection:read'
   | 'export:snapshot'
   | 'document:write'
-  | 'fs:save';
+  | 'fs:save'
+  | 'asset:read'
+  | 'asset:read:shared';
 
 export type PluginManifest = {
   id: string;
@@ -11,6 +13,10 @@ export type PluginManifest = {
   entry: string;
   icon?: string;
   permissions?: PluginPermission[];
+  assets?: {
+    bundle?: string[];
+    shared?: string[];
+  };
   ui?: { width?: number; height?: number };
 };
 

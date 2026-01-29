@@ -354,6 +354,89 @@ const joinPath = (base: string, segment: string): string => {
   return `${base}/${segment}`;
 };
 
+const MAX_ASSET_BYTES = 50 * 1024 * 1024;
+const BUNDLE_ASSET_EXTENSIONS = new Set(['glb', 'png', 'jpg', 'jpeg', 'hdr']);
+const SHARED_ASSET_EXTENSIONS = new Set(['glb', 'png', 'hdr']);
+
+const normalizeAssetPath = (input: string): string | null => {
+  if (!input) return null;
+  if (input.startsWith('/') || /^[a-zA-Z]:/.test(input)) return null;
+  const normalized = input.replace(/\\/g, '/');
+  const parts = normalized.split('/');
+  const output: string[] = [];
+  for (const part of parts) {
+    if (!part || part === '.') continue;
+    if (part === '..') return null;
+    output.push(part);
+  }
+  if (output.length === 0) return null;
+  return output.join('/');
+};
+
+const getAssetExtension = (path: string): string | null => {
+  const last = path.split('/').pop();
+  if (!last || !last.includes('.')) return null;
+  return last.split('.').pop()?.toLowerCase() ?? null;
+};
+
+const getMimeForExtension = (extension: string | null): string => {
+  switch (extension) {
+    case 'glb':
+      return 'model/gltf-binary';
+    case 'png':
+      return 'image/png';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'hdr':
+      return 'image/vnd.radiance';
+    default:
+      return 'application/octet-stream';
+  }
+};
+
+const getBase64ByteLength = (base64: string): number => {
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  return Math.floor((base64.length * 3) / 4) - padding;
+};
+
+const base64ToUint8Array = (base64: string): Uint8Array => {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+};
+
+const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+};
+
+const isAllowedAssetPath = (allowlist: string[] | undefined, path: string): boolean => {
+  if (!allowlist || allowlist.length === 0) return false;
+  return allowlist.some(entry => normalizeAssetPath(entry) === path);
+};
+
+const getPluginBundleBasePath = (plugin: PluginRegistration): string | null => {
+  const entryUrl = plugin.entryUrl.split('?')[0];
+  try {
+    const url = new URL(entryUrl, window.location.origin);
+    const pathname = url.pathname;
+    const index = pathname.lastIndexOf('/');
+    if (index === -1) return null;
+    return pathname.slice(0, index + 1);
+  } catch {
+    return null;
+  }
+};
+
 const resolveStoredPlugin = (stored: StoredPlugin): PluginRegistration | null => {
   if (!stored.path) return null;
   const entryPath = joinPath(stored.path, stored.manifest.entry);
@@ -1004,6 +1087,124 @@ export const App: React.FC = () => {
           return { rpc: 1, id: request.id, ok: true, result: { savedPath } };
         }
 
+        case 'asset.load': {
+          const params = (request.params || {}) as {
+            scope?: 'bundle' | 'shared';
+            path?: string;
+            encoding?: 'base64' | 'binary';
+          };
+          if (!params.scope || !params.path) {
+            return fail('invalid_params', 'scope and path are required');
+          }
+          if (params.encoding && params.encoding !== 'base64') {
+            return fail('unsupported_encoding', 'Only base64 encoding is supported');
+          }
+
+          const normalizedPath = normalizeAssetPath(params.path);
+          if (!normalizedPath) {
+            return fail('invalid_path', 'Invalid asset path');
+          }
+
+          if (params.scope === 'shared' && !normalizedPath.startsWith('v1/')) {
+            return fail('invalid_path', 'Shared assets must be under v1/');
+          }
+
+          if (params.scope === 'bundle' && !hasPermission(plugin.manifest, 'asset:read')) {
+            return fail('forbidden_permission', 'asset:read is required');
+          }
+          if (params.scope === 'shared' && !hasPermission(plugin.manifest, 'asset:read:shared')) {
+            return fail('forbidden_permission', 'asset:read:shared is required');
+          }
+
+          const allowlist = params.scope === 'bundle'
+            ? plugin.manifest.assets?.bundle
+            : plugin.manifest.assets?.shared;
+          if (!isAllowedAssetPath(allowlist, normalizedPath)) {
+            return fail('forbidden_allowlist', 'Asset not allowlisted');
+          }
+
+          const extension = getAssetExtension(normalizedPath);
+          const extensionSet = params.scope === 'bundle' ? BUNDLE_ASSET_EXTENSIONS : SHARED_ASSET_EXTENSIONS;
+          if (!extension || !extensionSet.has(extension)) {
+            return fail('unsupported_extension', 'Asset extension not supported');
+          }
+
+          let dataBase64: string | null = null;
+          try {
+            if (params.scope === 'shared') {
+              const sharedPath = joinPath('plugins/shared', normalizedPath);
+              if (isDev) {
+                const url = new URL(`/${sharedPath}`, window.location.origin);
+                const response = await fetch(url.toString());
+                if (!response.ok) {
+                  return fail('not_found', 'Shared asset not found');
+                }
+                dataBase64 = arrayBufferToBase64(await response.arrayBuffer());
+              } else {
+                dataBase64 = await invoke<string>('load_resource_binary', { path: sharedPath });
+              }
+            } else if (plugin.path) {
+              const filePath = joinPath(plugin.path, normalizedPath);
+              dataBase64 = await invoke<string>('load_binary', { path: filePath });
+            } else {
+              const bundleBase = getPluginBundleBasePath(plugin);
+              if (!bundleBase) {
+                return fail('invalid_path', 'Unable to resolve plugin bundle path');
+              }
+              if (isDev) {
+                const assetUrl = new URL(joinPath(bundleBase, normalizedPath), window.location.origin);
+                const response = await fetch(assetUrl.toString());
+                if (!response.ok) {
+                  return fail('not_found', 'Asset not found');
+                }
+                dataBase64 = arrayBufferToBase64(await response.arrayBuffer());
+              } else {
+                const resourceBase = bundleBase.startsWith('/') ? bundleBase.slice(1) : bundleBase;
+                const resourcePath = joinPath(resourceBase, normalizedPath);
+                dataBase64 = await invoke<string>('load_resource_binary', { path: resourcePath });
+              }
+            }
+          } catch (error) {
+            console.error('Asset load failed', error);
+            return fail('not_found', 'Asset not found');
+          }
+
+          if (!dataBase64) {
+            return fail('not_found', 'Asset not found');
+          }
+
+          const bytes = getBase64ByteLength(dataBase64);
+          if (bytes > MAX_ASSET_BYTES) {
+            return fail('too_large', 'Asset exceeds size limit');
+          }
+
+          let sha256: string | undefined;
+          try {
+            if (crypto?.subtle) {
+              const bytesArray = base64ToUint8Array(dataBase64);
+              const digest = await crypto.subtle.digest('SHA-256', bytesArray);
+              sha256 = Array.from(new Uint8Array(digest))
+                .map(byte => byte.toString(16).padStart(2, '0'))
+                .join('');
+            }
+          } catch {
+            sha256 = undefined;
+          }
+
+          return {
+            rpc: 1,
+            id: request.id,
+            ok: true,
+            result: {
+              mime: getMimeForExtension(extension),
+              encoding: 'base64',
+              dataBase64,
+              bytes,
+              ...(sha256 ? { sha256 } : {}),
+            },
+          };
+        }
+
         default:
           return fail('unknown_method', `Unknown method ${request.method}`);
       }
@@ -1011,7 +1212,7 @@ export const App: React.FC = () => {
       console.error('Plugin RPC error', error);
       return fail('internal_error', error instanceof Error ? error.message : 'Unknown error');
     }
-  }, [document, getDefaultInsertPosition, insertImageNode, selectionIds]);
+  }, [document, getDefaultInsertPosition, insertImageNode, isDev, selectionIds]);
 
   useEffect(() => {
     if (!activePlugin) {
