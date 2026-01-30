@@ -1,6 +1,7 @@
 import { CanvasRenderer } from './canvas-renderer';
 import { buildDrawListForNode } from './draw-list';
 import type { Document } from '../core/doc/types';
+import type { DrawImageCommand } from './draw-list/types';
 
 export type SnapshotOptions = {
   scale?: number;
@@ -67,7 +68,7 @@ export const exportNodeSnapshot = async (
     clipToBounds: options.clipToBounds,
   });
   const imageSources = commands
-    .filter((cmd): cmd is { type: 'image'; src: string } => cmd.type === 'image')
+    .filter((cmd): cmd is DrawImageCommand => cmd.type === 'image')
     .map(cmd => cmd.src);
   await preloadImages(imageSources);
 

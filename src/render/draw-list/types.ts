@@ -1,3 +1,22 @@
+export type Paint = string | GradientPaint;
+
+export interface GradientStop {
+  offset: number;
+  color: string;
+}
+
+export interface GradientPaint {
+  type: 'gradient';
+  kind?: 'linear' | 'radial';
+  stops: GradientStop[];
+  from?: { x: number; y: number };
+  to?: { x: number; y: number };
+  center?: { x: number; y: number };
+  radius?: number;
+  innerRadius?: number;
+  angle?: number;
+}
+
 export type DrawCommand =
   | DrawRectCommand
   | DrawTextCommand
@@ -13,8 +32,8 @@ export interface DrawRectCommand {
   y: number;
   width: number;
   height: number;
-  fill?: string;
-  stroke?: string;
+  fill?: Paint;
+  stroke?: Paint;
   strokeWidth?: number;
   cornerRadius?: number;
   opacity?: number;
@@ -37,8 +56,8 @@ export interface DrawEllipseCommand {
   y: number;
   radiusX: number;
   radiusY: number;
-  fill?: string;
-  stroke?: string;
+  fill?: Paint;
+  stroke?: Paint;
   strokeWidth?: number;
   opacity?: number;
 }
@@ -56,10 +75,15 @@ export interface DrawImageCommand {
 export interface DrawPathCommand {
   type: 'path';
   d: string;
-  fill?: string;
-  stroke?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fill?: Paint;
+  stroke?: Paint;
   strokeWidth?: number;
   opacity?: number;
+  fillRule?: 'nonzero' | 'evenodd';
 }
 
 export interface ClipCommand {

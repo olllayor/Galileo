@@ -7,7 +7,12 @@ import { ContextMenu, type ContextMenuItem } from './ui/ContextMenu';
 import { PluginModal } from './ui/PluginModal';
 import { PluginManagerModal } from './ui/PluginManagerModal';
 import { useDocument } from './hooks/useDocument';
-import { findNodeAtPosition, createRectangleTool, createTextTool } from './interaction/tools';
+import {
+  createRectangleTool,
+  createTextTool,
+  hitTestNodeAtPosition,
+  type HitKind,
+} from './interaction/tools';
 import {
   buildParentMap,
   buildWorldPositionMap,
@@ -49,6 +54,7 @@ const clamp = (value: number, min: number, max: number): number => {
 
 const HANDLE_HIT_SIZE = 14;
 const HIT_SLOP_PX = 6;
+const EDGE_MIN_PX = 6;
 const AUTOSAVE_KEY = 'galileo.autosave.v1';
 const AUTOSAVE_DELAY_MS = 1500;
 const ZOOM_SENSITIVITY = 0.0035;
@@ -87,6 +93,13 @@ type DragState =
     baseSelection: string[];
     additive: boolean;
   };
+
+type HoverHit = {
+  id: string;
+  kind: HitKind;
+  locked: boolean;
+  edgeCursor?: string;
+};
 
 const applyPositionUpdates = (
   doc: Document,
@@ -540,7 +553,7 @@ export const App: React.FC = () => {
   const [previewDocument, setPreviewDocument] = useState<Document | null>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [hoverHandle, setHoverHandle] = useState<ResizeHandle | null>(null);
-  const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
+  const [hoverHit, setHoverHit] = useState<HoverHit | null>(null);
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
   const [snapDisabled, setSnapDisabled] = useState(false);
   const [currentPath, setCurrentPath] = useState<string | null>(null);
@@ -593,9 +606,10 @@ export const App: React.FC = () => {
     return parts[parts.length - 1] || 'Untitled';
   }, [currentPath]);
   const hoverBounds = useMemo(() => {
-    if (!hoverNodeId || selectionIds.includes(hoverNodeId)) return null;
-    return getNodeWorldBounds(displayDocument, hoverNodeId, worldMap);
-  }, [hoverNodeId, selectionIds, displayDocument, worldMap]);
+    const hoverId = hoverHit?.id;
+    if (!hoverId || selectionIds.includes(hoverId)) return null;
+    return getNodeWorldBounds(displayDocument, hoverId, worldMap);
+  }, [hoverHit, selectionIds, displayDocument, worldMap]);
   const marqueeRect = useMemo(() => {
     if (dragState?.mode !== 'marquee') return null;
     const worldRect = rectFromPoints(dragState.startWorld, dragState.currentWorld);
@@ -606,15 +620,66 @@ export const App: React.FC = () => {
       height: worldRect.height * view.zoom,
     };
   }, [dragState, view]);
+  const hitTestAtPoint = useCallback(
+    (worldX: number, worldY: number) =>
+      hitTestNodeAtPosition(displayDocument, worldX, worldY, zoom, {
+        hitSlopPx: HIT_SLOP_PX,
+        edgeMinPx: EDGE_MIN_PX,
+      }),
+    [displayDocument, zoom]
+  );
+  const getEdgeCursorForNode = useCallback(
+    (nodeId: string, worldX: number, worldY: number): string => {
+      const node = displayDocument.nodes[nodeId];
+      const pos = worldMap[nodeId];
+      if (!node || !pos) {
+        return 'default';
+      }
+      const { width, height } = node.size;
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        return 'default';
+      }
+
+      const zoomSafe = zoom > 0 ? zoom : 1;
+      const strokeWidth = Number.isFinite(node.stroke?.width) ? node.stroke!.width : 0;
+      const edgeWorld = Math.max(strokeWidth / 2, EDGE_MIN_PX / zoomSafe) + HIT_SLOP_PX / zoomSafe;
+      const left = pos.x;
+      const right = pos.x + width;
+      const top = pos.y;
+      const bottom = pos.y + height;
+
+      const nearLeft = Math.abs(worldX - left) <= edgeWorld;
+      const nearRight = Math.abs(worldX - right) <= edgeWorld;
+      const nearTop = Math.abs(worldY - top) <= edgeWorld;
+      const nearBottom = Math.abs(worldY - bottom) <= edgeWorld;
+
+      if ((nearLeft || nearRight) && (nearTop || nearBottom)) {
+        if ((nearLeft && nearTop) || (nearRight && nearBottom)) {
+          return 'nwse-resize';
+        }
+        return 'nesw-resize';
+      }
+      if (nearLeft || nearRight) {
+        return 'ew-resize';
+      }
+      if (nearTop || nearBottom) {
+        return 'ns-resize';
+      }
+      return 'default';
+    },
+    [displayDocument, worldMap, zoom]
+  );
   const cursor = useMemo(() => {
     if (dragState?.mode === 'resize') return getHandleCursor(dragState.handle);
     if (dragState?.mode === 'pan') return 'grabbing';
     if (dragState?.mode === 'move') return 'move';
     if (hoverHandle) return getHandleCursor(hoverHandle);
-    if (hoverNodeId) return 'pointer';
+    if (hoverHit?.locked) return 'not-allowed';
+    if (hoverHit?.kind === 'edge') return hoverHit.edgeCursor || 'default';
+    if (hoverHit) return 'move';
     if (activeTool === 'rectangle' || activeTool === 'text') return 'crosshair';
     return 'default';
-  }, [dragState, hoverHandle, hoverNodeId, activeTool]);
+  }, [dragState, hoverHandle, hoverHit, activeTool]);
 
   useEffect(() => {
     if (recentPluginIds.length === 0 && builtinPlugins.length > 0) {
@@ -1379,18 +1444,23 @@ export const App: React.FC = () => {
       }
     }
 
-    const hitSlopWorld = HIT_SLOP_PX / Math.max(zoom, 0.0001);
-    const node = findNodeAtPosition(displayDocument, worldX, worldY, hitSlopWorld);
-    if (node && node.id !== displayDocument.rootId) {
-      if (info.shiftKey) {
-        toggleSelection(node.id);
+    const hit = hitTestAtPoint(worldX, worldY);
+    if (hit && hit.node.id !== displayDocument.rootId) {
+      if (hit.locked) {
         return true;
       }
 
-      const isAlreadySelected = selectionIds.includes(node.id);
-      const nextSelection = isAlreadySelected ? selectionIds : [node.id];
+      const nodeId = hit.node.id;
+      const node = document.nodes[nodeId] ?? hit.node;
+      if (info.shiftKey) {
+        toggleSelection(nodeId);
+        return true;
+      }
+
+      const isAlreadySelected = selectionIds.includes(nodeId);
+      const nextSelection = isAlreadySelected ? selectionIds : [nodeId];
       if (!isAlreadySelected) {
-        selectNode(node.id);
+        selectNode(nodeId);
       }
 
       const initialPositions: Record<string, { x: number; y: number }> = {};
@@ -1403,7 +1473,7 @@ export const App: React.FC = () => {
 
       const startBounds = getSelectionBounds(document, nextSelection);
       const snapTargets = nextSelection.length === 1
-        ? buildSiblingSnapTargets(document, node.id, parentMap, worldMap)
+        ? buildSiblingSnapTargets(document, nodeId, parentMap, worldMap)
         : { x: [], y: [] };
 
       setDragState({
@@ -1435,12 +1505,12 @@ export const App: React.FC = () => {
       additive,
     });
     return true;
-  }, [displayDocument, document, parentMap, selectionBounds, selectionIds, selectNode, setSelection, toggleSelection, view, worldMap, zoom]);
+  }, [displayDocument, document, parentMap, selectionBounds, selectionIds, selectNode, setSelection, toggleSelection, view, worldMap, hitTestAtPoint]);
 
   const handleCanvasMouseDown = useCallback((info: CanvasPointerInfo) => {
     const { worldX, worldY, screenX, screenY } = info;
     setHoverHandle(null);
-    setHoverNodeId(null);
+    setHoverHit(null);
     setSnapGuides([]);
 
     if (info.button === 2 || (info.buttons & 2) === 2) {
@@ -1468,9 +1538,11 @@ export const App: React.FC = () => {
         }
       }
 
-      const hitSlopWorld = HIT_SLOP_PX / Math.max(zoom, 0.0001);
-      const hitNode = findNodeAtPosition(displayDocument, worldX, worldY, hitSlopWorld);
-      if (hitNode && hitNode.id !== displayDocument.rootId) {
+      const hit = hitTestAtPoint(worldX, worldY);
+      if (hit && hit.node.id !== displayDocument.rootId) {
+        if (hit.locked) {
+          return;
+        }
         setActiveTool('select');
         handleSelectionPointerDown(info);
         return;
@@ -1514,9 +1586,11 @@ export const App: React.FC = () => {
         }
       }
 
-      const hitSlopWorld = HIT_SLOP_PX / Math.max(zoom, 0.0001);
-      const hitNode = findNodeAtPosition(displayDocument, worldX, worldY, hitSlopWorld);
-      if (hitNode && hitNode.id !== displayDocument.rootId) {
+      const hit = hitTestAtPoint(worldX, worldY);
+      if (hit && hit.node.id !== displayDocument.rootId) {
+        if (hit.locked) {
+          return;
+        }
         setActiveTool('select');
         handleSelectionPointerDown(info);
         return;
@@ -1562,7 +1636,7 @@ export const App: React.FC = () => {
         setActiveTool('select');
       }
     }
-  }, [activeTool, displayDocument, document, executeCommand, handleSelectionPointerDown, panOffset, selectNode, selectionBounds, selectionIds, setActiveTool, view, zoom, measureTextSize]);
+  }, [activeTool, displayDocument, document, executeCommand, handleSelectionPointerDown, selectNode, selectionBounds, selectionIds, setActiveTool, view, measureTextSize, hitTestAtPoint]);
 
   const handleCanvasContextMenu = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     event.preventDefault();
@@ -1672,16 +1746,25 @@ export const App: React.FC = () => {
     }
 
     if (activeTool === 'select' && !nextHandle) {
-      const hitSlopWorld = HIT_SLOP_PX / Math.max(zoom, 0.0001);
-      const node = findNodeAtPosition(displayDocument, worldX, worldY, hitSlopWorld);
-      const nextHover = node && node.id !== displayDocument.rootId ? node.id : null;
-      if (nextHover !== hoverNodeId) {
-        setHoverNodeId(nextHover);
+      const hit = hitTestAtPoint(worldX, worldY);
+      const edgeCursor = hit && hit.kind === 'edge'
+        ? getEdgeCursorForNode(hit.node.id, worldX, worldY)
+        : undefined;
+      const nextHover = hit && hit.node.id !== displayDocument.rootId
+        ? { id: hit.node.id, kind: hit.kind, locked: hit.locked, edgeCursor }
+        : null;
+      const isSameHover =
+        nextHover?.id === hoverHit?.id &&
+        nextHover?.kind === hoverHit?.kind &&
+        nextHover?.locked === hoverHit?.locked &&
+        nextHover?.edgeCursor === hoverHit?.edgeCursor;
+      if (!isSameHover) {
+        setHoverHit(nextHover);
       }
-    } else if (hoverNodeId) {
-      setHoverNodeId(null);
+    } else if (hoverHit) {
+      setHoverHit(null);
     }
-  }, [activeTool, dragState, selectionBounds, selectionIds, view, zoom, snapDisabled, hoverHandle, hoverNodeId, document, displayDocument, worldMap, parentMap, setSelection]);
+  }, [activeTool, dragState, selectionBounds, selectionIds, view, snapDisabled, hoverHandle, hoverHit, document, displayDocument, worldMap, parentMap, setSelection, hitTestAtPoint, getEdgeCursorForNode]);
 
   const handleCanvasMouseUp = useCallback((info: CanvasPointerInfo) => {
     if (!dragState) return;
@@ -1690,6 +1773,7 @@ export const App: React.FC = () => {
       setDragState(null);
       setSnapGuides([]);
       setHoverHandle(null);
+      setHoverHit(null);
       return;
     }
 
@@ -1801,7 +1885,7 @@ export const App: React.FC = () => {
     setDragState(null);
     setSnapGuides([]);
     setHoverHandle(null);
-    setHoverNodeId(null);
+    setHoverHit(null);
   }, [dragState, snapDisabled, zoom, executeCommand, parentMap, worldMap]);
 
   const handleCanvasWheel = useCallback((info: CanvasWheelInfo) => {
@@ -1946,7 +2030,7 @@ export const App: React.FC = () => {
         setDragState(null);
         setSnapGuides([]);
         setHoverHandle(null);
-        setHoverNodeId(null);
+        setHoverHit(null);
         localStorage.removeItem(AUTOSAVE_KEY);
         if (result.warnings.length > 0) {
           console.warn('Document warnings:', result.warnings);
@@ -1975,7 +2059,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     setHoverHandle(null);
-    setHoverNodeId(null);
+    setHoverHit(null);
   }, [selectionIds]);
 
   useEffect(() => {
@@ -2323,7 +2407,7 @@ export const App: React.FC = () => {
             cursor={cursor}
             onMouseLeave={() => {
               setHoverHandle(null);
-              setHoverNodeId(null);
+              setHoverHit(null);
             }}
             onMouseDown={handleCanvasMouseDown}
             onMouseMove={handleCanvasMouseMove}

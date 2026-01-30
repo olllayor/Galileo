@@ -1,14 +1,18 @@
 import { z } from 'zod';
 
+const gradientSchema = z
+  .object({
+    type: z.literal('gradient'),
+    stops: z.any().array(),
+  })
+  .passthrough();
+
 export const colorSchema = z.union([
   z.object({
     type: z.literal('solid'),
     value: z.string(),
   }),
-  z.object({
-    type: z.literal('gradient'),
-    stops: z.any().array(),
-  }),
+  gradientSchema,
 ]);
 
 export type Color = z.infer<typeof colorSchema>;
@@ -88,6 +92,21 @@ export const nodeSchema = z.object({
       assetId: z.string().optional(),
     })
     .optional(),
+
+  path: z
+    .union([
+      z.string(),
+      z
+        .object({
+          d: z.string(),
+          fillRule: z.enum(['nonzero', 'evenodd']).optional(),
+        })
+        .passthrough(),
+    ])
+    .optional(),
+
+  pathData: z.string().optional(),
+  d: z.string().optional(),
 
   componentId: z.string().optional(),
   variant: z.record(z.any()).optional(),
