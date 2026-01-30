@@ -1,0 +1,31 @@
+<svg width="1400" height="1800" viewBox="0 0 1400 1800" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bezel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#141414" />
+      <stop offset="100%" stop-color="#0b0b0b" />
+    </linearGradient>
+  </defs>
+  <path fill="url(#bezel)" fill-rule="evenodd" d="
+    M240,50
+    h920
+    a120,120 0 0 1 120,120
+    v1460
+    a120,120 0 0 1 -120,120
+    h-920
+    a120,120 0 0 1 -120,-120
+    v-1460
+    a120,120 0 0 1 120,-120
+    Z
+    M290,120
+    h820
+    a90,90 0 0 1 90,90
+    v1380
+    a90,90 0 0 1 -90,90
+    h-820
+    a90,90 0 0 1 -90,-90
+    v-1380
+    a90,90 0 0 1 90,-90
+    Z"/>
+  <rect x="600" y="140" width="200" height="36" rx="18" fill="#050505" opacity="0.9" />
+  <rect x="630" y="148" width="90" height="20" rx="10" fill="#111111" opacity="0.7" />
+</svg>

@@ -343,15 +343,33 @@
         return bytes.buffer;
       };
 
+      const base64ToText = (base64) => {
+        const binary = atob(base64);
+        const len = binary.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i += 1) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return new TextDecoder('utf-8').decode(bytes);
+      };
+
+      const assetCache = new Map();
+
       const state = {
         selectionSnapshot: null,
         selectionTexture: null,
+        selectionImage: null,
+        selectionMeta: null,
+        selectionFit: 'cover',
         output: null,
         model: null,
         screenMesh: null,
         renderer: null,
         scene: null,
         camera: null,
+        preset: null,
+        forceFastMode: null,
+        envTexture: null,
         rotationX: -0.2,
         rotationY: -0.4,
         dragging: false,
@@ -364,6 +382,202 @@
       };
 
       setStatus('Ready');
+
+      const loadAsset = async (ref) => {
+        if (!ref || !ref.scope || !ref.path) {
+          throw new Error('Invalid asset reference');
+        }
+        const key = `${ref.scope}:${ref.path}`;
+        if (assetCache.has(key)) return assetCache.get(key);
+        const asset = await rpc.call('asset.load', {
+          scope: ref.scope,
+          path: ref.path,
+          encoding: 'base64',
+        });
+        assetCache.set(key, asset);
+        return asset;
+      };
+
+      const loadJsonAsset = async (ref) => {
+        const asset = await loadAsset(ref);
+        const text = base64ToText(asset.dataBase64);
+        return JSON.parse(text);
+      };
+
+      const loadImageFromDataUrl = (dataUrl) => {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error('Failed to load image'));
+          img.src = dataUrl;
+        });
+      };
+
+      const loadImageAsset = async (ref) => {
+        const asset = await loadAsset(ref);
+        const dataUrl = `data:${asset.mime};base64,${asset.dataBase64}`;
+        return loadImageFromDataUrl(dataUrl);
+      };
+
+      const decodeHDR = (buffer) => {
+        const bytes = new Uint8Array(buffer);
+        let offset = 0;
+
+        const readLine = () => {
+          let line = '';
+          while (offset < bytes.length) {
+            const char = bytes[offset++];
+            if (char === 10) break;
+            if (char === 13) continue;
+            line += String.fromCharCode(char);
+          }
+          return line;
+        };
+
+        let line = '';
+        while (offset < bytes.length) {
+          line = readLine();
+          if (line === '') break;
+        }
+
+        const resolution = readLine();
+        const match = resolution.match(/-Y\\s+(\\d+)\\s+\\+X\\s+(\\d+)/i)
+          || resolution.match(/\\+Y\\s+(\\d+)\\s+\\+X\\s+(\\d+)/i);
+        if (!match) {
+          throw new Error('Invalid HDR resolution');
+        }
+        const height = Number(match[1]);
+        const width = Number(match[2]);
+
+        const rgbe = new Uint8Array(width * height * 4);
+        let ptr = 0;
+
+        for (let y = 0; y < height; y += 1) {
+          if (
+            offset + 4 <= bytes.length
+            && bytes[offset] === 2
+            && bytes[offset + 1] === 2
+          ) {
+            const scanlineWidth = (bytes[offset + 2] << 8) | bytes[offset + 3];
+            if (scanlineWidth !== width) {
+              throw new Error('HDR scanline width mismatch');
+            }
+            offset += 4;
+            const scanline = new Uint8Array(width * 4);
+            for (let channel = 0; channel < 4; channel += 1) {
+              let i = 0;
+              while (i < width) {
+                const count = bytes[offset++];
+                if (count > 128) {
+                  const run = count - 128;
+                  const value = bytes[offset++];
+                  for (let r = 0; r < run; r += 1) {
+                    scanline[channel * width + i++] = value;
+                  }
+                } else {
+                  for (let r = 0; r < count; r += 1) {
+                    scanline[channel * width + i++] = bytes[offset++];
+                  }
+                }
+              }
+            }
+            for (let x = 0; x < width; x += 1) {
+              rgbe[ptr++] = scanline[x];
+              rgbe[ptr++] = scanline[width + x];
+              rgbe[ptr++] = scanline[width * 2 + x];
+              rgbe[ptr++] = scanline[width * 3 + x];
+            }
+          } else {
+            const remaining = width * 4;
+            rgbe.set(bytes.subarray(offset, offset + remaining), ptr);
+            offset += remaining;
+            ptr += remaining;
+          }
+        }
+
+        return { width, height, data: rgbe };
+      };
+
+      const createEnvironmentTexture = (hdr) => {
+        const { width, height, data } = hdr;
+        const ldr = new Uint8Array(width * height * 4);
+        const exposure = 1.0;
+        for (let i = 0; i < data.length; i += 4) {
+          const e = data[i + 3];
+          let r = 0;
+          let g = 0;
+          let b = 0;
+          if (e !== 0) {
+            const scale = Math.pow(2, e - 128) / 255;
+            r = data[i] * scale * exposure;
+            g = data[i + 1] * scale * exposure;
+            b = data[i + 2] * scale * exposure;
+          }
+          const idx = i;
+          ldr[idx] = Math.max(0, Math.min(255, Math.round(r * 255)));
+          ldr[idx + 1] = Math.max(0, Math.min(255, Math.round(g * 255)));
+          ldr[idx + 2] = Math.max(0, Math.min(255, Math.round(b * 255)));
+          ldr[idx + 3] = 255;
+        }
+        const texture = new THREE.DataTexture(ldr, width, height, THREE.RGBAFormat);
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.needsUpdate = true;
+        return texture;
+      };
+
+      const applyEnvironment = async (envRef) => {
+        if (!envRef || !state.scene) return;
+        try {
+          const asset = await loadAsset(envRef);
+          const buffer = base64ToArrayBuffer(asset.dataBase64);
+          let texture = null;
+          if (envRef.path.endsWith('.hdr')) {
+            const hdr = decodeHDR(buffer);
+            texture = createEnvironmentTexture(hdr);
+          } else {
+            const dataUrl = `data:${asset.mime};base64,${asset.dataBase64}`;
+            const img = await loadImageFromDataUrl(dataUrl);
+            texture = new THREE.Texture(img);
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.needsUpdate = true;
+          }
+          state.envTexture = texture;
+          state.scene.environment = texture;
+        } catch (error) {
+          console.warn('Failed to load environment', error);
+        }
+      };
+
+      const parseFastVariant = (value) => {
+        if (!value) return null;
+        const parts = value.split('.');
+        if (parts.length === 2) return parts[1];
+        return value;
+      };
+
+      const getFallbackVariant = () => {
+        const fallback = state.preset?.fallback?.on3dError || 'fast.tilt';
+        return parseFastVariant(fallback) || 'tilt';
+      };
+
+      const loadPreset = async () => {
+        const preset = await loadJsonAsset({ scope: 'bundle', path: 'presets/iphone16.json' });
+        state.preset = preset;
+        if (preset?.defaultMode === 'fast' || preset?.ui?.fastModeDefault) {
+          state.forceFastMode = getFallbackVariant();
+        }
+        if (preset?.three?.camera?.orbit) {
+          state.rotationX = preset.three.camera.orbit.x ?? state.rotationX;
+          state.rotationY = preset.three.camera.orbit.y ?? state.rotationY;
+        }
+        if (state.camera && preset?.three?.camera?.fov) {
+          state.camera.fov = preset.three.camera.fov;
+          state.camera.updateProjectionMatrix();
+        }
+        return preset;
+      };
 
       const findScreenMesh = (root) => {
         let candidate = null;
@@ -385,12 +599,19 @@
         const modelBox = new THREE.Box3().setFromObject(root);
         const modelCenter = new THREE.Vector3();
         modelBox.getCenter(modelCenter);
+        const modelSize = new THREE.Vector3();
+        modelBox.getSize(modelSize);
+        const modelDims = [modelSize.x, modelSize.y, modelSize.z].sort((a, b) => b - a);
+        const modelFaceArea = Math.max(1e-6, modelDims[0] * modelDims[1]);
         const cameraDir = new THREE.Vector3()
           .subVectors(state.camera.position, modelCenter)
           .normalize();
 
         let best = null;
         let bestScore = -Infinity;
+        const expectedAspect = state.preset?.three?.screen?.expectedAspect ?? 2.15;
+        // minAreaRatio is the ratio of screen mesh projected area to overall device projected area.
+        const minAreaRatio = state.preset?.three?.screen?.minAreaRatio ?? 0.05;
 
         root.traverse((child) => {
           if (!child.isMesh) return;
@@ -404,6 +625,7 @@
           if (!isFinite(thickness) || thickness <= 0) return;
           if (dims[0] < 0.2 || dims[1] < 0.2) return;
           if (thickness > dims[0] * 0.4) return;
+          if (area / modelFaceArea < minAreaRatio) return;
 
           const center = new THREE.Vector3();
           box.getCenter(center);
@@ -411,8 +633,7 @@
           const towardCamera = Math.max(0, cameraDir.dot(fromCenter));
 
           const aspect = dims[0] / Math.max(1e-4, dims[1]);
-          const targetAspect = 2.15;
-          const aspectScore = 1 / (1 + Math.abs(aspect - targetAspect));
+          const aspectScore = 1 / (1 + Math.abs(aspect - expectedAspect));
 
           const score = (area / Math.max(thickness, 1e-3)) * (1 + towardCamera * 1.5) * aspectScore;
           if (score > bestScore) {
@@ -424,8 +645,103 @@
         return best;
       };
 
+      const generatePlanarUVs = (mesh) => {
+        const geom = mesh?.geometry;
+        if (!geom || !geom.attributes?.position) return false;
+        geom.computeBoundingBox();
+        const bbox = geom.boundingBox;
+        if (!bbox) return false;
+
+        const size = new THREE.Vector3();
+        bbox.getSize(size);
+        const axes = [
+          { axis: 'x', size: size.x },
+          { axis: 'y', size: size.y },
+          { axis: 'z', size: size.z },
+        ].sort((a, b) => b.size - a.size);
+        const uAxis = axes[0].axis;
+        const vAxis = axes[1].axis;
+
+        const minU = bbox.min[uAxis];
+        const maxU = bbox.max[uAxis];
+        const minV = bbox.min[vAxis];
+        const maxV = bbox.max[vAxis];
+        const rangeU = Math.max(1e-6, maxU - minU);
+        const rangeV = Math.max(1e-6, maxV - minV);
+
+        const pos = geom.attributes.position;
+        const uvArray = new Float32Array(pos.count * 2);
+
+        const getCoord = (i, axis) => {
+          if (axis === 'x') return pos.getX(i);
+          if (axis === 'y') return pos.getY(i);
+          return pos.getZ(i);
+        };
+
+        for (let i = 0; i < pos.count; i += 1) {
+          const u = (getCoord(i, uAxis) - minU) / rangeU;
+          const v = (getCoord(i, vAxis) - minV) / rangeV;
+          uvArray[i * 2] = u;
+          uvArray[i * 2 + 1] = 1 - v;
+        }
+
+        geom.setAttribute('uv', new THREE.BufferAttribute(uvArray, 2));
+        geom.attributes.uv.needsUpdate = true;
+        return true;
+      };
+
+      const normalizeScreenUVs = (mesh) => {
+        if (!mesh?.geometry) return null;
+        if (mesh.userData?.uvNormalization) {
+          return mesh.userData.uvNormalization;
+        }
+        const geom = mesh.geometry;
+        const uv = geom.attributes?.uv;
+        if (!uv || uv.count === 0) {
+          generatePlanarUVs(mesh);
+          const info = { repeatX: 1, repeatY: 1, offsetX: 0, offsetY: 0 };
+          mesh.userData.uvNormalization = info;
+          return info;
+        }
+
+        let minU = Infinity;
+        let minV = Infinity;
+        let maxU = -Infinity;
+        let maxV = -Infinity;
+        for (let i = 0; i < uv.count; i += 1) {
+          const u = uv.getX(i);
+          const v = uv.getY(i);
+          if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+          minU = Math.min(minU, u);
+          minV = Math.min(minV, v);
+          maxU = Math.max(maxU, u);
+          maxV = Math.max(maxV, v);
+        }
+        const rangeU = maxU - minU;
+        const rangeV = maxV - minV;
+        if (!Number.isFinite(rangeU) || !Number.isFinite(rangeV) || rangeU < 1e-4 || rangeV < 1e-4) {
+          generatePlanarUVs(mesh);
+          const info = { repeatX: 1, repeatY: 1, offsetX: 0, offsetY: 0 };
+          mesh.userData.uvNormalization = info;
+          return info;
+        }
+        const repeatX = 1 / rangeU;
+        const repeatY = 1 / rangeV;
+        const offsetX = -minU * repeatX;
+        const offsetY = -minV * repeatY;
+        const info = { repeatX, repeatY, offsetX, offsetY };
+        mesh.userData.uvNormalization = info;
+        return info;
+      };
+
       const applyTextureToMesh = (mesh, texture) => {
         if (!mesh || !texture) return;
+        const uvInfo = normalizeScreenUVs(mesh);
+        if (uvInfo) {
+          texture.offset.set(uvInfo.offsetX, uvInfo.offsetY);
+          texture.repeat.set(uvInfo.repeatX, uvInfo.repeatY);
+          texture.needsUpdate = true;
+        }
         const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
         materials.forEach((material) => {
           if (!material) return;
@@ -503,11 +819,19 @@
         loader.setDRACOLoader(draco);
         try {
           setStatus('Loading model...');
-          const asset = await rpc.call('asset.load', {
-            scope: 'bundle',
-            path: 'models/iphone_16_free.glb',
-            encoding: 'base64',
-          });
+          const presetModelRef = state.preset?.three?.model;
+          const fallbackModelRef = { scope: 'bundle', path: 'models/iphone_16_free.glb' };
+          let asset;
+          if (presetModelRef) {
+            try {
+              asset = await loadAsset(presetModelRef);
+            } catch (error) {
+              console.warn('Failed to load preset model, using fallback', error);
+              asset = await loadAsset(fallbackModelRef);
+            }
+          } else {
+            asset = await loadAsset(fallbackModelRef);
+          }
           const buffer = base64ToArrayBuffer(asset.dataBase64);
           const gltf = await new Promise((resolve, reject) => {
             loader.parse(buffer, '', resolve, reject);
@@ -543,12 +867,14 @@
 
           state.screenMesh = findScreenMesh(model);
           if (!state.screenMesh) {
-            setStatus('Screen mesh not detected. Texture will not apply.');
+            state.forceFastMode = parseFastVariant(state.preset?.fallback?.onNoScreen || 'fast.tilt');
+            setStatus('Screen mesh not detected. Using Fast mode.');
           } else if (state.selectionTexture) {
             applyTextureToMesh(state.screenMesh, state.selectionTexture);
           }
 
-          fitCameraToObject(model);
+          fitCameraToObject(model, state.preset?.three?.camera?.fit ?? 1.6);
+          await applyEnvironment(state.preset?.three?.env);
           setStatus(meshCount > 0 ? 'Model loaded.' : 'Model loaded, but no meshes found.');
           return;
         } catch (error) {
@@ -557,10 +883,11 @@
             const fallback = createFallbackModel();
             state.model = fallback;
             state.scene.add(fallback);
-            fitCameraToObject(fallback);
+            fitCameraToObject(fallback, state.preset?.three?.camera?.fit ?? 1.6);
           }
+          state.forceFastMode = parseFastVariant(state.preset?.fallback?.on3dError || 'fast.tilt');
           const message = error instanceof Error ? error.message : 'Failed to load model.';
-          setStatus(`${message} Using fallback.`);
+          setStatus(`${message} Using Fast mode.`);
         }
       };
 
@@ -585,19 +912,215 @@
         requestAnimationFrame(animate);
       };
 
-      const createTextureFromSnapshot = async (snapshot) => {
-        return new Promise((resolve, reject) => {
-          const img = new Image();
-          img.onload = () => {
-            const texture = new THREE.Texture(img);
-            texture.colorSpace = THREE.SRGBColorSpace;
-            texture.needsUpdate = true;
-            texture.flipY = false;
-            resolve(texture);
-          };
-          img.onerror = () => reject(new Error('Failed to load selection snapshot'));
-          img.src = `data:${snapshot.mime};base64,${snapshot.dataBase64}`;
-        });
+      const createImageFromSnapshot = async (snapshot) => {
+        const dataUrl = `data:${snapshot.mime};base64,${snapshot.dataBase64}`;
+        return loadImageFromDataUrl(dataUrl);
+      };
+
+      const getScreenAspect = (mesh) => {
+        if (!mesh) return null;
+        const box = new THREE.Box3().setFromObject(mesh);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const dims = [size.x, size.y, size.z].sort((a, b) => b - a);
+        const width = dims[0] || 1;
+        const height = dims[1] || 1;
+        return width / height;
+      };
+
+      const createTextureFromSnapshot = async (snapshot, fitMode) => {
+        const img = state.selectionImage || await createImageFromSnapshot(snapshot);
+        let source = img;
+        if (fitMode !== 'exact') {
+          const aspect = getScreenAspect(state.screenMesh);
+          if (aspect) {
+            source = createFitCanvasForAspect(img, aspect, fitMode || 'cover');
+          }
+        }
+        const texture = new THREE.Texture(source);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.needsUpdate = true;
+        texture.flipY = false;
+        return texture;
+      };
+
+      const drawImageCover = (ctx, img, rect) => {
+        const padding = rect.padding || 0;
+        const x = rect.x + padding;
+        const y = rect.y + padding;
+        const w = rect.w - padding * 2;
+        const h = rect.h - padding * 2;
+        const scale = Math.max(w / img.width, h / img.height);
+        const drawW = img.width * scale;
+        const drawH = img.height * scale;
+        const dx = x + (w - drawW) / 2;
+        const dy = y + (h - drawH) / 2;
+        ctx.drawImage(img, dx, dy, drawW, drawH);
+      };
+
+      const drawImageContain = (ctx, img, rect) => {
+        const padding = rect.padding || 0;
+        const x = rect.x + padding;
+        const y = rect.y + padding;
+        const w = rect.w - padding * 2;
+        const h = rect.h - padding * 2;
+        const scale = Math.min(w / img.width, h / img.height);
+        const drawW = img.width * scale;
+        const drawH = img.height * scale;
+        const dx = x + (w - drawW) / 2;
+        const dy = y + (h - drawH) / 2;
+        ctx.drawImage(img, dx, dy, drawW, drawH);
+      };
+
+      const createCoverCanvas = (img, width, height) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(width));
+        canvas.height = Math.max(1, Math.round(height));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return canvas;
+        drawImageCover(ctx, img, { x: 0, y: 0, w: canvas.width, h: canvas.height, padding: 0 });
+        return canvas;
+      };
+
+      const createContainCanvas = (img, width, height) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(width));
+        canvas.height = Math.max(1, Math.round(height));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return canvas;
+        drawImageContain(ctx, img, { x: 0, y: 0, w: canvas.width, h: canvas.height, padding: 0 });
+        return canvas;
+      };
+
+      const createFitCanvasForAspect = (img, aspect, mode) => {
+        if (!aspect || !isFinite(aspect)) return img;
+        const maxDim = Math.max(img.width, img.height);
+        let width = maxDim;
+        let height = Math.round(maxDim / aspect);
+        if (aspect < 1) {
+          width = Math.round(maxDim * aspect);
+          height = maxDim;
+        }
+        const rect = { x: 0, y: 0, w: width, h: height, padding: 0 };
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, width);
+        canvas.height = Math.max(1, height);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return img;
+        if (mode === 'contain') {
+          drawImageContain(ctx, img, rect);
+        } else {
+          drawImageCover(ctx, img, rect);
+        }
+        return canvas;
+      };
+
+      const estimateQuadSize = (quad) => {
+        if (!quad || quad.length !== 4) {
+          return { width: 1, height: 1 };
+        }
+        const edge = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+        const width = (edge(quad[0], quad[1]) + edge(quad[3], quad[2])) / 2;
+        const height = (edge(quad[0], quad[3]) + edge(quad[1], quad[2])) / 2;
+        return { width: Math.max(1, width), height: Math.max(1, height) };
+      };
+
+      const getAffineTransform = (src, dst) => {
+        const [s0, s1, s2] = src;
+        const [d0, d1, d2] = dst;
+        const denom = (s0.x * (s1.y - s2.y) + s1.x * (s2.y - s0.y) + s2.x * (s0.y - s1.y));
+        if (Math.abs(denom) < 1e-6) return null;
+        const a = (d0.x * (s1.y - s2.y) + d1.x * (s2.y - s0.y) + d2.x * (s0.y - s1.y)) / denom;
+        const c = (d0.x * (s2.x - s1.x) + d1.x * (s0.x - s2.x) + d2.x * (s1.x - s0.x)) / denom;
+        const e = (d0.x * (s1.x * s2.y - s2.x * s1.y) + d1.x * (s2.x * s0.y - s0.x * s2.y) + d2.x * (s0.x * s1.y - s1.x * s0.y)) / denom;
+
+        const b = (d0.y * (s1.y - s2.y) + d1.y * (s2.y - s0.y) + d2.y * (s0.y - s1.y)) / denom;
+        const d = (d0.y * (s2.x - s1.x) + d1.y * (s0.x - s2.x) + d2.y * (s1.x - s0.x)) / denom;
+        const f = (d0.y * (s1.x * s2.y - s2.x * s1.y) + d1.y * (s2.x * s0.y - s0.x * s2.y) + d2.y * (s0.x * s1.y - s1.x * s0.y)) / denom;
+
+        return [a, b, c, d, e, f];
+      };
+
+      const drawTriangle = (ctx, img, src, dst) => {
+        const transform = getAffineTransform(src, dst);
+        if (!transform) return;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(dst[0].x, dst[0].y);
+        ctx.lineTo(dst[1].x, dst[1].y);
+        ctx.lineTo(dst[2].x, dst[2].y);
+        ctx.closePath();
+        ctx.clip();
+        ctx.setTransform(transform[0], transform[1], transform[2], transform[3], transform[4], transform[5]);
+        ctx.drawImage(img, 0, 0);
+        ctx.restore();
+      };
+
+      const drawImageToQuad = (ctx, img, quad) => {
+        const w = img.width;
+        const h = img.height;
+        const src = [
+          { x: 0, y: 0 },
+          { x: w, y: 0 },
+          { x: w, y: h },
+          { x: 0, y: h },
+        ];
+        drawTriangle(ctx, img, [src[0], src[1], src[2]], [quad[0], quad[1], quad[2]]);
+        drawTriangle(ctx, img, [src[0], src[2], src[3]], [quad[0], quad[2], quad[3]]);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+      };
+
+      const renderFastOutput = async (variant) => {
+        const preset = state.preset?.fast?.[variant];
+        if (!preset) throw new Error('Fast mode preset missing');
+        const canvas = document.createElement('canvas');
+        canvas.width = preset.output.w;
+        canvas.height = preset.output.h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('No canvas context');
+
+        if (!state.selectionSnapshot) {
+          throw new Error('Load a selection first.');
+        }
+
+        const selectionImg = state.selectionImage || await createImageFromSnapshot(state.selectionSnapshot);
+        state.selectionImage = selectionImg;
+
+        if (preset.shadowPng) {
+          const shadow = await loadImageAsset(preset.shadowPng);
+          ctx.drawImage(shadow, 0, 0, canvas.width, canvas.height);
+        }
+
+        const fitMode = state.selectionFit || 'cover';
+        const useContain = fitMode === 'contain' || fitMode === 'exact';
+        if (preset.screenRect) {
+          if (useContain) {
+            drawImageContain(ctx, selectionImg, preset.screenRect);
+          } else {
+            drawImageCover(ctx, selectionImg, preset.screenRect);
+          }
+        }
+
+        if (preset.screenQuad) {
+          const quadSize = estimateQuadSize(preset.screenQuad);
+          const fitCanvas = useContain
+            ? createContainCanvas(selectionImg, quadSize.width, quadSize.height)
+            : createCoverCanvas(selectionImg, quadSize.width, quadSize.height);
+          drawImageToQuad(ctx, fitCanvas, preset.screenQuad);
+        }
+
+        if (preset.framePng) {
+          const frame = await loadImageAsset(preset.framePng);
+          ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+        }
+
+        const dataUrl = canvas.toDataURL('image/png');
+        return {
+          mime: 'image/png',
+          dataBase64: dataUrl.split(',')[1],
+          width: canvas.width,
+          height: canvas.height,
+        };
       };
 
       const loadSelection = async () => {
@@ -607,22 +1130,34 @@
             selectionPreview.src = '';
             selectionEmpty.style.display = 'block';
             state.selectionSnapshot = null;
+            state.selectionImage = null;
+            state.selectionMeta = null;
+            state.selectionFit = 'cover';
             return;
           }
+
+          const meta = selection.nodes?.find((node) => node.id === selection.primaryId) || null;
+          const isFrame = meta?.type === 'frame';
+          state.selectionMeta = meta ? { type: meta.type, size: meta.size } : null;
+          state.selectionFit = isFrame ? 'exact' : 'contain';
 
           const snapshot = await rpc.call('export.snapshot', {
             nodeId: selection.primaryId,
             scale: 2,
             format: 'png',
             background: 'transparent',
+            includeFrameFill: true,
+            clipToBounds: isFrame,
           });
 
           state.selectionSnapshot = snapshot;
           selectionPreview.src = `data:${snapshot.mime};base64,${snapshot.dataBase64}`;
           selectionEmpty.style.display = 'none';
           viewportOverlay.style.display = 'none';
+          state.output = null;
 
-          const texture = await createTextureFromSnapshot(snapshot);
+          state.selectionImage = await createImageFromSnapshot(snapshot);
+          const texture = await createTextureFromSnapshot(snapshot, state.selectionFit);
           state.selectionTexture = texture;
           if (!state.screenMesh && state.model) {
             state.screenMesh = findScreenMesh(state.model);
@@ -632,13 +1167,23 @@
             return;
           }
           applyTextureToMesh(state.screenMesh, texture);
-          setStatus('Selection loaded.');
+          if (state.selectionMeta?.type !== 'frame') {
+            setStatus('Selection loaded. Tip: for best results, wrap your design in a Frame preset.');
+          } else {
+            setStatus('Selection loaded.');
+          }
         } catch (error) {
           setStatus(error.message);
         }
       };
 
-      const generateOutput = () => {
+      const generateOutput = async () => {
+        if (state.forceFastMode) {
+          return renderFastOutput(state.forceFastMode);
+        }
+        if (state.preset?.defaultMode === 'fast' || state.preset?.ui?.fastModeDefault) {
+          return renderFastOutput(getFallbackVariant());
+        }
         if (!state.renderer) return null;
         const scale = Number(scaleSelect.value || 1);
         const width = viewport.clientWidth;
@@ -664,12 +1209,12 @@
         };
       };
 
-      const handleGenerate = () => {
+      const handleGenerate = async () => {
         if (!state.selectionSnapshot) {
           setStatus('Load a selection first.');
           return;
         }
-        const output = generateOutput();
+        const output = await generateOutput();
         if (!output) {
           setStatus('Failed to generate output.');
           return;
@@ -680,8 +1225,15 @@
 
       const handleInsert = async () => {
         if (!state.output) {
-          setStatus('Generate a mockup first.');
-          return;
+          if (!state.selectionSnapshot) {
+            setStatus('Load a selection first.');
+            return;
+          }
+          state.output = await generateOutput();
+          if (!state.output) {
+            setStatus('Failed to generate output.');
+            return;
+          }
         }
         try {
           await rpc.call('document.insertImage', {
@@ -699,8 +1251,15 @@
 
       const handleDownload = async () => {
         if (!state.output) {
-          setStatus('Generate a mockup first.');
-          return;
+          if (!state.selectionSnapshot) {
+            setStatus('Load a selection first.');
+            return;
+          }
+          state.output = await generateOutput();
+          if (!state.output) {
+            setStatus('Failed to generate output.');
+            return;
+          }
         }
         try {
           await rpc.call('fs.saveFile', {
@@ -769,11 +1328,20 @@
       window.addEventListener('pointermove', handlePointerMove);
       window.addEventListener('pointerup', handlePointerUp);
 
-      setupScene();
-      loadModel().then(() => {
+      const init = async () => {
+        setupScene();
+        try {
+          await loadPreset();
+        } catch (error) {
+          console.error('Failed to load preset', error);
+          setStatus('Failed to load preset. Using defaults.');
+        }
+        await loadModel();
         updateCamera();
         animate();
-      });
+      };
+
+      init();
 
       window.addEventListener('resize', updateCamera);
     </script>

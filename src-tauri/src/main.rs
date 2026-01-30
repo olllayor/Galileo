@@ -102,7 +102,7 @@ fn load_text(path: String) -> Result<String, String> {
 #[tauri::command]
 fn show_save_image_dialog(args: SaveImageDialogArgs) -> Result<Option<String>, String> {
     let mut dialog = rfd::FileDialog::new()
-        .add_filter("Images", &["png", "jpg", "jpeg"])
+        .add_filter("PNG", &["png"])
         .set_title("Export Image");
     if let Some(name) = args.suggested_name {
         dialog = dialog.set_file_name(&name);

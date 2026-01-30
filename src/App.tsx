@@ -17,6 +17,7 @@ import {
   serializeDocument,
 } from './core/doc';
 import { generateId } from './core/doc/id';
+import { framePresetGroups, type FramePreset } from './core/framePresets';
 import type { Document } from './core/doc/types';
 import type { Command } from './core/commands/types';
 import type { CanvasPointerInfo, CanvasWheelInfo } from './hooks/useCanvas';
@@ -355,7 +356,7 @@ const joinPath = (base: string, segment: string): string => {
 };
 
 const MAX_ASSET_BYTES = 50 * 1024 * 1024;
-const BUNDLE_ASSET_EXTENSIONS = new Set(['glb', 'png', 'jpg', 'jpeg', 'hdr']);
+const BUNDLE_ASSET_EXTENSIONS = new Set(['glb', 'png', 'jpg', 'jpeg', 'hdr', 'json', 'svg']);
 const SHARED_ASSET_EXTENSIONS = new Set(['glb', 'png', 'hdr']);
 
 const normalizeAssetPath = (input: string): string | null => {
@@ -390,6 +391,10 @@ const getMimeForExtension = (extension: string | null): string => {
       return 'image/jpeg';
     case 'hdr':
       return 'image/vnd.radiance';
+    case 'json':
+      return 'application/json';
+    case 'svg':
+      return 'image/svg+xml';
     default:
       return 'application/octet-stream';
   }
@@ -539,7 +544,12 @@ export const App: React.FC = () => {
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
   const [snapDisabled, setSnapDisabled] = useState(false);
   const [currentPath, setCurrentPath] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    worldX: number;
+    worldY: number;
+  } | null>(null);
   const [plugins, setPlugins] = useState<PluginRegistration[]>(() => {
     const stored = loadStoredPlugins()
       .map(resolveStoredPlugin)
@@ -814,6 +824,54 @@ export const App: React.FC = () => {
     };
   }, [document, selectionIds]);
 
+  const applyFramePreset = useCallback((preset: FramePreset) => {
+    if (selectionIds.length === 1) {
+      const selected = document.nodes[selectionIds[0]];
+      if (selected?.type === 'frame') {
+        executeCommand({
+          id: generateId(),
+          timestamp: Date.now(),
+          source: 'user',
+          description: 'Resize frame preset',
+          type: 'setProps',
+          payload: {
+            id: selected.id,
+            props: {
+              name: preset.label,
+              size: { width: preset.width, height: preset.height },
+            },
+          },
+        });
+        return;
+      }
+    }
+
+    const position = contextMenu
+      ? { x: contextMenu.worldX, y: contextMenu.worldY }
+      : getDefaultInsertPosition();
+    const newId = generateId();
+    executeCommand({
+      id: generateId(),
+      timestamp: Date.now(),
+      source: 'user',
+      description: 'Create frame preset',
+      type: 'createNode',
+      payload: {
+        id: newId,
+        parentId: document.rootId,
+        node: {
+          type: 'frame',
+          name: preset.label,
+          position,
+          size: { width: preset.width, height: preset.height },
+          fill: { type: 'solid', value: '#ffffff' },
+          visible: true,
+        },
+      },
+    } as Command);
+    selectNode(newId);
+  }, [contextMenu, document.nodes, document.rootId, executeCommand, getDefaultInsertPosition, selectionIds, selectNode]);
+
   const runPlugin = useCallback((plugin: PluginRegistration) => {
     setActivePlugin(plugin);
     setRecentPluginIds(recordRecentPlugin(plugin));
@@ -932,12 +990,21 @@ export const App: React.FC = () => {
       })),
     ];
 
+    const framePresetItems: ContextMenuItem[] = framePresetGroups.map(group => ({
+      label: group.label,
+      submenu: group.presets.map(preset => ({
+        label: `${preset.label} - ${preset.width}x${preset.height}`,
+        onSelect: () => applyFramePreset(preset),
+      })),
+    }));
+
     return [
       { label: 'Copy', enabled: false },
       { label: 'Paste', enabled: false },
       { label: 'Paste Replace', enabled: false },
       { separator: true },
       { label: 'Group Selection', enabled: hasSelection && selectionIds.length > 1 },
+      { label: 'Frame presets', submenu: framePresetItems },
       { label: 'Show/Hide', submenu: showHideItems },
       { separator: true },
       {
@@ -952,6 +1019,7 @@ export const App: React.FC = () => {
       },
     ];
   }, [
+    applyFramePreset,
     devPlugins,
     document.nodes,
     handleLoadDevPlugin,
@@ -1020,6 +1088,8 @@ export const App: React.FC = () => {
             scale?: number;
             format?: 'png';
             background?: 'transparent' | 'solid';
+            includeFrameFill?: boolean;
+            clipToBounds?: boolean;
           };
           const targetId = params.nodeId || selectionIds[0];
           if (!targetId) {
@@ -1030,6 +1100,8 @@ export const App: React.FC = () => {
             scale: params.scale,
             format: params.format,
             background: params.background,
+            includeFrameFill: params.includeFrameFill,
+            clipToBounds: params.clipToBounds,
           });
           return { rpc: 1, id: request.id, ok: true, result: snapshot };
         }
@@ -1074,17 +1146,35 @@ export const App: React.FC = () => {
           if (!params.dataBase64) {
             return fail('invalid_params', 'dataBase64 is required');
           }
+          const normalizePngName = (name?: string) => {
+            if (!name) return 'export.png';
+            const trimmed = name.trim();
+            if (!trimmed) return 'export.png';
+            const lower = trimmed.toLowerCase();
+            if (lower.endsWith('.png')) return trimmed;
+            if (/\.[a-z0-9]+$/i.test(trimmed)) {
+              return trimmed.replace(/\.[a-z0-9]+$/i, '.png');
+            }
+            return `${trimmed}.png`;
+          };
           const savedPath = await invoke<string>('show_save_image_dialog', {
-            suggestedName: params.suggestedName,
+            args: { suggestedName: normalizePngName(params.suggestedName) },
           });
           if (!savedPath) {
             return fail('cancelled', 'Save cancelled');
           }
+          let finalPath = savedPath;
+          if (!finalPath.toLowerCase().endsWith('.png')) {
+            if (/\.[a-z0-9]+$/i.test(finalPath)) {
+              finalPath = finalPath.replace(/\.[a-z0-9]+$/i, '.png');
+            } else {
+              finalPath = `${finalPath}.png`;
+            }
+          }
           await invoke('save_binary', {
-            path: savedPath,
-            dataBase64: params.dataBase64,
+            args: { path: finalPath, dataBase64: params.dataBase64 },
           });
-          return { rpc: 1, id: request.id, ok: true, result: { savedPath } };
+          return { rpc: 1, id: request.id, ok: true, result: { savedPath: finalPath } };
         }
 
         case 'asset.load': {
@@ -1476,8 +1566,14 @@ export const App: React.FC = () => {
 
   const handleCanvasContextMenu = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     event.preventDefault();
-    setContextMenu({ x: event.clientX, y: event.clientY });
-  }, []);
+    const rect = canvasWrapperRef.current?.getBoundingClientRect();
+    const screenX = rect ? event.clientX - rect.left : event.clientX;
+    const screenY = rect ? event.clientY - rect.top : event.clientY;
+    const safeZoom = zoom === 0 ? 1 : zoom;
+    const worldX = (screenX - panOffset.x) / safeZoom;
+    const worldY = (screenY - panOffset.y) / safeZoom;
+    setContextMenu({ x: event.clientX, y: event.clientY, worldX, worldY });
+  }, [panOffset.x, panOffset.y, zoom]);
 
   const handleCanvasMouseMove = useCallback((info: CanvasPointerInfo) => {
     const { worldX, worldY, screenX, screenY } = info;
@@ -1786,8 +1882,7 @@ export const App: React.FC = () => {
       }
 
       await invoke('save_document', {
-        path,
-        content: serializeDocument(document),
+        args: { path, content: serializeDocument(document) },
       });
       if (pickedPath) {
         setCurrentPath(pickedPath);
@@ -1834,7 +1929,7 @@ export const App: React.FC = () => {
 
       const path = await invoke<string>('show_open_dialog');
       if (path) {
-        const content = await invoke<string>('load_document', { path });
+        const content = await invoke<string>('load_document', { args: { path } });
         const result = parseDocumentText(content);
         if (!result.ok) {
           const details = result.details?.join('\n');

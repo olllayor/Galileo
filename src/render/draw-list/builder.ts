@@ -2,6 +2,11 @@ import { buildWorldPositionMap } from '../../core/doc';
 import type { Document, Node } from '../../core/doc/types';
 import type { DrawCommand } from './types';
 
+type BuildDrawListOptions = {
+  includeFrameFill?: boolean;
+  clipToBounds?: boolean;
+};
+
 export const buildDrawList = (doc: Document): DrawCommand[] => {
   const rootNode = doc.nodes[doc.rootId];
   if (!rootNode) {
@@ -14,7 +19,11 @@ export const buildDrawList = (doc: Document): DrawCommand[] => {
   return commands;
 };
 
-export const buildDrawListForNode = (doc: Document, nodeId: string): DrawCommand[] => {
+export const buildDrawListForNode = (
+  doc: Document,
+  nodeId: string,
+  options: BuildDrawListOptions = {}
+): DrawCommand[] => {
   const node = doc.nodes[nodeId];
   if (!node) {
     return [];
@@ -26,8 +35,19 @@ export const buildDrawListForNode = (doc: Document, nodeId: string): DrawCommand
     return [];
   }
 
+  const includeFrameFill = options.includeFrameFill !== false;
+  const clipToBounds = options.clipToBounds === true;
   const commands: DrawCommand[] = [];
-  buildNodeCommandsFromWorld(doc, node, commands, base, worldMap);
+  if (clipToBounds) {
+    commands.push({
+      type: 'clip',
+      x: 0,
+      y: 0,
+      width: node.size.width,
+      height: node.size.height,
+    });
+  }
+  buildNodeCommandsFromWorld(doc, node, commands, base, worldMap, nodeId, includeFrameFill);
   return commands;
 };
 
@@ -36,7 +56,9 @@ const buildNodeCommandsFromWorld = (
   node: Node,
   commands: DrawCommand[],
   base: { x: number; y: number },
-  worldMap: Record<string, { x: number; y: number }>
+  worldMap: Record<string, { x: number; y: number }>,
+  rootId: string,
+  includeRootFrameFill: boolean
 ): void => {
   const worldPos = worldMap[node.id];
   if (!worldPos) {
@@ -53,7 +75,8 @@ const buildNodeCommandsFromWorld = (
   }
 
   if (node.type === 'frame') {
-    if (node.fill) {
+    const shouldIncludeFill = node.id !== rootId || includeRootFrameFill;
+    if (node.fill && shouldIncludeFill) {
       commands.push({
         type: 'rect',
         x,
@@ -70,7 +93,7 @@ const buildNodeCommandsFromWorld = (
       for (const childId of node.children) {
         const child = doc.nodes[childId];
         if (child) {
-          buildNodeCommandsFromWorld(doc, child, commands, base, worldMap);
+          buildNodeCommandsFromWorld(doc, child, commands, base, worldMap, rootId, includeRootFrameFill);
         }
       }
     }
@@ -143,7 +166,7 @@ const buildNodeCommandsFromWorld = (
       for (const childId of node.children) {
         const child = doc.nodes[childId];
         if (child) {
-          buildNodeCommandsFromWorld(doc, child, commands, base, worldMap);
+          buildNodeCommandsFromWorld(doc, child, commands, base, worldMap, rootId, includeRootFrameFill);
         }
       }
     }

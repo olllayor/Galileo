@@ -31,6 +31,14 @@ const clamp = (value: number, min: number, max: number): number => {
   return Math.min(max, Math.max(min, value));
 };
 
+const safeNumber = (value: number | undefined, fallback = 0): number => {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+};
+
+const safeRound = (value: number | undefined, fallback = 0): number => {
+  return Math.round(safeNumber(value, fallback));
+};
+
 export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   selectedNode,
   document,
@@ -149,8 +157,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   };
 
   const defaultFill = selectedNode.type === 'text' ? '#000000' : '#888888';
-  const effectiveOpacity = selectedNode.opacity ?? 1;
-  const rotationValue = selectedNode.rotation ?? 0;
+  const effectiveOpacity = safeNumber(selectedNode.opacity, 1);
+  const rotationValue = safeNumber(selectedNode.rotation, 0);
   const layout = selectedNode.layout;
 
   return (
@@ -248,7 +256,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               </label>
               <input
                 type="number"
-                value={Math.round(selectedNode.position.x)}
+                value={safeRound(selectedNode.position.x)}
                 onChange={(e) => handleNestedInputChange('position', 'x', Number(e.target.value))}
                 style={{
                   width: '100%',
@@ -265,7 +273,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               </label>
               <input
                 type="number"
-                value={Math.round(selectedNode.position.y)}
+                value={safeRound(selectedNode.position.y)}
                 onChange={(e) => handleNestedInputChange('position', 'y', Number(e.target.value))}
                 style={{
                   width: '100%',
@@ -305,7 +313,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             </label>
             <input
               type="number"
-              value={Math.round(selectedNode.size.width)}
+              value={safeRound(selectedNode.size.width, 100)}
               onChange={(e) => handleNestedInputChange('size', 'width', Number(e.target.value))}
               style={{
                 width: '100%',
@@ -351,7 +359,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             </label>
             <input
               type="number"
-              value={Math.round(selectedNode.size.height)}
+              value={safeRound(selectedNode.size.height, 100)}
               onChange={(e) => handleNestedInputChange('size', 'height', Number(e.target.value))}
               style={{
                 width: '100%',
@@ -401,7 +409,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 </label>
                 <input
                   type="number"
-                  value={layout.gap}
+                  value={safeNumber(layout.gap)}
                   onChange={(e) => {
                     const value = Number(e.target.value);
                     if (Number.isNaN(value)) return;
@@ -446,7 +454,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                 <input
                   type="number"
-                  value={layout.padding.top}
+                  value={safeNumber(layout.padding.top)}
                   onChange={(e) => handlePaddingChange('top', Number(e.target.value))}
                   placeholder="T"
                   style={{
@@ -459,7 +467,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 />
                 <input
                   type="number"
-                  value={layout.padding.right}
+                  value={safeNumber(layout.padding.right)}
                   onChange={(e) => handlePaddingChange('right', Number(e.target.value))}
                   placeholder="R"
                   style={{
@@ -472,7 +480,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 />
                 <input
                   type="number"
-                  value={layout.padding.bottom}
+                  value={safeNumber(layout.padding.bottom)}
                   onChange={(e) => handlePaddingChange('bottom', Number(e.target.value))}
                   placeholder="B"
                   style={{
@@ -485,7 +493,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 />
                 <input
                   type="number"
-                  value={layout.padding.left}
+                  value={safeNumber(layout.padding.left)}
                   onChange={(e) => handlePaddingChange('left', Number(e.target.value))}
                   placeholder="L"
                   style={{
@@ -514,7 +522,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 type="number"
                 min={0}
                 max={100}
-                value={Math.round(effectiveOpacity * 100)}
+                value={safeRound(effectiveOpacity * 100)}
                 onChange={(e) => {
                   const val = Number(e.target.value);
                   if (!Number.isNaN(val)) {
@@ -543,7 +551,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               </label>
               <input
                 type="number"
-                value={selectedNode.cornerRadius ?? 0}
+                value={safeNumber(selectedNode.cornerRadius, 0)}
                 onChange={(e) => {
                   const value = Number(e.target.value);
                   if (Number.isNaN(value)) return;
@@ -650,7 +658,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               </label>
               <input
                 type="number"
-                value={selectedNode.fontSize ?? 16}
+                value={safeNumber(selectedNode.fontSize, 16)}
                 onChange={(e) => {
                   const value = Number(e.target.value);
                   if (Number.isNaN(value)) return;

@@ -1,0 +1,37 @@
+{
+  "id": "iphone16",
+  "name": "iPhone 16",
+  "mode": "hybrid",
+  "defaultMode": "3d",
+  "ui": { "fastModeDefault": false },
+  "fallback": { "on3dError": "fast.tilt", "onNoScreen": "fast.tilt" },
+  "three": {
+    "model": { "scope": "shared", "path": "v1/devices/iphone16/iphone16.glb" },
+    "env": { "scope": "shared", "path": "v1/env/studio.hdr" },
+    "screen": {
+      "strategy": "auto",
+      "expectedAspect": 2.15,
+      "minAreaRatio": 0.08
+    },
+    "camera": { "fov": 45, "orbit": { "x": -0.35, "y": -0.5 }, "fit": 1.6 }
+  },
+  "fast": {
+    "front": {
+      "framePng": { "scope": "bundle", "path": "templates/iphone16/front_frame.svg" },
+      "shadowPng": { "scope": "bundle", "path": "templates/iphone16/front_shadow.svg" },
+      "screenRect": { "x": 290, "y": 120, "w": 820, "h": 1560, "padding": 12 },
+      "output": { "w": 1400, "h": 1800 }
+    },
+    "tilt": {
+      "framePng": { "scope": "bundle", "path": "templates/iphone16/tilt_frame.svg" },
+      "shadowPng": { "scope": "bundle", "path": "templates/iphone16/tilt_shadow.svg" },
+      "screenQuad": [
+        { "x": 520, "y": 360 },
+        { "x": 1250, "y": 430 },
+        { "x": 1350, "y": 1500 },
+        { "x": 600, "y": 1580 }
+      ],
+      "output": { "w": 1800, "h": 1800 }
+    }
+  }
+}

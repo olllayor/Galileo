@@ -6,6 +6,8 @@ export type SnapshotOptions = {
   scale?: number;
   format?: 'png';
   background?: 'transparent' | 'solid';
+  includeFrameFill?: boolean;
+  clipToBounds?: boolean;
 };
 
 export type SnapshotResult = {
@@ -60,7 +62,10 @@ export const exportNodeSnapshot = async (
     ctx.restore();
   }
 
-  const commands = buildDrawListForNode(doc, nodeId);
+  const commands = buildDrawListForNode(doc, nodeId, {
+    includeFrameFill: options.includeFrameFill,
+    clipToBounds: options.clipToBounds,
+  });
   const imageSources = commands
     .filter((cmd): cmd is { type: 'image'; src: string } => cmd.type === 'image')
     .map(cmd => cmd.src);
