@@ -103,6 +103,9 @@ export const nodeSchema = z.object({
 	componentId: z.string().optional(),
 	variant: z.record(z.any()).optional(),
 
+	// Device preset metadata for mockup integration
+	devicePresetId: z.string().optional(),
+
 	locked: z.boolean().optional(),
 	visible: z.boolean().optional(),
 	aspectRatioLocked: z.boolean().optional(),

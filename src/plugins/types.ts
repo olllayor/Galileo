@@ -1,56 +1,59 @@
 export type PluginPermission =
-  | 'selection:read'
-  | 'export:snapshot'
-  | 'document:write'
-  | 'fs:save'
-  | 'asset:read'
-  | 'asset:read:shared';
+	| 'selection:read'
+	| 'export:snapshot'
+	| 'document:write'
+	| 'fs:save'
+	| 'asset:read'
+	| 'asset:read:shared';
 
 export type PluginManifest = {
-  id: string;
-  name: string;
-  version: string;
-  entry: string;
-  icon?: string;
-  permissions?: PluginPermission[];
-  assets?: {
-    bundle?: string[];
-    shared?: string[];
-  };
-  ui?: { width?: number; height?: number };
+	id: string;
+	name: string;
+	version: string;
+	entry: string;
+	icon?: string;
+	permissions?: PluginPermission[];
+	assets?: {
+		bundle?: string[];
+		shared?: string[];
+	};
+	ui?: { width?: number; height?: number };
 };
 
 export type PluginSource = 'builtin' | 'installed' | 'dev';
 
 export type PluginRegistration = {
-  manifest: PluginManifest;
-  entryUrl: string;
-  source: PluginSource;
-  path?: string;
+	manifest: PluginManifest;
+	entryUrl: string;
+	source: PluginSource;
+	path?: string;
 };
 
 export type RpcRequest = {
-  rpc: 1;
-  id: string;
-  method: string;
-  params?: unknown;
+	rpc: 1;
+	id: string;
+	method: string;
+	params?: unknown;
 };
 
 export type RpcResponse = {
-  rpc: 1;
-  id: string;
-  ok: boolean;
-  result?: unknown;
-  error?: { code: string; message: string };
+	rpc: 1;
+	id: string;
+	ok: boolean;
+	result?: unknown;
+	error?: { code: string; message: string };
 };
 
 export type SelectionGetResult = {
-  ids: string[];
-  primaryId: string | null;
-  nodes: Array<{
-    id: string;
-    type: string;
-    name?: string;
-    size: { width: number; height: number };
-  }>;
+	ids: string[];
+	primaryId: string | null;
+	nodes: Array<{
+		id: string;
+		type: string;
+		name?: string;
+		size: { width: number; height: number };
+		// Device preset metadata for mockup integration
+		devicePresetId?: string;
+		isFrame?: boolean;
+	}>;
 };

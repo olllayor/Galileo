@@ -50,6 +50,7 @@ import {
 	recordRecentPlugin,
 	type StoredPlugin,
 } from './plugins/storage';
+import type { DevicePreset } from './core/framePresets';
 
 const clamp = (value: number, min: number, max: number): number => {
 	return Math.min(max, Math.max(min, value));
@@ -1529,6 +1530,9 @@ export const App: React.FC = () => {
 								type: node.type,
 								name: node.name,
 								size: { width: node.size.width, height: node.size.height },
+								// Include device preset metadata for mockup integration
+								devicePresetId: node.devicePresetId,
+								isFrame: node.type === 'frame',
 							}));
 
 						const result: SelectionGetResult = {
@@ -2541,6 +2545,46 @@ export const App: React.FC = () => {
 		}
 	}, [insertImageNode]);
 
+	const handleCreateDeviceFrame = useCallback(
+		(preset: DevicePreset) => {
+			const newId = generateId();
+
+			// Calculate position - center in viewport or offset from last selection
+			const viewportCenterX = (canvasSize.width / 2 - panOffset.x) / zoom;
+			const viewportCenterY = (canvasSize.height / 2 - panOffset.y) / zoom;
+			const position = {
+				x: Math.round(viewportCenterX - preset.frameWidth / 2),
+				y: Math.round(viewportCenterY - preset.frameHeight / 2),
+			};
+
+			const command: Command = {
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: `Create ${preset.name} frame`,
+				type: 'createNode',
+				payload: {
+					id: newId,
+					parentId: document.rootId,
+					node: {
+						type: 'frame',
+						name: preset.name,
+						position,
+						size: { width: preset.frameWidth, height: preset.frameHeight },
+						fill: { type: 'solid', value: '#ffffff' },
+						visible: true,
+						// Store device preset metadata for mockup integration
+						devicePresetId: preset.id,
+					},
+				},
+			};
+
+			executeCommand(command);
+			setSelection([newId]);
+		},
+		[document.rootId, executeCommand, setSelection, canvasSize, panOffset, zoom],
+	);
+
 	const handleLoad = useCallback(async () => {
 		try {
 			if (isDirty) {
@@ -3095,6 +3139,7 @@ export const App: React.FC = () => {
 						onSave={handleSave}
 						onLoad={handleLoad}
 						onImport={handleImportImage}
+						onCreateDeviceFrame={handleCreateDeviceFrame}
 					/>
 				</div>
 
