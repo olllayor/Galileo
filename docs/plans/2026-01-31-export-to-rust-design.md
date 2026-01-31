@@ -66,6 +66,6 @@ Create `docs/benchmarks/export-encoding.md` with:
   - Encoding time (ms, if instrumented)
   - Output size (KB)
 
-## Open Questions
-- Whether to expose Rust-encoded bytes for plugins in addition to the base64 response.
-- Whether to add WebP/AVIF encoders in this iteration or later.
+## Decisions
+- Expose Rust-encoded PNG bytes to plugins (png-bytes). Do not expose raw RGBA unless needed later.
+- Defer WebP/AVIF until after the PNG pipeline is proven and benchmarked.
