@@ -2122,8 +2122,22 @@ export const App: React.FC = () => {
 					? { deltaX: rawDeltaX, deltaY: rawDeltaY, guides: [] }
 					: applySnapping(dragState.startBounds, rawDeltaX, rawDeltaY, dragState.snapTargets, zoom);
 
+				// Filter out descendants to avoid double-moving during preview
+				const isDescendantOf = (nodeId: string, potentialAncestorId: string): boolean => {
+					let current = documentParentMap[nodeId];
+					while (current) {
+						if (current === potentialAncestorId) return true;
+						current = documentParentMap[current];
+					}
+					return false;
+				};
+
+				const topLevelIds = dragState.selectedIds.filter((id) => {
+					return !dragState.selectedIds.some((otherId) => otherId !== id && isDescendantOf(id, otherId));
+				});
+
 				const updates: Record<string, { x: number; y: number }> = {};
-				for (const id of dragState.selectedIds) {
+				for (const id of topLevelIds) {
 					const start = dragState.initialPositions[id];
 					if (!start) continue;
 					updates[id] = {
@@ -2235,8 +2249,23 @@ export const App: React.FC = () => {
 					? { deltaX: rawDeltaX, deltaY: rawDeltaY, guides: [] }
 					: applySnapping(dragState.startBounds, rawDeltaX, rawDeltaY, dragState.snapTargets, zoom);
 
+				// Filter out nodes that are descendants of other nodes in the selection
+				// to avoid double-moving (parent moves child already)
+				const isDescendantOf = (nodeId: string, potentialAncestorId: string): boolean => {
+					let current = documentParentMap[nodeId];
+					while (current) {
+						if (current === potentialAncestorId) return true;
+						current = documentParentMap[current];
+					}
+					return false;
+				};
+
+				const topLevelIds = dragState.selectedIds.filter((id) => {
+					return !dragState.selectedIds.some((otherId) => otherId !== id && isDescendantOf(id, otherId));
+				});
+
 				const updates: Record<string, { x: number; y: number }> = {};
-				for (const id of dragState.selectedIds) {
+				for (const id of topLevelIds) {
 					const start = dragState.initialPositions[id];
 					if (!start) continue;
 					updates[id] = {
