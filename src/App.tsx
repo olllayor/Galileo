@@ -567,7 +567,9 @@ export const App: React.FC = () => {
 		isDirty,
 	} = useDocument();
 
-	const [activeTool, setActiveTool] = useState<'select' | 'rectangle' | 'text'>('select');
+	const [activeTool, setActiveTool] = useState<'select' | 'rectangle' | 'text' | 'hand'>('select');
+	const [spaceKeyHeld, setSpaceKeyHeld] = useState(false);
+	const [toolBeforeSpace, setToolBeforeSpace] = useState<'select' | 'rectangle' | 'text' | 'hand' | null>(null);
 	const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
 	const [zoom, setZoom] = useState(1);
 	const [previewDocument, setPreviewDocument] = useState<Document | null>(null);
@@ -717,18 +719,32 @@ export const App: React.FC = () => {
 		},
 		[displayDocument, boundsMap, zoom],
 	);
+	// Determine if we're in pan mode (either hand tool or space key held)
+	const isInPanMode = activeTool === 'hand' || spaceKeyHeld;
+
 	const cursor = useMemo(() => {
+		// Priority order (highest to lowest):
+		// 1. Active drag/resize/pan states
+		// 2. Hand tool or space key held → grab/grabbing
+		// 3. Hover on resize handles
+		// 4. Locked node → not-allowed
+		// 5. Edge hit → directional resize or move
+		// 6. Fill hit → pointer (Figma-style)
+		// 7. Tool cursors (crosshair for draw tools)
+		// 8. Default (inherit custom CSS cursor)
 		if (dragState?.mode === 'resize') return getHandleCursor(dragState.handle);
 		if (dragState?.mode === 'pan') return 'grabbing';
 		if (dragState?.mode === 'move') return 'move';
+		if (isInPanMode) return 'grab';
 		if (transformSession) return getHandleCursor(transformSession.handle);
 		if (hoverHandle) return getHandleCursor(hoverHandle);
 		if (hoverHit?.locked) return 'not-allowed';
-		if (hoverHit?.kind === 'edge') return hoverHit.edgeCursor || 'default';
-		if (hoverHit) return 'move';
+		if (hoverHit?.kind === 'edge') return hoverHit.edgeCursor || 'move';
+		if (hoverHit?.kind === 'fill')
+			return 'url(\'data:image/svg+xml;utf8,<svg viewBox="-0.5 -0.5 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" height="16" width="16"><path fill-rule="evenodd" clip-rule="evenodd" d="M13.2403125 5.168374999999999c0.9875625 0.401125 0.9121875 1.82375 -0.11225 2.1181875l-5.1691875 1.4859375 -2.3609375 4.8326875000000005c-0.4679375 0.9576875 -1.8820625 0.784875 -2.1055625 -0.25725000000000003L1.0856875000000001 2.1243125c-0.18887500000000002 -0.8808125 0.6848124999999999 -1.6139375 1.5195 -1.275l10.635125 4.3190625Z" stroke="black" stroke-width="1"/></svg>\') 2 2, pointer';
 		if (activeTool === 'rectangle' || activeTool === 'text') return 'crosshair';
-		return 'default';
-	}, [dragState, transformSession, hoverHandle, hoverHit, activeTool]);
+		return undefined; // Let CSS custom cursor apply
+	}, [dragState, transformSession, hoverHandle, hoverHit, activeTool, isInPanMode]);
 
 	useEffect(() => {
 		if (recentPluginIds.length === 0 && builtinPlugins.length > 0) {
@@ -1947,6 +1963,16 @@ export const App: React.FC = () => {
 				return;
 			}
 
+			// Hand tool or space key held - start panning
+			if (activeTool === 'hand' || spaceKeyHeld) {
+				setDragState({
+					mode: 'pan',
+					startScreen: { x: screenX, y: screenY },
+					startPan: { ...panOffset },
+				});
+				return;
+			}
+
 			if (activeTool === 'select') {
 				handleSelectionPointerDown(info);
 				return;
@@ -2071,6 +2097,8 @@ export const App: React.FC = () => {
 			hitTestAtPoint,
 			transformSession,
 			openContextMenuAt,
+			spaceKeyHeld,
+			panOffset,
 		],
 	);
 
@@ -2874,8 +2902,16 @@ export const App: React.FC = () => {
 
 			if (!editable) {
 				if (e.key === 'v') setActiveTool('select');
+				if (e.key === 'h') setActiveTool('hand');
 				if (e.key === 'r') setActiveTool('rectangle');
 				if (e.key === 't') setActiveTool('text');
+
+				// Space key for temporary pan mode (Figma-style)
+				if (e.code === 'Space' && !spaceKeyHeld && !dragState) {
+					e.preventDefault();
+					setSpaceKeyHeld(true);
+					setToolBeforeSpace(activeTool);
+				}
 			}
 
 			if (editable) {
@@ -2922,9 +2958,30 @@ export const App: React.FC = () => {
 			}
 		};
 
+		const handleKeyUp = (e: KeyboardEvent) => {
+			// Space key release - return to previous tool
+			if (e.code === 'Space' && spaceKeyHeld) {
+				e.preventDefault();
+				setSpaceKeyHeld(false);
+				// If we were dragging (panning), end the drag
+				if (dragState?.mode === 'pan') {
+					setDragState(null);
+				}
+				// Restore previous tool if we saved one
+				if (toolBeforeSpace !== null) {
+					setActiveTool(toolBeforeSpace);
+					setToolBeforeSpace(null);
+				}
+			}
+		};
+
 		const options = { capture: true };
 		window.addEventListener('keydown', handleKeyDown, options);
-		return () => window.removeEventListener('keydown', handleKeyDown, options);
+		window.addEventListener('keyup', handleKeyUp, options);
+		return () => {
+			window.removeEventListener('keydown', handleKeyDown, options);
+			window.removeEventListener('keyup', handleKeyUp, options);
+		};
 	}, [
 		selectionIds,
 		canUndo,
@@ -2941,6 +2998,9 @@ export const App: React.FC = () => {
 		dragState,
 		dispatchEditorAction,
 		setSelection,
+		spaceKeyHeld,
+		toolBeforeSpace,
+		activeTool,
 	]);
 
 	// Persist panel collapse state
@@ -2962,12 +3022,7 @@ export const App: React.FC = () => {
 
 	// Handle tool change including 'hand' tool
 	const handleToolChange = useCallback((tool: Tool) => {
-		if (tool === 'hand') {
-			// Hand tool is handled via pan mode during drag
-			setActiveTool('select');
-		} else {
-			setActiveTool(tool as 'select' | 'rectangle' | 'text');
-		}
+		setActiveTool(tool as 'select' | 'rectangle' | 'text' | 'hand');
 	}, []);
 
 	return (
