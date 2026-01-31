@@ -2,86 +2,183 @@ import { CanvasRenderer } from './canvas-renderer';
 import { buildDrawListForNode } from './draw-list';
 import type { Document } from '../core/doc/types';
 import type { DrawImageCommand } from './draw-list/types';
+import { invoke } from '@tauri-apps/api/core';
 
 export type SnapshotOptions = {
-  scale?: number;
-  format?: 'png';
-  background?: 'transparent' | 'solid';
-  includeFrameFill?: boolean;
-  clipToBounds?: boolean;
+	scale?: number;
+	format?: 'png' | 'webp';
+	background?: 'transparent' | 'solid';
+	includeFrameFill?: boolean;
+	clipToBounds?: boolean;
+	/** Use native Rust encoder (faster) or browser canvas (fallback) */
+	useNativeEncoder?: boolean;
+	/** WebP quality 0-100 (only for webp format) */
+	webpQuality?: number;
 };
 
 export type SnapshotResult = {
-  mime: 'image/png';
-  dataBase64: string;
-  width: number;
-  height: number;
+	mime: 'image/png' | 'image/webp';
+	dataBase64: string;
+	width: number;
+	height: number;
+	/** Encoding time in milliseconds (for benchmarking) */
+	encodeTimeMs?: number;
 };
 
 const clamp = (value: number, min: number, max: number): number => {
-  return Math.min(max, Math.max(min, value));
+	return Math.min(max, Math.max(min, value));
 };
 
 const preloadImages = async (sources: string[]): Promise<void> => {
-  const unique = Array.from(new Set(sources)).filter(Boolean);
-  await Promise.all(unique.map(src => new Promise<void>((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve();
-    img.onerror = () => resolve();
-    img.src = src;
-  })));
+	const unique = Array.from(new Set(sources)).filter(Boolean);
+	await Promise.all(
+		unique.map(
+			(src) =>
+				new Promise<void>((resolve) => {
+					const img = new Image();
+					img.onload = () => resolve();
+					img.onerror = () => resolve();
+					img.src = src;
+				}),
+		),
+	);
+};
+
+/**
+ * Convert Uint8ClampedArray to base64 string
+ */
+const uint8ArrayToBase64 = (bytes: Uint8ClampedArray): string => {
+	let binary = '';
+	const len = bytes.byteLength;
+	for (let i = 0; i < len; i++) {
+		binary += String.fromCharCode(bytes[i]);
+	}
+	return btoa(binary);
+};
+
+/**
+ * Encode image using native Rust encoder (PNG or WebP)
+ * Falls back to canvas.toDataURL if Tauri invoke fails
+ */
+const encodeWithRust = async (
+	ctx: CanvasRenderingContext2D,
+	width: number,
+	height: number,
+	format: 'png' | 'webp',
+	webpQuality?: number,
+): Promise<{ dataBase64: string; encodeTimeMs: number }> => {
+	const imageData = ctx.getImageData(0, 0, width, height);
+	const rgbaBase64 = uint8ArrayToBase64(imageData.data);
+
+	const startTime = performance.now();
+
+	if (format === 'webp') {
+		const dataBase64 = await invoke<string>('encode_webp', {
+			args: {
+				rgbaBase64,
+				width,
+				height,
+				quality: webpQuality ?? 90,
+			},
+		});
+		return { dataBase64, encodeTimeMs: performance.now() - startTime };
+	} else {
+		const dataBase64 = await invoke<string>('encode_png', {
+			args: {
+				rgbaBase64,
+				width,
+				height,
+			},
+		});
+		return { dataBase64, encodeTimeMs: performance.now() - startTime };
+	}
+};
+
+/**
+ * Encode image using browser canvas (fallback)
+ */
+const encodeWithCanvas = (
+	canvas: HTMLCanvasElement,
+	format: 'png' | 'webp',
+	webpQuality?: number,
+): { dataBase64: string; encodeTimeMs: number } => {
+	const startTime = performance.now();
+	const mimeType = format === 'webp' ? 'image/webp' : 'image/png';
+	const quality = format === 'webp' ? (webpQuality ?? 90) / 100 : undefined;
+	const dataUrl = canvas.toDataURL(mimeType, quality);
+	const dataBase64 = dataUrl.split(',')[1] || '';
+	return { dataBase64, encodeTimeMs: performance.now() - startTime };
 };
 
 export const exportNodeSnapshot = async (
-  doc: Document,
-  nodeId: string,
-  options: SnapshotOptions = {}
+	doc: Document,
+	nodeId: string,
+	options: SnapshotOptions = {},
 ): Promise<SnapshotResult> => {
-  const node = doc.nodes[nodeId];
-  if (!node) {
-    throw new Error('Node not found');
-  }
+	const node = doc.nodes[nodeId];
+	if (!node) {
+		throw new Error('Node not found');
+	}
 
-  const scale = clamp(options.scale ?? 1, 1, 4);
-  const width = Math.max(1, Math.round(node.size.width * scale));
-  const height = Math.max(1, Math.round(node.size.height * scale));
+	const scale = clamp(options.scale ?? 1, 1, 4);
+	const format = options.format ?? 'png';
+	const useNativeEncoder = options.useNativeEncoder ?? true; // Default to Rust encoder
+	const width = Math.max(1, Math.round(node.size.width * scale));
+	const height = Math.max(1, Math.round(node.size.height * scale));
 
-  const canvas = window.document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
+	const canvas = window.document.createElement('canvas');
+	canvas.width = width;
+	canvas.height = height;
 
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    throw new Error('Failed to create snapshot canvas');
-  }
+	const ctx = canvas.getContext('2d');
+	if (!ctx) {
+		throw new Error('Failed to create snapshot canvas');
+	}
 
-  if (options.background === 'solid') {
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, width, height);
-    ctx.restore();
-  }
+	if (options.background === 'solid') {
+		ctx.save();
+		ctx.setTransform(1, 0, 0, 1, 0, 0);
+		ctx.fillStyle = '#ffffff';
+		ctx.fillRect(0, 0, width, height);
+		ctx.restore();
+	}
 
-  const commands = buildDrawListForNode(doc, nodeId, {
-    includeFrameFill: options.includeFrameFill,
-    clipToBounds: options.clipToBounds,
-  });
-  const imageSources = commands
-    .filter((cmd): cmd is DrawImageCommand => cmd.type === 'image')
-    .map(cmd => cmd.src);
-  await preloadImages(imageSources);
+	const commands = buildDrawListForNode(doc, nodeId, {
+		includeFrameFill: options.includeFrameFill,
+		clipToBounds: options.clipToBounds,
+	});
+	const imageSources = commands.filter((cmd): cmd is DrawImageCommand => cmd.type === 'image').map((cmd) => cmd.src);
+	await preloadImages(imageSources);
 
-  const renderer = new CanvasRenderer(canvas);
-  renderer.render(commands, { pan: { x: 0, y: 0 }, zoom: scale });
+	const renderer = new CanvasRenderer(canvas);
+	renderer.render(commands, { pan: { x: 0, y: 0 }, zoom: scale });
 
-  const dataUrl = canvas.toDataURL('image/png');
-  const dataBase64 = dataUrl.split(',')[1] || '';
+	// Encode using Rust (fast) or canvas (fallback)
+	let dataBase64: string;
+	let encodeTimeMs: number;
 
-  return {
-    mime: 'image/png',
-    dataBase64,
-    width,
-    height,
-  };
+	if (useNativeEncoder) {
+		try {
+			const result = await encodeWithRust(ctx, width, height, format, options.webpQuality);
+			dataBase64 = result.dataBase64;
+			encodeTimeMs = result.encodeTimeMs;
+		} catch (err) {
+			console.warn('Rust encoder failed, falling back to canvas:', err);
+			const result = encodeWithCanvas(canvas, format, options.webpQuality);
+			dataBase64 = result.dataBase64;
+			encodeTimeMs = result.encodeTimeMs;
+		}
+	} else {
+		const result = encodeWithCanvas(canvas, format, options.webpQuality);
+		dataBase64 = result.dataBase64;
+		encodeTimeMs = result.encodeTimeMs;
+	}
+
+	return {
+		mime: format === 'webp' ? 'image/webp' : 'image/png',
+		dataBase64,
+		width,
+		height,
+		encodeTimeMs,
+	};
 };
