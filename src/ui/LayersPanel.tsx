@@ -3,6 +3,7 @@ import type { Document, Node } from '../core/doc/types';
 
 const TYPE_LABELS: Record<Node['type'], string> = {
 	frame: 'Frame',
+	group: 'Group',
 	rectangle: 'Rectangle',
 	text: 'Text',
 	image: 'Image',
@@ -537,8 +538,51 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 								{row.hasChildren ? (row.isExpanded ? 'v' : '>') : ''}
 							</button>
 
-							<div style={{ width: '10px', color: '#666', fontSize: '10px' }}>
-								{row.type === 'frame' ? 'F' : row.type === 'text' ? 'T' : '*'}
+							<div
+								style={{
+									width: '14px',
+									height: '14px',
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									color: '#666',
+									fontSize: '10px',
+								}}
+							>
+								{row.type === 'frame' ? (
+									<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+										<rect x="2" y="2" width="12" height="12" rx="2" />
+									</svg>
+								) : row.type === 'group' ? (
+									<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+										<rect x="1" y="4" width="8" height="8" rx="1" />
+										<rect x="7" y="4" width="8" height="8" rx="1" />
+									</svg>
+								) : row.type === 'text' ? (
+									<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+										<path d="M3 4h10M8 4v9M5 13h6" />
+									</svg>
+								) : row.type === 'rectangle' ? (
+									<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+										<rect x="2" y="4" width="12" height="8" />
+									</svg>
+								) : row.type === 'ellipse' ? (
+									<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+										<ellipse cx="8" cy="8" rx="6" ry="4" />
+									</svg>
+								) : row.type === 'image' ? (
+									<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+										<rect x="2" y="2" width="12" height="12" rx="1" />
+										<circle cx="5" cy="5" r="1.5" fill="currentColor" />
+										<path d="M2 11l3-3 2 2 4-4 3 3" />
+									</svg>
+								) : row.type === 'path' ? (
+									<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+										<path d="M2 14C2 8 8 8 8 2S14 8 14 14" />
+									</svg>
+								) : (
+									'*'
+								)}
 							</div>
 
 							{isEditing ? (

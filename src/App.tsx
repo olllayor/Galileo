@@ -8,7 +8,13 @@ import { PluginModal } from './ui/PluginModal';
 import { PluginManagerModal } from './ui/PluginManagerModal';
 import { LayersPanel } from './ui/LayersPanel';
 import { useDocument } from './hooks/useDocument';
-import { createRectangleTool, createTextTool, hitTestNodeAtPosition, type HitKind } from './interaction/tools';
+import {
+	createRectangleTool,
+	createTextTool,
+	hitTestNodeAtPosition,
+	findSelectableNode,
+	type HitKind,
+} from './interaction/tools';
 import {
 	buildParentMap,
 	buildWorldBoundsMap,
@@ -104,7 +110,9 @@ type EditorAction =
 	| { type: 'rename' }
 	| { type: 'toggleLock' }
 	| { type: 'toggleVisible' }
-	| { type: 'reorderZ'; dir: 'front' | 'back' | 'forward' | 'backward' };
+	| { type: 'reorderZ'; dir: 'front' | 'back' | 'forward' | 'backward' }
+	| { type: 'group' }
+	| { type: 'ungroup' };
 
 type NormalizedEdges = { nl: number; nt: number; nr: number; nb: number };
 
@@ -1125,8 +1133,137 @@ export const App: React.FC = () => {
 		[document.nodes, documentParentMap, executeCommand],
 	);
 
+	const groupNodes = useCallback(
+		(ids: string[]) => {
+			console.log('groupNodes called with:', ids);
+			console.log('document.rootId:', document.rootId);
+			console.log('documentParentMap:', documentParentMap);
+
+			// Filter out root node and ensure we have at least 2 nodes to group
+			const validIds = ids.filter((id) => id !== document.rootId && document.nodes[id]);
+			console.log('validIds:', validIds);
+
+			if (validIds.length < 2) {
+				console.log('Not enough valid IDs, returning');
+				return;
+			}
+
+			// All nodes must share the same parent
+			const parentIds = validIds.map((id) => documentParentMap[id]).filter((pid): pid is string => Boolean(pid));
+			console.log('parentIds:', parentIds);
+
+			const uniqueParents = new Set(parentIds);
+			console.log('uniqueParents:', uniqueParents);
+
+			if (uniqueParents.size !== 1) {
+				console.log('Nodes dont have same parent, returning');
+				// Can't group nodes from different parents
+				return;
+			}
+
+			const parentId = Array.from(uniqueParents)[0];
+			console.log('parentId:', parentId);
+
+			if (!parentId) {
+				console.log('No parentId, returning');
+				return;
+			}
+
+			const parent = document.nodes[parentId];
+			console.log('parent node:', parent);
+
+			if (!parent?.children) {
+				console.log('Parent has no children, returning');
+				return;
+			}
+
+			// Sort by their order in parent (to preserve z-order)
+			const sortedIds = validIds.slice().sort((a, b) => {
+				const indexA = parent.children!.indexOf(a);
+				const indexB = parent.children!.indexOf(b);
+				return indexA - indexB;
+			});
+
+			// Insert group at the position of the first (bottommost) node
+			const insertIndex = parent.children.indexOf(sortedIds[0]);
+			console.log('Executing group command with:', { sortedIds, parentId, insertIndex });
+
+			const groupId = generateId();
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Group nodes',
+				type: 'groupNodes',
+				payload: {
+					groupId,
+					nodeIds: sortedIds,
+					parentId,
+					insertIndex,
+				},
+			} as Command);
+
+			// Select the new group
+			setSelection([groupId]);
+			console.log('Group command executed, new groupId:', groupId);
+		},
+		[document.nodes, document.rootId, documentParentMap, executeCommand, setSelection],
+	);
+
+	const ungroupNodes = useCallback(
+		(ids: string[]) => {
+			// Find all groups in selection
+			const groupIds = ids.filter((id) => {
+				const node = document.nodes[id];
+				return node && node.type === 'group';
+			});
+
+			if (groupIds.length === 0) {
+				return;
+			}
+
+			// Collect all children that will be "released" from groups
+			const releasedChildIds: string[] = [];
+
+			const commands: Command[] = groupIds.map((groupId) => {
+				const group = document.nodes[groupId];
+				if (group?.children) {
+					releasedChildIds.push(...group.children);
+				}
+				return {
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Ungroup nodes',
+					type: 'ungroupNodes',
+					payload: { groupId },
+				} as Command;
+			});
+
+			if (commands.length === 1) {
+				executeCommand(commands[0]);
+			} else {
+				executeCommand({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Ungroup multiple groups',
+					type: 'batch',
+					payload: { commands },
+				} as Command);
+			}
+
+			// Select the released children
+			if (releasedChildIds.length > 0) {
+				setSelection(releasedChildIds);
+			}
+		},
+		[document.nodes, executeCommand, setSelection],
+	);
+
 	const dispatchEditorAction = useCallback(
 		(action: EditorAction, targetIds: string[] = selectionIds) => {
+			console.log('dispatchEditorAction called:', action.type, 'targetIds:', targetIds);
 			if (action.type === 'duplicate') {
 				duplicateNodes(targetIds);
 				return;
@@ -1157,9 +1294,29 @@ export const App: React.FC = () => {
 				if (targetId) {
 					reorderZ(targetId, action.dir);
 				}
+				return;
+			}
+			if (action.type === 'group') {
+				console.log('Group action received, calling groupNodes with:', targetIds);
+				groupNodes(targetIds);
+				return;
+			}
+			if (action.type === 'ungroup') {
+				ungroupNodes(targetIds);
+				return;
 			}
 		},
-		[applyPropsToSelection, deleteNodes, document.nodes, duplicateNodes, reorderZ, selectionIds, setSelection],
+		[
+			applyPropsToSelection,
+			deleteNodes,
+			document.nodes,
+			duplicateNodes,
+			groupNodes,
+			ungroupNodes,
+			reorderZ,
+			selectionIds,
+			setSelection,
+		],
 	);
 
 	const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
@@ -1208,6 +1365,17 @@ export const App: React.FC = () => {
 			}
 		}
 
+		// Check if selection can be grouped (2+ items with same parent)
+		const canGroup =
+			selectionIds.length >= 2 &&
+			(() => {
+				const parentIds = new Set(selectionIds.map((id) => documentParentMap[id]));
+				return parentIds.size === 1;
+			})();
+
+		// Check if selection contains any groups that can be ungrouped
+		const canUngroup = selectionIds.some((id) => document.nodes[id]?.type === 'group');
+
 		const selectionItems: ContextMenuItem[] = [
 			{
 				icon: 'D',
@@ -1230,6 +1398,22 @@ export const App: React.FC = () => {
 				enabled: canRename,
 				onSelect: () => dispatchEditorAction({ type: 'rename' }),
 			},
+			{ separator: true },
+			{
+				icon: 'G',
+				label: 'Group',
+				shortcut: 'Cmd/Ctrl+G',
+				enabled: canGroup,
+				onSelect: () => dispatchEditorAction({ type: 'group' }),
+			},
+			{
+				icon: 'U',
+				label: 'Ungroup',
+				shortcut: 'Cmd/Ctrl+Shift+G',
+				enabled: canUngroup,
+				onSelect: () => dispatchEditorAction({ type: 'ungroup' }),
+			},
+			{ separator: true },
 			{
 				icon: 'L',
 				label: lockLabel,
@@ -1613,6 +1797,8 @@ export const App: React.FC = () => {
 	const handleSelectionPointerDown = useCallback(
 		(info: CanvasPointerInfo): boolean => {
 			const { worldX, worldY, screenX, screenY } = info;
+			// Cmd/Meta key enables deep selection (select inside groups)
+			const deepSelect = info.metaKey || info.ctrlKey;
 
 			if (selectionBounds && selectionIds.length === 1) {
 				const handle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
@@ -1644,8 +1830,11 @@ export const App: React.FC = () => {
 					return true;
 				}
 
-				const nodeId = hit.node.id;
+				// Apply Figma-style selection: respect group boundaries unless deep selecting
+				const selectableId = findSelectableNode(displayDocument, hit.node.id, deepSelect);
+				const nodeId = selectableId;
 				const node = document.nodes[nodeId] ?? hit.node;
+
 				if (info.shiftKey) {
 					toggleSelection(nodeId);
 					return true;
@@ -2595,6 +2784,30 @@ export const App: React.FC = () => {
 					if (!hasSelection) return;
 					e.preventDefault();
 					dispatchEditorAction({ type: 'duplicate' });
+					return;
+				}
+
+				// Cmd+G to group, Cmd+Shift+G to ungroup
+				if (isCmd && key === 'g') {
+					e.preventDefault();
+					console.log('Cmd+G pressed, selectionIds:', selectionIds);
+					if (e.shiftKey) {
+						// Ungroup: need at least one group selected
+						const hasGroups = selectionIds.some((id) => document.nodes[id]?.type === 'group');
+						if (hasGroups) {
+							console.log('Ungrouping...');
+							dispatchEditorAction({ type: 'ungroup' });
+						}
+					} else {
+						// Group: need at least 2 items selected
+						console.log('Attempting to group, count:', selectionIds.length);
+						if (selectionIds.length >= 2) {
+							console.log('Calling dispatchEditorAction with group');
+							dispatchEditorAction({ type: 'group' });
+						} else {
+							console.log('Not enough items selected for grouping');
+						}
+					}
 					return;
 				}
 
