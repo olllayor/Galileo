@@ -19,6 +19,7 @@ interface PropertiesPanelProps {
 	collapsed?: boolean;
 	onToggleCollapsed?: () => void;
 	onUpdateNode: (id: string, updates: Partial<Node>) => void;
+	zoom?: number;
 }
 
 const defaultLayout: Layout = {
@@ -47,6 +48,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	collapsed = false,
 	onToggleCollapsed,
 	onUpdateNode,
+	zoom = 1,
 }) => {
 	// Collapsed rail mode
 	if (collapsed) {
@@ -294,7 +296,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					marginBottom: '16px',
 				}}
 			>
-				<span style={{ fontSize: '12px', fontWeight: 600, color: '#444' }}>Properties</span>
+				<div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px' }}>
+					<span style={{ fontSize: '12px', fontWeight: 600, color: '#444' }}>Properties</span>
+					<span style={{ fontSize: '11px', color: '#888', fontFamily: 'monospace' }}>{Math.round(zoom * 100)}%</span>
+				</div>
 				<button
 					type="button"
 					onClick={onToggleCollapsed}

@@ -3045,50 +3045,7 @@ export const App: React.FC = () => {
 						onContextMenu={handleCanvasContextMenu}
 					/>
 
-					<div
-						style={{
-							position: 'absolute',
-							bottom: '16px',
-							left: '16px',
-							padding: '8px 12px',
-							backgroundColor: 'rgba(0, 0, 0, 0.7)',
-							color: 'white',
-							borderRadius: '6px',
-							fontSize: '12px',
-							fontFamily: 'monospace',
-						}}
-					>
-						Offset: {panOffset.x.toFixed(0)}, {panOffset.y.toFixed(0)} | Zoom: {Math.round(zoom * 100)}%
-					</div>
-
-					{selectionIds.length > 0 && (
-						<div
-							style={{
-								position: 'absolute',
-								top: '16px',
-								left: '16px',
-								padding: '8px 12px',
-								backgroundColor: 'rgba(74, 158, 255, 0.9)',
-								color: 'white',
-								borderRadius: '6px',
-								fontSize: '12px',
-							}}
-						>
-							{selectionIds.length} selected
-						</div>
-					)}
-
-					<ActionBar
-						activeTool={activeTool}
-						onToolChange={handleToolChange}
-						canUndo={canUndo}
-						canRedo={canRedo}
-						onUndo={undoCommand}
-						onRedo={redoCommand}
-						onSave={handleSave}
-						onLoad={handleLoad}
-						onImport={handleImportImage}
-					/>
+					<ActionBar activeTool={activeTool} onToolChange={handleToolChange} />
 				</div>
 
 				<PropertiesPanel
@@ -3097,6 +3054,7 @@ export const App: React.FC = () => {
 					collapsed={rightPanelCollapsed}
 					onToggleCollapsed={toggleRightPanel}
 					onUpdateNode={handleUpdateNode}
+					zoom={zoom}
 				/>
 			</div>
 

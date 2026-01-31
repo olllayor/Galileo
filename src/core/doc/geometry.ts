@@ -1,4 +1,4 @@
-import type { Document } from './types';
+import type { Document, Node } from './types';
 
 export interface Bounds {
 	x: number;
@@ -11,6 +11,100 @@ export type WorldPositionMap = Record<string, { x: number; y: number }>;
 export type WorldBoundsMap = Record<string, Bounds>;
 export type BoundsOverrideMap = Record<string, Bounds>;
 export type ParentMap = Record<string, string | null>;
+
+/**
+ * Compute layout positions for children of a node with auto-layout enabled.
+ * Returns a map of childId -> computed local position within the parent.
+ */
+export const computeAutoLayoutPositions = (
+	parent: Node,
+	children: Node[],
+): Record<string, { x: number; y: number }> => {
+	const positions: Record<string, { x: number; y: number }> = {};
+	const layout = parent.layout;
+
+	if (!layout || layout.type !== 'auto') {
+		// No auto-layout, use stored positions
+		for (const child of children) {
+			positions[child.id] = { x: child.position.x, y: child.position.y };
+		}
+		return positions;
+	}
+
+	const { direction, gap, padding, alignment } = layout;
+	const isRow = direction === 'row';
+
+	// Calculate total content size for alignment
+	let totalMainSize = 0;
+	let maxCrossSize = 0;
+
+	for (const child of children) {
+		if (child.visible === false) continue;
+		const mainSize = isRow ? child.size.width : child.size.height;
+		const crossSize = isRow ? child.size.height : child.size.width;
+		totalMainSize += mainSize;
+		maxCrossSize = Math.max(maxCrossSize, crossSize);
+	}
+
+	// Add gaps between visible children
+	const visibleChildren = children.filter((c) => c.visible !== false);
+	if (visibleChildren.length > 1) {
+		totalMainSize += gap * (visibleChildren.length - 1);
+	}
+
+	// Available space
+	const availableMainSize = isRow
+		? parent.size.width - padding.left - padding.right
+		: parent.size.height - padding.top - padding.bottom;
+	const availableCrossSize = isRow
+		? parent.size.height - padding.top - padding.bottom
+		: parent.size.width - padding.left - padding.right;
+
+	// Starting position based on alignment
+	let mainOffset: number;
+	if (alignment === 'center') {
+		mainOffset = (isRow ? padding.left : padding.top) + (availableMainSize - totalMainSize) / 2;
+	} else if (alignment === 'end') {
+		mainOffset = (isRow ? padding.left : padding.top) + (availableMainSize - totalMainSize);
+	} else {
+		// 'start' is default
+		mainOffset = isRow ? padding.left : padding.top;
+	}
+
+	// Ensure mainOffset is at least the padding
+	mainOffset = Math.max(mainOffset, isRow ? padding.left : padding.top);
+
+	// Position each child
+	for (const child of children) {
+		if (child.visible === false) {
+			// Hidden children keep their stored position
+			positions[child.id] = { x: child.position.x, y: child.position.y };
+			continue;
+		}
+
+		const childMainSize = isRow ? child.size.width : child.size.height;
+		const childCrossSize = isRow ? child.size.height : child.size.width;
+
+		// Cross-axis centering (perpendicular to main direction)
+		const crossOffset = (isRow ? padding.top : padding.left) + (availableCrossSize - childCrossSize) / 2;
+
+		if (isRow) {
+			positions[child.id] = {
+				x: mainOffset,
+				y: Math.max(padding.top, crossOffset),
+			};
+		} else {
+			positions[child.id] = {
+				x: Math.max(padding.left, crossOffset),
+				y: mainOffset,
+			};
+		}
+
+		mainOffset += childMainSize + gap;
+	}
+
+	return positions;
+};
 
 export const buildParentMap = (doc: Document): ParentMap => {
 	const parentMap: ParentMap = {};
@@ -94,14 +188,25 @@ export const buildWorldBoundsMap = (doc: Document, overrides?: BoundsOverrideMap
 
 		boundsMap[node.id] = { x: worldX, y: worldY, width, height };
 
-		if (!node.children) continue;
-		for (const childId of node.children) {
-			const child = doc.nodes[childId];
-			if (!child) continue;
+		if (!node.children || node.children.length === 0) continue;
+
+		// Get child nodes
+		const childNodes = node.children
+			.map((childId) => doc.nodes[childId])
+			.filter((child): child is Node => child !== undefined);
+
+		// Compute auto-layout positions if parent has layout
+		const layoutPositions = computeAutoLayoutPositions(node, childNodes);
+
+		for (const child of childNodes) {
+			const layoutPos = layoutPositions[child.id];
+			const childLocalX = layoutPos?.x ?? child.position.x;
+			const childLocalY = layoutPos?.y ?? child.position.y;
+
 			stack.push({
-				id: childId,
-				x: worldX + child.position.x,
-				y: worldY + child.position.y,
+				id: child.id,
+				x: worldX + childLocalX,
+				y: worldY + childLocalY,
 			});
 		}
 	}
