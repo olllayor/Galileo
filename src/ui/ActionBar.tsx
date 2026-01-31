@@ -11,13 +11,7 @@ interface ActionBarProps {
 	onImport?: () => void;
 }
 
-export const ActionBar: React.FC<ActionBarProps> = ({
-	activeTool,
-	onToolChange,
-	onSave,
-	onLoad,
-	onImport,
-}) => {
+export const ActionBar: React.FC<ActionBarProps> = ({ activeTool, onToolChange, onSave, onLoad, onImport }) => {
 	const tools = [
 		{ id: 'select' as const, label: 'Select', shortcut: 'V', icon: <Cursor strokeWidth={2} size={16} /> },
 		{ id: 'hand' as const, label: 'Hand', shortcut: 'H', icon: <Hand strokeWidth={2} size={16} /> },
