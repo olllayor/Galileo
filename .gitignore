@@ -42,4 +42,5 @@ src-tauri/Cargo.lock
 .gemini/
 .opencode/
 .windsurf
+.worktrees/
 .github/
