@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import type { Document, Node } from '../core/doc/types';
+import { colors, spacing, typography, radii, transitions, panels } from './design-system';
 
 const TYPE_LABELS: Record<Node['type'], string> = {
 	frame: 'Frame',
@@ -334,20 +335,51 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 			onClick={onClick}
 			draggable={false}
 			style={{
-				width: '20px',
-				height: '20px',
-				border: '1px solid #ccc',
-				backgroundColor: active ? '#fff' : '#f0f0f0',
-				color: active ? '#333' : '#888',
-				borderRadius: '4px',
-				fontSize: '11px',
+				width: '18px',
+				height: '18px',
+				border: 'none',
+				backgroundColor: 'transparent',
+				color: active ? colors.text.secondary : colors.text.disabled,
+				borderRadius: radii.sm,
+				fontSize: typography.fontSize.xs,
 				display: 'flex',
 				alignItems: 'center',
 				justifyContent: 'center',
 				cursor: 'pointer',
+				transition: `color ${transitions.fast}`,
+				opacity: 0,
 			}}
+			className="layer-toggle-btn"
 		>
-			{label}
+			{label === 'V' ? (
+				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+					{active ? (
+						<>
+							<circle cx="12" cy="12" r="3" />
+							<path d="M2.5 12a10 10 0 0 1 19 0 10 10 0 0 1-19 0" />
+						</>
+					) : (
+						<>
+							<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+							<line x1="1" y1="1" x2="23" y2="23" />
+						</>
+					)}
+				</svg>
+			) : (
+				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+					{active ? (
+						<>
+							<rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+							<path d="M7 11V7a5 5 0 0 1 10 0v4" />
+						</>
+					) : (
+						<>
+							<rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+							<path d="M7 11V7a5 5 0 0 1 9.9-1" />
+						</>
+					)}
+				</svg>
+			)}
 		</button>
 	);
 
@@ -356,14 +388,14 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 		return (
 			<div
 				style={{
-					width: '48px',
-					borderRight: '1px solid #ddd',
-					backgroundColor: '#f5f5f5',
+					width: `${panels.left.collapsedWidth}px`,
+					borderRight: `1px solid ${colors.border.subtle}`,
+					backgroundColor: colors.bg.secondary,
 					display: 'flex',
 					flexDirection: 'column',
 					alignItems: 'center',
-					paddingTop: '8px',
-					transition: 'width 0.2s ease',
+					paddingTop: spacing.sm,
+					transition: `width ${transitions.normal}`,
 				}}
 			>
 				<button
@@ -371,55 +403,60 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 					onClick={onToggleCollapsed}
 					title="Expand Layers"
 					style={{
-						width: '32px',
-						height: '32px',
+						width: '28px',
+						height: '28px',
 						display: 'flex',
 						alignItems: 'center',
 						justifyContent: 'center',
 						backgroundColor: 'transparent',
 						border: 'none',
-						borderRadius: '6px',
+						borderRadius: radii.md,
 						cursor: 'pointer',
-						color: '#666',
+						color: colors.text.secondary,
 						fontSize: '14px',
 					}}
 				>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-						<path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4" />
+						<path d="M9 18l6-6-6-6" />
 					</svg>
 				</button>
 				<div
 					style={{
-						marginTop: '8px',
-						width: '32px',
-						height: '32px',
+						marginTop: spacing.sm,
+						width: '28px',
+						height: '28px',
 						display: 'flex',
 						alignItems: 'center',
 						justifyContent: 'center',
-						backgroundColor: '#e0e0e0',
-						borderRadius: '6px',
-						fontSize: '11px',
-						fontWeight: 600,
-						color: '#666',
+						backgroundColor: colors.bg.active,
+						borderRadius: radii.md,
+						fontSize: typography.fontSize.xs,
+						fontWeight: typography.fontWeight.semibold,
+						color: colors.text.secondary,
 					}}
 					title="Layers"
 				>
-					L
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+						<polygon points="12 2 2 7 12 12 22 7 12 2" />
+						<polyline points="2 17 12 22 22 17" />
+						<polyline points="2 12 12 17 22 12" />
+					</svg>
 				</div>
 				{selectionIds.length > 0 && (
 					<div
 						style={{
-							marginTop: '8px',
-							width: '24px',
-							height: '24px',
+							marginTop: spacing.sm,
+							minWidth: '18px',
+							height: '18px',
 							display: 'flex',
 							alignItems: 'center',
 							justifyContent: 'center',
-							backgroundColor: '#4a9eff',
-							borderRadius: '12px',
-							fontSize: '10px',
-							fontWeight: 600,
-							color: 'white',
+							backgroundColor: colors.accent.primary,
+							borderRadius: radii.full,
+							fontSize: typography.fontSize.xs,
+							fontWeight: typography.fontWeight.semibold,
+							color: colors.text.primary,
+							padding: `0 ${spacing.xs}`,
 						}}
 						title={`${selectionIds.length} selected`}
 					>
@@ -436,37 +473,40 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 			tabIndex={0}
 			onKeyDown={handleRowKeyDown}
 			style={{
-				width: '240px',
-				borderRight: '1px solid #ddd',
-				backgroundColor: '#f5f5f5',
+				width: `${panels.left.width}px`,
+				borderRight: `1px solid ${colors.border.subtle}`,
+				backgroundColor: colors.bg.secondary,
 				display: 'flex',
 				flexDirection: 'column',
-				overflow: 'auto',
+				overflow: 'hidden',
 				cursor: dragState && !dropIndicator ? 'not-allowed' : undefined,
-				transition: 'width 0.2s ease',
+				transition: `width ${transitions.normal}`,
 			}}
 		>
+			{/* Panel Header */}
 			<div
 				style={{
-					padding: '10px 12px',
-					fontSize: '12px',
-					fontWeight: 600,
-					color: '#444',
-					borderBottom: '1px solid #ddd',
+					padding: `${spacing.sm} ${spacing.md}`,
+					fontSize: typography.fontSize.sm,
+					fontWeight: typography.fontWeight.medium,
+					color: colors.text.secondary,
+					borderBottom: `1px solid ${colors.border.subtle}`,
 					position: 'sticky',
 					top: 0,
-					backgroundColor: '#f5f5f5',
+					backgroundColor: colors.bg.secondary,
 					zIndex: 1,
 					display: 'flex',
 					alignItems: 'center',
 					justifyContent: 'space-between',
+					textTransform: 'uppercase',
+					letterSpacing: '0.5px',
 				}}
 			>
 				<span>Layers</span>
 				<button
 					type="button"
 					onClick={onToggleCollapsed}
-					title="Minimize Layers"
+					title="Collapse panel"
 					style={{
 						width: '20px',
 						height: '20px',
@@ -475,10 +515,17 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 						justifyContent: 'center',
 						backgroundColor: 'transparent',
 						border: 'none',
-						borderRadius: '4px',
+						borderRadius: radii.sm,
 						cursor: 'pointer',
-						color: '#888',
+						color: colors.text.tertiary,
 						fontSize: '12px',
+						transition: `color ${transitions.fast}`,
+					}}
+					onMouseEnter={(e) => {
+						e.currentTarget.style.color = colors.text.primary;
+					}}
+					onMouseLeave={(e) => {
+						e.currentTarget.style.color = colors.text.tertiary;
 					}}
 				>
 					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -487,11 +534,21 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 				</button>
 			</div>
 
-			<div ref={listRef} onDragOver={handleListDragOver} onDrop={handleDragEnd} style={{ position: 'relative' }}>
+			{/* Layer List */}
+			<div
+				ref={listRef}
+				onDragOver={handleListDragOver}
+				onDrop={handleDragEnd}
+				style={{ position: 'relative', flex: 1, overflow: 'auto', padding: `${spacing.xs} 0` }}
+			>
 				{rows.map((row) => {
 					const isSelected = selectionIds.includes(row.id);
 					const isEditing = editingId === row.id;
-					const rowColor = row.isLocked ? '#777' : row.isVisible ? '#333' : '#888';
+					const rowColor = row.isLocked
+						? colors.text.disabled
+						: row.isVisible
+							? colors.text.primary
+							: colors.text.tertiary;
 					const isDraggingRow = dragState?.id === row.id;
 					return (
 						<div
@@ -506,15 +563,24 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 							style={{
 								display: 'flex',
 								alignItems: 'center',
-								gap: '6px',
-								padding: '6px 8px',
-								paddingLeft: `${8 + row.depth * 14}px`,
-								backgroundColor: isSelected ? '#dbe9ff' : 'transparent',
+								gap: spacing.xs,
+								padding: `${spacing.xs} ${spacing.sm}`,
+								paddingLeft: `${8 + row.depth * 12}px`,
+								margin: `0 ${spacing.xs}`,
+								backgroundColor: isSelected ? colors.bg.selected : 'transparent',
 								color: rowColor,
-								fontSize: '12px',
-								borderBottom: '1px solid rgba(0,0,0,0.04)',
+								fontSize: typography.fontSize.md,
+								borderRadius: radii.sm,
 								userSelect: 'none',
-								opacity: isDraggingRow ? 0.6 : 1,
+								opacity: isDraggingRow ? 0.5 : 1,
+								transition: `background-color ${transitions.fast}`,
+								border: isSelected ? `1px solid ${colors.accent.primary}` : '1px solid transparent',
+							}}
+							onMouseEnter={(e) => {
+								if (!isSelected) e.currentTarget.style.backgroundColor = colors.bg.hover;
+							}}
+							onMouseLeave={(e) => {
+								if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
 							}}
 						>
 							<button
@@ -525,17 +591,26 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 								}}
 								draggable={false}
 								style={{
-									width: '16px',
-									height: '16px',
+									width: '14px',
+									height: '14px',
 									border: 'none',
 									background: 'transparent',
-									color: '#666',
+									color: colors.text.tertiary,
 									cursor: row.hasChildren ? 'pointer' : 'default',
 									padding: 0,
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									transition: `transform ${transitions.fast}`,
+									transform: row.hasChildren && row.isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
 								}}
 								title={row.hasChildren ? (row.isExpanded ? 'Collapse' : 'Expand') : undefined}
 							>
-								{row.hasChildren ? (row.isExpanded ? 'v' : '>') : ''}
+								{row.hasChildren ? (
+									<svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor">
+										<path d="M2 1l4 3-4 3V1z" />
+									</svg>
+								) : null}
 							</button>
 
 							<div
@@ -545,8 +620,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 									display: 'flex',
 									alignItems: 'center',
 									justifyContent: 'center',
-									color: '#666',
-									fontSize: '10px',
+									color: colors.text.tertiary,
+									flexShrink: 0,
 								}}
 							>
 								{row.type === 'frame' ? (
@@ -604,15 +679,25 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 									}}
 									style={{
 										flex: 1,
-										fontSize: '12px',
-										padding: '2px 4px',
-										borderRadius: '4px',
-										border: '1px solid #8ab6ff',
+										fontSize: typography.fontSize.md,
+										padding: `2px ${spacing.xs}`,
+										borderRadius: radii.sm,
+										border: `1px solid ${colors.accent.primary}`,
+										backgroundColor: colors.bg.primary,
+										color: colors.text.primary,
 										outline: 'none',
 									}}
 								/>
 							) : (
-								<div style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+								<div
+									style={{
+										flex: 1,
+										whiteSpace: 'nowrap',
+										overflow: 'hidden',
+										textOverflow: 'ellipsis',
+										fontSize: typography.fontSize.md,
+									}}
+								>
 									{row.name}
 								</div>
 							)}
@@ -635,15 +720,28 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 					<div
 						style={{
 							position: 'absolute',
-							left: 0,
-							right: 0,
+							left: spacing.sm,
+							right: spacing.sm,
 							top: dropIndicator.top - 1,
 							height: '2px',
-							backgroundColor: '#4a9eff',
+							backgroundColor: colors.accent.primary,
+							borderRadius: radii.full,
 						}}
 					/>
 				)}
 			</div>
+
+			{/* CSS for hover reveal of toggle buttons */}
+			<style>{`
+				.layer-toggle-btn {
+					opacity: 0 !important;
+					transition: opacity 100ms ease !important;
+				}
+				div:hover > div > .layer-toggle-btn,
+				.layer-toggle-btn:focus {
+					opacity: 1 !important;
+				}
+			`}</style>
 		</div>
 	);
 };
