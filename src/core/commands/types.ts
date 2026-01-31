@@ -49,6 +49,15 @@ export interface SetPropsCommand extends BaseCommand {
   };
 }
 
+export interface ReorderChildCommand extends BaseCommand {
+  type: 'reorderChild';
+  payload: {
+    parentId: string;
+    fromIndex: number;
+    toIndex: number;
+  };
+}
+
 export interface CreateAssetCommand extends BaseCommand {
   type: 'createAsset';
   payload: {
@@ -70,6 +79,7 @@ export type Command =
   | MoveNodeCommand
   | ResizeNodeCommand
   | SetPropsCommand
+  | ReorderChildCommand
   | CreateAssetCommand
   | BatchCommand;
 

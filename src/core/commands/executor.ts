@@ -86,6 +86,21 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
       break;
     }
 
+    case 'reorderChild': {
+      const { parentId, fromIndex, toIndex } = cmd.payload;
+      const parent = draft.nodes[parentId];
+      if (!parent?.children || parent.children.length === 0) {
+        break;
+      }
+      if (fromIndex < 0 || fromIndex >= parent.children.length) {
+        break;
+      }
+      const [moved] = parent.children.splice(fromIndex, 1);
+      const clamped = Math.max(0, Math.min(toIndex, parent.children.length));
+      parent.children.splice(clamped, 0, moved);
+      break;
+    }
+
     case 'createAsset': {
       const { id, asset } = cmd.payload;
       draft.assets[id] = asset;

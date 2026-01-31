@@ -1,5 +1,5 @@
 import type { Document } from '../core/doc/types';
-import type { Bounds, ParentMap, WorldPositionMap } from '../core/doc';
+import type { Bounds, ParentMap, WorldBoundsMap } from '../core/doc';
 
 export interface SnapGuide {
   orientation: 'vertical' | 'horizontal';
@@ -15,7 +15,7 @@ export const buildSiblingSnapTargets = (
   doc: Document,
   nodeId: string,
   parentMap: ParentMap,
-  worldMap: WorldPositionMap
+  boundsMap: WorldBoundsMap
 ): SnapTargets => {
   const parentId = parentMap[nodeId];
   if (!parentId) {
@@ -32,17 +32,17 @@ export const buildSiblingSnapTargets = (
   for (const siblingId of parent.children) {
     if (siblingId === nodeId) continue;
     const sibling = doc.nodes[siblingId];
-    const pos = worldMap[siblingId];
-    if (!sibling || !pos) continue;
+    const bounds = boundsMap[siblingId];
+    if (!sibling || !bounds) continue;
 
-    const left = pos.x;
-    const right = pos.x + sibling.size.width;
-    const centerX = pos.x + sibling.size.width / 2;
+    const left = bounds.x;
+    const right = bounds.x + bounds.width;
+    const centerX = bounds.x + bounds.width / 2;
     targets.x.push(left, centerX, right);
 
-    const top = pos.y;
-    const bottom = pos.y + sibling.size.height;
-    const centerY = pos.y + sibling.size.height / 2;
+    const top = bounds.y;
+    const bottom = bounds.y + bounds.height;
+    const centerY = bounds.y + bounds.height / 2;
     targets.y.push(top, centerY, bottom);
   }
 

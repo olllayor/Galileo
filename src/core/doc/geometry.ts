@@ -8,6 +8,8 @@ export interface Bounds {
 }
 
 export type WorldPositionMap = Record<string, { x: number; y: number }>;
+export type WorldBoundsMap = Record<string, Bounds>;
+export type BoundsOverrideMap = Record<string, Bounds>;
 export type ParentMap = Record<string, string | null>;
 
 export const buildParentMap = (doc: Document): ParentMap => {
@@ -66,6 +68,52 @@ export const buildWorldPositionMap = (doc: Document): WorldPositionMap => {
   return worldMap;
 };
 
+export const buildWorldBoundsMap = (
+  doc: Document,
+  overrides?: BoundsOverrideMap
+): WorldBoundsMap => {
+  const boundsMap: WorldBoundsMap = {};
+  const root = doc.nodes[doc.rootId];
+  if (!root) {
+    return boundsMap;
+  }
+
+  const rootOverride = overrides?.[doc.rootId];
+  const rootX = rootOverride?.x ?? root.position.x;
+  const rootY = rootOverride?.y ?? root.position.y;
+
+  const stack: Array<{ id: string; x: number; y: number }> = [
+    { id: doc.rootId, x: rootX, y: rootY },
+  ];
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    const node = doc.nodes[current.id];
+    if (!node) continue;
+
+    const override = overrides?.[node.id];
+    const worldX = override?.x ?? current.x;
+    const worldY = override?.y ?? current.y;
+    const width = override?.width ?? node.size.width;
+    const height = override?.height ?? node.size.height;
+
+    boundsMap[node.id] = { x: worldX, y: worldY, width, height };
+
+    if (!node.children) continue;
+    for (const childId of node.children) {
+      const child = doc.nodes[childId];
+      if (!child) continue;
+      stack.push({
+        id: childId,
+        x: worldX + child.position.x,
+        y: worldY + child.position.y,
+      });
+    }
+  }
+
+  return boundsMap;
+};
+
 export const getNodeWorldPosition = (
   doc: Document,
   nodeId: string,
@@ -78,44 +126,33 @@ export const getNodeWorldPosition = (
 export const getNodeWorldBounds = (
   doc: Document,
   nodeId: string,
-  worldMap?: WorldPositionMap
+  boundsMap?: WorldBoundsMap
 ): Bounds | null => {
-  const node = doc.nodes[nodeId];
-  if (!node) return null;
-
-  const position = getNodeWorldPosition(doc, nodeId, worldMap);
-  if (!position) return null;
-
-  return {
-    x: position.x,
-    y: position.y,
-    width: node.size.width,
-    height: node.size.height,
-  };
+  const map = boundsMap ?? buildWorldBoundsMap(doc);
+  return map[nodeId] || null;
 };
 
 export const getSelectionBounds = (
   doc: Document,
   nodeIds: string[],
-  worldMap?: WorldPositionMap
+  boundsMap?: WorldBoundsMap
 ): Bounds | null => {
   if (nodeIds.length === 0) return null;
 
-  const map = worldMap ?? buildWorldPositionMap(doc);
+  const map = boundsMap ?? buildWorldBoundsMap(doc);
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
 
   for (const id of nodeIds) {
-    const node = doc.nodes[id];
-    const pos = map[id];
-    if (!node || !pos) continue;
+    const bounds = map[id];
+    if (!bounds) continue;
 
-    minX = Math.min(minX, pos.x);
-    minY = Math.min(minY, pos.y);
-    maxX = Math.max(maxX, pos.x + node.size.width);
-    maxY = Math.max(maxY, pos.y + node.size.height);
+    minX = Math.min(minX, bounds.x);
+    minY = Math.min(minY, bounds.y);
+    maxX = Math.max(maxX, bounds.x + bounds.width);
+    maxY = Math.max(maxY, bounds.y + bounds.height);
   }
 
   if (!Number.isFinite(minX) || !Number.isFinite(minY)) {

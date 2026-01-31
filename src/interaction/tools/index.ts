@@ -1,5 +1,6 @@
 import type { Document, Node } from '../../core/doc/types';
 import { createNode } from '../../core/doc';
+import type { WorldBoundsMap } from '../../core/doc';
 
 export interface Tool {
   type: 'select' | 'rectangle' | 'text';
@@ -69,6 +70,7 @@ export interface HitResult {
 export interface HitTestOptions {
   hitSlopPx?: number;
   edgeMinPx?: number;
+  boundsMap?: WorldBoundsMap;
 }
 
 type WorldPoint = { x: number; y: number };
@@ -111,7 +113,8 @@ export const hitTestNodeAtPosition = (
     rootNode,
     { x: worldX, y: worldY },
     IDENTITY_TRANSFORM,
-    context
+    context,
+    options.boundsMap
   );
 };
 
@@ -130,20 +133,21 @@ const hitTestNodeRecursive = (
   node: Node,
   worldPoint: WorldPoint,
   parentTransform: WorldTransform,
-  context: HitTestContext
+  context: HitTestContext,
+  boundsMap?: WorldBoundsMap
 ): HitResult | null => {
   if (node.visible === false) {
     return null;
   }
 
-  const nodeTransform = composeTransform(parentTransform, node);
+  const nodeTransform = composeTransform(parentTransform, node, boundsMap);
 
   if (node.children && node.children.length > 0) {
     for (let i = node.children.length - 1; i >= 0; i--) {
       const childId = node.children[i];
       const child = doc.nodes[childId];
       if (child) {
-        const childHit = hitTestNodeRecursive(doc, child, worldPoint, nodeTransform, context);
+        const childHit = hitTestNodeRecursive(doc, child, worldPoint, nodeTransform, context, boundsMap);
         if (childHit) {
           return childHit;
         }
@@ -156,7 +160,9 @@ const hitTestNodeRecursive = (
     return null;
   }
 
-  const kind = hitTestNodeShape(node, localPoint, nodeTransform, context);
+  const bounds = boundsMap?.[node.id];
+  const sizeOverride = bounds ? { width: bounds.width, height: bounds.height } : undefined;
+  const kind = hitTestNodeShape(node, localPoint, nodeTransform, context, sizeOverride);
   if (!kind) {
     return null;
   }
@@ -168,11 +174,16 @@ const hitTestNodeRecursive = (
   };
 };
 
-const composeTransform = (parent: WorldTransform, node: Node): WorldTransform => {
+const composeTransform = (
+  parent: WorldTransform,
+  node: Node,
+  boundsMap?: WorldBoundsMap
+): WorldTransform => {
   const scale = getNodeScale(node);
+  const override = boundsMap?.[node.id];
   return {
-    x: parent.x + node.position.x * parent.scaleX,
-    y: parent.y + node.position.y * parent.scaleY,
+    x: override ? override.x : parent.x + node.position.x * parent.scaleX,
+    y: override ? override.y : parent.y + node.position.y * parent.scaleY,
     scaleX: parent.scaleX * scale.x,
     scaleY: parent.scaleY * scale.y,
   };
@@ -215,22 +226,23 @@ const hitTestNodeShape = (
   node: Node,
   localPoint: WorldPoint,
   transform: WorldTransform,
-  context: HitTestContext
+  context: HitTestContext,
+  sizeOverride?: { width: number; height: number }
 ): HitKind | null => {
   switch (node.type) {
     case 'frame':
-      return hitTestRect(node, localPoint, transform, context, true);
+      return hitTestRect(node, localPoint, transform, context, true, sizeOverride);
     case 'image':
     case 'componentInstance':
-      return hitTestRect(node, localPoint, transform, context, true);
+      return hitTestRect(node, localPoint, transform, context, true, sizeOverride);
     case 'rectangle':
-      return hitTestRect(node, localPoint, transform, context, Boolean(node.fill));
+      return hitTestRect(node, localPoint, transform, context, Boolean(node.fill), sizeOverride);
     case 'ellipse':
-      return hitTestEllipse(node, localPoint, transform, context, Boolean(node.fill));
+      return hitTestEllipse(node, localPoint, transform, context, Boolean(node.fill), sizeOverride);
     case 'path':
-      return hitTestPath(node, localPoint, transform, context, Boolean(node.fill));
+      return hitTestPath(node, localPoint, transform, context, Boolean(node.fill), sizeOverride);
     case 'text':
-      return hitTestText(node, localPoint, transform, context);
+      return hitTestText(node, localPoint, transform, context, sizeOverride);
     default:
       return null;
   }
@@ -241,9 +253,10 @@ const hitTestRect = (
   localPoint: WorldPoint,
   transform: WorldTransform,
   context: HitTestContext,
-  allowFill: boolean
+  allowFill: boolean,
+  sizeOverride?: { width: number; height: number }
 ): HitKind | null => {
-  const { width, height } = node.size;
+  const { width, height } = sizeOverride ?? node.size;
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     return null;
   }
@@ -295,9 +308,10 @@ const hitTestEllipse = (
   localPoint: WorldPoint,
   transform: WorldTransform,
   context: HitTestContext,
-  allowFill: boolean
+  allowFill: boolean,
+  sizeOverride?: { width: number; height: number }
 ): HitKind | null => {
-  const { width, height } = node.size;
+  const { width, height } = sizeOverride ?? node.size;
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     return null;
   }
@@ -314,7 +328,7 @@ const hitTestEllipse = (
 
   const ctx = getHitTestContext();
   if (!ctx || typeof Path2D !== 'function') {
-    return hitTestRect(node, localPoint, transform, context, true);
+    return hitTestRect(node, localPoint, transform, context, true, sizeOverride);
   }
 
   const path = new Path2D();
@@ -341,9 +355,10 @@ const hitTestPath = (
   localPoint: WorldPoint,
   transform: WorldTransform,
   context: HitTestContext,
-  allowFill: boolean
+  allowFill: boolean,
+  sizeOverride?: { width: number; height: number }
 ): HitKind | null => {
-  const { width, height } = node.size;
+  const { width, height } = sizeOverride ?? node.size;
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     return null;
   }
@@ -361,7 +376,7 @@ const hitTestPath = (
   const pathData = getNodePathData(node);
   const ctx = getHitTestContext();
   if (!pathData || !ctx || typeof Path2D !== 'function') {
-    return hitTestRect(node, localPoint, transform, context, true);
+    return hitTestRect(node, localPoint, transform, context, true, sizeOverride);
   }
 
   const path = new Path2D(pathData.d);
@@ -387,9 +402,10 @@ const hitTestText = (
   node: Node,
   localPoint: WorldPoint,
   transform: WorldTransform,
-  context: HitTestContext
+  context: HitTestContext,
+  sizeOverride?: { width: number; height: number }
 ): HitKind | null => {
-  const { width, height } = node.size;
+  const { width, height } = sizeOverride ?? node.size;
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     return null;
   }

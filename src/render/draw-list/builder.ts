@@ -1,4 +1,4 @@
-import { buildWorldPositionMap } from '../../core/doc';
+import { buildWorldBoundsMap, type WorldBoundsMap } from '../../core/doc';
 import type { Color, Document, Node } from '../../core/doc/types';
 import type { DrawCommand, GradientPaint, GradientStop, Paint } from './types';
 
@@ -7,14 +7,15 @@ type BuildDrawListOptions = {
   clipToBounds?: boolean;
 };
 
-export const buildDrawList = (doc: Document): DrawCommand[] => {
+export const buildDrawList = (doc: Document, boundsMap?: WorldBoundsMap): DrawCommand[] => {
   const rootNode = doc.nodes[doc.rootId];
   if (!rootNode) {
     return [];
   }
 
+  const map = boundsMap ?? buildWorldBoundsMap(doc);
   const commands: DrawCommand[] = [];
-  buildNodeCommands(doc, rootNode, commands, 0, 0, 1, 1);
+  buildNodeCommandsFromBounds(doc, rootNode, commands, map, { x: 0, y: 0 }, doc.rootId, true);
 
   return commands;
 };
@@ -22,15 +23,16 @@ export const buildDrawList = (doc: Document): DrawCommand[] => {
 export const buildDrawListForNode = (
   doc: Document,
   nodeId: string,
-  options: BuildDrawListOptions = {}
+  options: BuildDrawListOptions = {},
+  boundsMap?: WorldBoundsMap
 ): DrawCommand[] => {
   const node = doc.nodes[nodeId];
   if (!node) {
     return [];
   }
 
-  const worldMap = buildWorldPositionMap(doc);
-  const base = worldMap[nodeId];
+  const map = boundsMap ?? buildWorldBoundsMap(doc);
+  const base = map[nodeId];
   if (!base) {
     return [];
   }
@@ -43,32 +45,32 @@ export const buildDrawListForNode = (
       type: 'clip',
       x: 0,
       y: 0,
-      width: node.size.width,
-      height: node.size.height,
+      width: base.width,
+      height: base.height,
     });
   }
-  buildNodeCommandsFromWorld(doc, node, commands, base, worldMap, nodeId, includeFrameFill);
+  buildNodeCommandsFromBounds(doc, node, commands, map, base, nodeId, includeFrameFill);
   return commands;
 };
 
-const buildNodeCommandsFromWorld = (
+const buildNodeCommandsFromBounds = (
   doc: Document,
   node: Node,
   commands: DrawCommand[],
+  boundsMap: WorldBoundsMap,
   base: { x: number; y: number },
-  worldMap: Record<string, { x: number; y: number }>,
   rootId: string,
   includeRootFrameFill: boolean
 ): void => {
-  const worldPos = worldMap[node.id];
-  if (!worldPos) {
+  const bounds = boundsMap[node.id];
+  if (!bounds) {
     return;
   }
 
-  const x = worldPos.x - base.x;
-  const y = worldPos.y - base.y;
-  const width = node.size.width;
-  const height = node.size.height;
+  const x = bounds.x - base.x;
+  const y = bounds.y - base.y;
+  const width = bounds.width;
+  const height = bounds.height;
 
   if (node.visible === false) {
     return;
@@ -93,7 +95,7 @@ const buildNodeCommandsFromWorld = (
       for (const childId of node.children) {
         const child = doc.nodes[childId];
         if (child) {
-          buildNodeCommandsFromWorld(doc, child, commands, base, worldMap, rootId, includeRootFrameFill);
+          buildNodeCommandsFromBounds(doc, child, commands, boundsMap, base, rootId, includeRootFrameFill);
         }
       }
     }
@@ -183,140 +185,7 @@ const buildNodeCommandsFromWorld = (
       for (const childId of node.children) {
         const child = doc.nodes[childId];
         if (child) {
-          buildNodeCommandsFromWorld(doc, child, commands, base, worldMap, rootId, includeRootFrameFill);
-        }
-      }
-    }
-  }
-};
-
-const buildNodeCommands = (
-  doc: Document,
-  node: Node,
-  commands: DrawCommand[],
-  offsetX: number,
-  offsetY: number,
-  scaleX: number,
-  scaleY: number
-): void => {
-  const x = offsetX + node.position.x * scaleX;
-  const y = offsetY + node.position.y * scaleY;
-  const width = node.size.width * scaleX;
-  const height = node.size.height * scaleY;
-
-  if (node.visible === false) {
-    return;
-  }
-
-  if (node.type === 'frame') {
-    if (node.fill) {
-      commands.push({
-        type: 'rect',
-        x,
-        y,
-        width,
-        height,
-        fill: colorToPaint(node.fill),
-        cornerRadius: node.cornerRadius,
-        opacity: node.opacity,
-      });
-    }
-
-    if (node.children && node.children.length > 0) {
-      for (const childId of node.children) {
-        const child = doc.nodes[childId];
-        if (child) {
-          buildNodeCommands(doc, child, commands, x, y, scaleX, scaleY);
-        }
-      }
-    }
-  } else if (node.type === 'rectangle') {
-    if (node.fill || node.stroke) {
-      commands.push({
-        type: 'rect',
-        x,
-        y,
-        width,
-        height,
-        fill: node.fill ? colorToPaint(node.fill) : undefined,
-        stroke: node.stroke ? colorToPaint(node.stroke.color) : undefined,
-        strokeWidth: node.stroke?.width,
-        cornerRadius: node.cornerRadius,
-        opacity: node.opacity,
-      });
-    }
-  } else if (node.type === 'ellipse') {
-    if (node.fill || node.stroke) {
-      commands.push({
-        type: 'ellipse',
-        x: x + width / 2,
-        y: y + height / 2,
-        radiusX: width / 2,
-        radiusY: height / 2,
-        fill: node.fill ? colorToPaint(node.fill) : undefined,
-        stroke: node.stroke ? colorToPaint(node.stroke.color) : undefined,
-        strokeWidth: node.stroke?.width,
-        opacity: node.opacity,
-      });
-    }
-  } else if (node.type === 'text') {
-    commands.push({
-      type: 'text',
-      x,
-      y,
-      text: node.text || '',
-      font: `${node.fontWeight || 'normal'} ${node.fontSize || 14}px ${node.fontFamily || 'sans-serif'}`,
-      fontSize: node.fontSize || 14,
-      fill: colorToText(node.fill),
-      opacity: node.opacity,
-    });
-  } else if (node.type === 'image') {
-    const src = resolveImageSource(doc, node);
-    if (src) {
-      commands.push({
-        type: 'image',
-        x,
-        y,
-        width,
-        height,
-        src,
-        opacity: node.opacity,
-      });
-    }
-  } else if (node.type === 'path') {
-    const pathData = getNodePathData(node);
-    if (pathData && (node.fill || node.stroke)) {
-      commands.push({
-        type: 'path',
-        d: pathData.d,
-        x,
-        y,
-        width,
-        height,
-        fill: node.fill ? colorToPaint(node.fill) : undefined,
-        stroke: node.stroke ? colorToPaint(node.stroke.color) : undefined,
-        strokeWidth: node.stroke?.width,
-        opacity: node.opacity,
-        fillRule: pathData.fillRule,
-      });
-    } else if (node.fill) {
-      const color = colorToPaint(node.fill);
-      commands.push({
-        type: 'rect',
-        x,
-        y,
-        width,
-        height,
-        fill: color,
-        opacity: node.opacity,
-      });
-    }
-  } else if (node.type === 'componentInstance') {
-    if (node.children && node.children.length > 0) {
-      for (const childId of node.children) {
-        const child = doc.nodes[childId];
-        if (child) {
-          buildNodeCommands(doc, child, commands, x, y, scaleX, scaleY);
+          buildNodeCommandsFromBounds(doc, child, commands, boundsMap, base, rootId, includeRootFrameFill);
         }
       }
     }

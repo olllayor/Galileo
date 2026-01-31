@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { useCanvas } from '../hooks/useCanvas';
 import type { CanvasPointerInfo, CanvasView, CanvasWheelInfo } from '../hooks/useCanvas';
-import type { Bounds } from '../core/doc';
+import type { Bounds, WorldBoundsMap } from '../core/doc';
 import type { ResizeHandle } from '../interaction/handles';
 import { getHandleScreenRects } from '../interaction/handles';
 import type { SnapGuide } from '../interaction/snapping';
@@ -12,6 +12,7 @@ interface CanvasProps {
   width: number;
   height: number;
   document: Document;
+  boundsMap?: WorldBoundsMap;
   view: CanvasView;
   selectionBounds?: Bounds | null;
   hoverBounds?: Bounds | null;
@@ -32,6 +33,7 @@ export const Canvas: React.FC<CanvasProps> = ({
   width,
   height,
   document,
+  boundsMap,
   view,
   selectionBounds,
   hoverBounds,
@@ -51,8 +53,8 @@ export const Canvas: React.FC<CanvasProps> = ({
   const checkerColor = '#e1e1e1';
   const baseColor = '#f7f7f7';
   const drawCommands = useMemo(() => {
-    return buildDrawList(document);
-  }, [document]);
+    return buildDrawList(document, boundsMap);
+  }, [document, boundsMap]);
 
   const { canvasRef, handleMouseDown, handleMouseMove, handleMouseUp, handleWheel } =
     useCanvas({
@@ -95,6 +97,7 @@ export const Canvas: React.FC<CanvasProps> = ({
 
   const handleContextMenu = (event: React.MouseEvent<HTMLCanvasElement>) => {
     event.preventDefault();
+    event.stopPropagation();
     onContextMenu?.(event);
   };
 

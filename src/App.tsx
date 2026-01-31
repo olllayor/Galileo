@@ -6,6 +6,7 @@ import { PropertiesPanel } from './ui/PropertiesPanel';
 import { ContextMenu, type ContextMenuItem } from './ui/ContextMenu';
 import { PluginModal } from './ui/PluginModal';
 import { PluginManagerModal } from './ui/PluginManagerModal';
+import { LayersPanel } from './ui/LayersPanel';
 import { useDocument } from './hooks/useDocument';
 import {
   createRectangleTool,
@@ -15,15 +16,16 @@ import {
 } from './interaction/tools';
 import {
   buildParentMap,
-  buildWorldPositionMap,
+  buildWorldBoundsMap,
   getNodeWorldBounds,
   getSelectionBounds,
   parseDocumentText,
   serializeDocument,
+  type BoundsOverrideMap,
+  type WorldBoundsMap,
 } from './core/doc';
 import { generateId } from './core/doc/id';
-import { framePresetGroups, type FramePreset } from './core/framePresets';
-import type { Document } from './core/doc/types';
+import type { Document, Node } from './core/doc/types';
 import type { Command } from './core/commands/types';
 import type { CanvasPointerInfo, CanvasWheelInfo } from './hooks/useCanvas';
 import { getHandleCursor, hitTestHandle } from './interaction/handles';
@@ -99,6 +101,27 @@ type HoverHit = {
   kind: HitKind;
   locked: boolean;
   edgeCursor?: string;
+};
+
+type EditorAction =
+  | { type: 'duplicate' }
+  | { type: 'delete' }
+  | { type: 'rename' }
+  | { type: 'toggleLock' }
+  | { type: 'toggleVisible' }
+  | { type: 'reorderZ'; dir: 'front' | 'back' | 'forward' | 'backward' };
+
+type NormalizedEdges = { nl: number; nt: number; nr: number; nb: number };
+
+type TransformSession = {
+  activeIds: string[];
+  initialBounds: { x: number; y: number; width: number; height: number };
+  normalizedEdgesById: Record<string, NormalizedEdges>;
+  handle: ResizeHandle;
+  aspectRatio: number;
+  startPointerWorld: { x: number; y: number };
+  startBoundsMap?: WorldBoundsMap;
+  modifiers: { shiftKey: boolean; altKey: boolean };
 };
 
 const applyPositionUpdates = (
@@ -287,16 +310,15 @@ const rectsIntersect = (
 
 const getMarqueeSelection = (
   doc: Document,
-  worldMap: Record<string, { x: number; y: number }>,
+  boundsMap: WorldBoundsMap,
   rect: { x: number; y: number; width: number; height: number }
 ): string[] => {
   const ids: string[] = [];
   for (const [id, node] of Object.entries(doc.nodes)) {
     if (id === doc.rootId) continue;
     if (node.visible === false) continue;
-    const pos = worldMap[id];
-    if (!pos) continue;
-    const bounds = { x: pos.x, y: pos.y, width: node.size.width, height: node.size.height };
+    const bounds = boundsMap[id];
+    if (!bounds) continue;
     if (rectsIntersect(rect, bounds)) {
       ids.push(id);
     }
@@ -516,7 +538,7 @@ const isEditableTarget = (target: EventTarget | null): boolean => {
     return false;
   }
   const tag = target.tagName.toLowerCase();
-  return tag === 'input' || tag === 'textarea' || target.isContentEditable;
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
 };
 
 const hasPermission = (manifest: PluginManifest, permission: PluginPermission): boolean => {
@@ -552,16 +574,19 @@ export const App: React.FC = () => {
   const [zoom, setZoom] = useState(1);
   const [previewDocument, setPreviewDocument] = useState<Document | null>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const [transformSession, setTransformSession] = useState<TransformSession | null>(null);
   const [hoverHandle, setHoverHandle] = useState<ResizeHandle | null>(null);
   const [hoverHit, setHoverHit] = useState<HoverHit | null>(null);
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
   const [snapDisabled, setSnapDisabled] = useState(false);
+  const [renameRequestId, setRenameRequestId] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
     worldX: number;
     worldY: number;
+    target: 'selection' | 'canvas';
   } | null>(null);
   const [plugins, setPlugins] = useState<PluginRegistration[]>(() => {
     const stored = loadStoredPlugins()
@@ -581,15 +606,31 @@ export const App: React.FC = () => {
   const displayDocument = previewDocument ?? document;
   const selectedNode = selectedIds.length === 1 ? displayDocument.nodes[selectedIds[0]] : null;
   const view = useMemo(() => ({ pan: panOffset, zoom }), [panOffset, zoom]);
-  const worldMap = useMemo(() => buildWorldPositionMap(displayDocument), [displayDocument]);
+  const baseBoundsMap = useMemo(() => buildWorldBoundsMap(displayDocument), [displayDocument]);
+  const boundsOverrides = useMemo(() => {
+    if (!transformSession) return undefined;
+    const overrides: BoundsOverrideMap = {};
+    for (const id of transformSession.activeIds) {
+      const bounds = baseBoundsMap[id];
+      if (bounds) {
+        overrides[id] = { ...bounds };
+      }
+    }
+    return overrides;
+  }, [transformSession, baseBoundsMap]);
+  const boundsMap = useMemo(
+    () => buildWorldBoundsMap(displayDocument, boundsOverrides),
+    [displayDocument, boundsOverrides]
+  );
   const parentMap = useMemo(() => buildParentMap(displayDocument), [displayDocument]);
+  const documentParentMap = useMemo(() => buildParentMap(document), [document]);
   const selectionIds = useMemo(
     () => selectedIds.filter(id => id !== displayDocument.rootId),
     [selectedIds, displayDocument.rootId]
   );
   const selectionBounds = useMemo(
-    () => getSelectionBounds(displayDocument, selectionIds, worldMap),
-    [displayDocument, selectionIds, worldMap]
+    () => getSelectionBounds(displayDocument, selectionIds, boundsMap),
+    [displayDocument, selectionIds, boundsMap]
   );
   const pluginMap = useMemo(() => {
     return new Map(plugins.map(plugin => [plugin.manifest.id, plugin]));
@@ -608,8 +649,8 @@ export const App: React.FC = () => {
   const hoverBounds = useMemo(() => {
     const hoverId = hoverHit?.id;
     if (!hoverId || selectionIds.includes(hoverId)) return null;
-    return getNodeWorldBounds(displayDocument, hoverId, worldMap);
-  }, [hoverHit, selectionIds, displayDocument, worldMap]);
+    return getNodeWorldBounds(displayDocument, hoverId, boundsMap);
+  }, [hoverHit, selectionIds, displayDocument, boundsMap]);
   const marqueeRect = useMemo(() => {
     if (dragState?.mode !== 'marquee') return null;
     const worldRect = rectFromPoints(dragState.startWorld, dragState.currentWorld);
@@ -625,17 +666,18 @@ export const App: React.FC = () => {
       hitTestNodeAtPosition(displayDocument, worldX, worldY, zoom, {
         hitSlopPx: HIT_SLOP_PX,
         edgeMinPx: EDGE_MIN_PX,
+        boundsMap,
       }),
-    [displayDocument, zoom]
+    [displayDocument, zoom, boundsMap]
   );
   const getEdgeCursorForNode = useCallback(
     (nodeId: string, worldX: number, worldY: number): string => {
       const node = displayDocument.nodes[nodeId];
-      const pos = worldMap[nodeId];
-      if (!node || !pos) {
+      const bounds = boundsMap[nodeId];
+      if (!node || !bounds) {
         return 'default';
       }
-      const { width, height } = node.size;
+      const { width, height } = bounds;
       if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
         return 'default';
       }
@@ -643,10 +685,10 @@ export const App: React.FC = () => {
       const zoomSafe = zoom > 0 ? zoom : 1;
       const strokeWidth = Number.isFinite(node.stroke?.width) ? node.stroke!.width : 0;
       const edgeWorld = Math.max(strokeWidth / 2, EDGE_MIN_PX / zoomSafe) + HIT_SLOP_PX / zoomSafe;
-      const left = pos.x;
-      const right = pos.x + width;
-      const top = pos.y;
-      const bottom = pos.y + height;
+      const left = bounds.x;
+      const right = bounds.x + width;
+      const top = bounds.y;
+      const bottom = bounds.y + height;
 
       const nearLeft = Math.abs(worldX - left) <= edgeWorld;
       const nearRight = Math.abs(worldX - right) <= edgeWorld;
@@ -667,19 +709,20 @@ export const App: React.FC = () => {
       }
       return 'default';
     },
-    [displayDocument, worldMap, zoom]
+    [displayDocument, boundsMap, zoom]
   );
   const cursor = useMemo(() => {
     if (dragState?.mode === 'resize') return getHandleCursor(dragState.handle);
     if (dragState?.mode === 'pan') return 'grabbing';
     if (dragState?.mode === 'move') return 'move';
+    if (transformSession) return getHandleCursor(transformSession.handle);
     if (hoverHandle) return getHandleCursor(hoverHandle);
     if (hoverHit?.locked) return 'not-allowed';
     if (hoverHit?.kind === 'edge') return hoverHit.edgeCursor || 'default';
     if (hoverHit) return 'move';
     if (activeTool === 'rectangle' || activeTool === 'text') return 'crosshair';
     return 'default';
-  }, [dragState, hoverHandle, hoverHit, activeTool]);
+  }, [dragState, transformSession, hoverHandle, hoverHit, activeTool]);
 
   useEffect(() => {
     if (recentPluginIds.length === 0 && builtinPlugins.length > 0) {
@@ -688,50 +731,6 @@ export const App: React.FC = () => {
       setRecentPluginIds(seeded);
     }
   }, [recentPluginIds.length]);
-
-  useEffect(() => {
-    const wrapper = canvasWrapperRef.current;
-    if (!wrapper) return;
-
-    const isInsideCanvas = (target: EventTarget | null): boolean => {
-      if (!wrapper) return false;
-      if (!(target instanceof Node)) return false;
-      return wrapper.contains(target);
-    };
-
-    const openAt = (event: MouseEvent) => {
-      event.preventDefault();
-      setContextMenu({ x: event.clientX, y: event.clientY });
-    };
-
-    const handleContextMenuEvent = (event: MouseEvent) => {
-      if (!isInsideCanvas(event.target)) return;
-      openAt(event);
-    };
-
-    const handleMouseDownEvent = (event: MouseEvent) => {
-      if (!isInsideCanvas(event.target)) return;
-      if (event.button === 2 || (event.button === 0 && event.ctrlKey)) {
-        openAt(event);
-      }
-    };
-
-    const handleAuxClickEvent = (event: MouseEvent) => {
-      if (!isInsideCanvas(event.target)) return;
-      if (event.button === 2) {
-        openAt(event);
-      }
-    };
-
-    window.addEventListener('contextmenu', handleContextMenuEvent, true);
-    window.addEventListener('mousedown', handleMouseDownEvent, true);
-    window.addEventListener('auxclick', handleAuxClickEvent, true);
-    return () => {
-      window.removeEventListener('contextmenu', handleContextMenuEvent, true);
-      window.removeEventListener('mousedown', handleMouseDownEvent, true);
-      window.removeEventListener('auxclick', handleAuxClickEvent, true);
-    };
-  }, []);
 
   const insertImageNode = useCallback(async (
     {
@@ -874,7 +873,7 @@ export const App: React.FC = () => {
   const getDefaultInsertPosition = useCallback(() => {
     const primaryId = selectionIds[0];
     if (primaryId) {
-      const bounds = getNodeWorldBounds(document, primaryId);
+      const bounds = getNodeWorldBounds(displayDocument, primaryId, boundsMap);
       if (bounds) {
         return {
           x: bounds.x + bounds.width + 24,
@@ -887,55 +886,7 @@ export const App: React.FC = () => {
       x: 40,
       y: 40,
     };
-  }, [document, selectionIds]);
-
-  const applyFramePreset = useCallback((preset: FramePreset) => {
-    if (selectionIds.length === 1) {
-      const selected = document.nodes[selectionIds[0]];
-      if (selected?.type === 'frame') {
-        executeCommand({
-          id: generateId(),
-          timestamp: Date.now(),
-          source: 'user',
-          description: 'Resize frame preset',
-          type: 'setProps',
-          payload: {
-            id: selected.id,
-            props: {
-              name: preset.label,
-              size: { width: preset.width, height: preset.height },
-            },
-          },
-        });
-        return;
-      }
-    }
-
-    const position = contextMenu
-      ? { x: contextMenu.worldX, y: contextMenu.worldY }
-      : getDefaultInsertPosition();
-    const newId = generateId();
-    executeCommand({
-      id: generateId(),
-      timestamp: Date.now(),
-      source: 'user',
-      description: 'Create frame preset',
-      type: 'createNode',
-      payload: {
-        id: newId,
-        parentId: document.rootId,
-        node: {
-          type: 'frame',
-          name: preset.label,
-          position,
-          size: { width: preset.width, height: preset.height },
-          fill: { type: 'solid', value: '#ffffff' },
-          visible: true,
-        },
-      },
-    } as Command);
-    selectNode(newId);
-  }, [contextMenu, document.nodes, document.rootId, executeCommand, getDefaultInsertPosition, selectionIds, selectNode]);
+  }, [displayDocument, boundsMap, selectionIds]);
 
   const runPlugin = useCallback((plugin: PluginRegistration) => {
     setActivePlugin(plugin);
@@ -992,35 +943,206 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  const handleSetVisibility = useCallback((visible: boolean) => {
-    if (selectionIds.length === 0) {
+  const applyPropsToSelection = useCallback(
+    (ids: string[], props: Record<string, unknown>, description: string) => {
+      if (ids.length === 0) {
+        return;
+      }
+      const commands = ids.map(id => ({
+        id: generateId(),
+        timestamp: Date.now(),
+        source: 'user' as const,
+        description,
+        type: 'setProps' as const,
+        payload: {
+          id,
+          props,
+        },
+      }));
+
+      executeCommand(
+        commands.length === 1
+          ? (commands[0] as Command)
+          : ({
+            id: generateId(),
+            timestamp: Date.now(),
+            source: 'user',
+            description,
+            type: 'batch',
+            payload: { commands: commands as Command[] },
+          } as Command)
+      );
+    },
+    [executeCommand]
+  );
+
+  const deleteNodes = useCallback((ids: string[]) => {
+    const deletable = ids.filter(id => id !== document.rootId);
+    if (deletable.length === 0) {
       return;
     }
-    const commands = selectionIds.map(id => ({
+    const commands = deletable.map(id => ({
       id: generateId(),
       timestamp: Date.now(),
       source: 'user' as const,
-      description: visible ? 'Show node' : 'Hide node',
-      type: 'setProps' as const,
-      payload: {
-        id,
-        props: { visible },
-      },
+      description: 'Delete node',
+      type: 'deleteNode' as const,
+      payload: { id },
     }));
 
-    executeCommand(
-      commands.length === 1
-        ? (commands[0] as Command)
-        : ({
-          id: generateId(),
-          timestamp: Date.now(),
-          source: 'user',
-          description: visible ? 'Show nodes' : 'Hide nodes',
-          type: 'batch',
-          payload: { commands: commands as Command[] },
-        } as Command)
-    );
-  }, [executeCommand, selectionIds]);
+    if (commands.length === 1) {
+      executeCommand(commands[0] as Command);
+    } else {
+      executeCommand({
+        id: generateId(),
+        timestamp: Date.now(),
+        source: 'user',
+        description: 'Delete nodes',
+        type: 'batch',
+        payload: { commands: commands as Command[] },
+      } as Command);
+    }
+  }, [document.rootId, executeCommand]);
+
+  const duplicateNodes = useCallback((ids: string[]) => {
+    const sourceIds = ids.filter(id => id !== document.rootId);
+    if (sourceIds.length === 0) {
+      return;
+    }
+    const workingChildren = new Map<string, string[]>();
+    const commands: Command[] = [];
+    const newIds: string[] = [];
+
+    const cloneSubtree = (
+      nodeId: string,
+      parentId: string,
+      index?: number,
+      applyOffset = false
+    ): string | null => {
+      const node = document.nodes[nodeId];
+      if (!node) return null;
+      const { id: _id, children, ...rest } = node;
+      const nextId = generateId();
+      const position = { ...node.position };
+      if (applyOffset) {
+        position.x += 10;
+        position.y += 10;
+      }
+      commands.push({
+        id: generateId(),
+        timestamp: Date.now(),
+        source: 'user',
+        description: 'Duplicate node',
+        type: 'createNode',
+        payload: {
+          id: nextId,
+          parentId,
+          index,
+          node: {
+            ...(rest as Omit<Node, 'id' | 'children'>),
+            position,
+            size: { ...node.size },
+          },
+        },
+      } as Command);
+
+      if (children && children.length > 0) {
+        for (const childId of children) {
+          cloneSubtree(childId, nextId, undefined, false);
+        }
+      }
+
+      return nextId;
+    };
+
+    for (const id of sourceIds) {
+      const parentId = documentParentMap[id] ?? document.rootId;
+      const parent = document.nodes[parentId];
+      if (!parent?.children) continue;
+      const siblings = workingChildren.get(parentId) ?? [...parent.children];
+      if (!workingChildren.has(parentId)) {
+        workingChildren.set(parentId, siblings);
+      }
+      const fromIndex = siblings.indexOf(id);
+      const insertIndex = fromIndex === -1 ? siblings.length : fromIndex + 1;
+      const newId = cloneSubtree(id, parentId, insertIndex, true);
+      if (newId) {
+        siblings.splice(insertIndex, 0, newId);
+        newIds.push(newId);
+      }
+    }
+
+    if (commands.length === 0) return;
+    executeCommand({
+      id: generateId(),
+      timestamp: Date.now(),
+      source: 'user',
+      description: 'Duplicate nodes',
+      type: 'batch',
+      payload: { commands },
+    } as Command);
+    if (newIds.length > 0) {
+      setSelection(newIds);
+    }
+  }, [document.nodes, document.rootId, documentParentMap, executeCommand, setSelection]);
+
+  const reorderZ = useCallback((id: string, dir: 'front' | 'back' | 'forward' | 'backward') => {
+    const parentId = documentParentMap[id];
+    if (!parentId) return;
+    const parent = document.nodes[parentId];
+    if (!parent?.children) return;
+    const fromIndex = parent.children.indexOf(id);
+    if (fromIndex === -1) return;
+    const maxIndex = parent.children.length - 1;
+    let toIndex = fromIndex;
+    if (dir === 'front') toIndex = maxIndex;
+    if (dir === 'back') toIndex = 0;
+    if (dir === 'forward') toIndex = Math.min(maxIndex, fromIndex + 1);
+    if (dir === 'backward') toIndex = Math.max(0, fromIndex - 1);
+    if (toIndex === fromIndex) return;
+    executeCommand({
+      id: generateId(),
+      timestamp: Date.now(),
+      source: 'user',
+      description: 'Reorder layer',
+      type: 'reorderChild',
+      payload: { parentId, fromIndex, toIndex },
+    });
+  }, [document.nodes, documentParentMap, executeCommand]);
+
+  const dispatchEditorAction = useCallback((action: EditorAction, targetIds: string[] = selectionIds) => {
+    if (action.type === 'duplicate') {
+      duplicateNodes(targetIds);
+      return;
+    }
+    if (action.type === 'delete') {
+      deleteNodes(targetIds);
+      setSelection([]);
+      return;
+    }
+    if (action.type === 'rename') {
+      if (targetIds.length === 1) {
+        setRenameRequestId(targetIds[0]);
+      }
+      return;
+    }
+    if (action.type === 'toggleLock') {
+      const anyUnlocked = targetIds.some(id => document.nodes[id]?.locked !== true);
+      applyPropsToSelection(targetIds, { locked: anyUnlocked }, anyUnlocked ? 'Lock node' : 'Unlock node');
+      return;
+    }
+    if (action.type === 'toggleVisible') {
+      const anyVisible = targetIds.some(id => document.nodes[id]?.visible !== false);
+      applyPropsToSelection(targetIds, { visible: !anyVisible }, anyVisible ? 'Hide node' : 'Show node');
+      return;
+    }
+    if (action.type === 'reorderZ') {
+      const targetId = targetIds[0];
+      if (targetId) {
+        reorderZ(targetId, action.dir);
+      }
+    }
+  }, [applyPropsToSelection, deleteNodes, document.nodes, duplicateNodes, reorderZ, selectionIds, setSelection]);
 
   const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
     const recentItems: ContextMenuItem[] = recentPlugins.length > 0
@@ -1037,15 +1159,6 @@ export const App: React.FC = () => {
       }))
       : [{ label: 'No plugins installed', enabled: false }];
 
-    const hasSelection = selectionIds.length > 0;
-    const anyHidden = selectionIds.some(id => document.nodes[id]?.visible === false);
-    const anyVisible = selectionIds.some(id => document.nodes[id]?.visible !== false);
-
-    const showHideItems: ContextMenuItem[] = [
-      { label: 'Show', enabled: anyHidden, onSelect: () => handleSetVisibility(true) },
-      { label: 'Hide', enabled: anyVisible, onSelect: () => handleSetVisibility(false) },
-    ];
-
     const devItems: ContextMenuItem[] = [
       { label: 'Load Dev Plugin...', onSelect: handleLoadDevPlugin },
       ...(devPlugins.length > 0 ? [{ separator: true } as ContextMenuItem] : []),
@@ -1055,40 +1168,112 @@ export const App: React.FC = () => {
       })),
     ];
 
-    const framePresetItems: ContextMenuItem[] = framePresetGroups.map(group => ({
-      label: group.label,
-      submenu: group.presets.map(preset => ({
-        label: `${preset.label} - ${preset.width}x${preset.height}`,
-        onSelect: () => applyFramePreset(preset),
-      })),
-    }));
+    const hasSelection = selectionIds.length > 0;
+    const canRename = selectionIds.length === 1;
+    const anyVisible = selectionIds.some(id => document.nodes[id]?.visible !== false);
+    const anyUnlocked = selectionIds.some(id => document.nodes[id]?.locked !== true);
+    const lockLabel = anyUnlocked ? 'Lock' : 'Unlock';
+    const visibleLabel = anyVisible ? 'Hide' : 'Show';
 
-    return [
-      { label: 'Copy', enabled: false },
-      { label: 'Paste', enabled: false },
-      { label: 'Paste Replace', enabled: false },
-      { separator: true },
-      { label: 'Group Selection', enabled: hasSelection && selectionIds.length > 1 },
-      { label: 'Frame presets', submenu: framePresetItems },
-      { label: 'Show/Hide', submenu: showHideItems },
-      { separator: true },
+    const primaryId = selectionIds[0];
+    let canMoveForward = false;
+    let canMoveBackward = false;
+    if (primaryId) {
+      const parentId = documentParentMap[primaryId];
+      const parent = parentId ? document.nodes[parentId] : null;
+      if (parent?.children) {
+        const index = parent.children.indexOf(primaryId);
+        canMoveBackward = index > 0;
+        canMoveForward = index >= 0 && index < parent.children.length - 1;
+      }
+    }
+
+    const selectionItems: ContextMenuItem[] = [
       {
-        label: 'Plugins',
-        submenu: [
-          { label: 'Recents', submenu: recentItems },
-          { label: 'All plugins', submenu: allPluginItems },
-          ...(isDev ? [{ label: 'Development', submenu: devItems }] : []),
-          { separator: true },
-          { label: 'Manage plugins...', onSelect: () => setPluginManagerOpen(true) },
-        ],
+        icon: 'D',
+        label: 'Duplicate',
+        shortcut: 'Cmd/Ctrl+D',
+        enabled: hasSelection,
+        onSelect: () => dispatchEditorAction({ type: 'duplicate' }),
+      },
+      {
+        icon: 'X',
+        label: 'Delete',
+        shortcut: 'Backspace',
+        enabled: hasSelection,
+        onSelect: () => dispatchEditorAction({ type: 'delete' }),
+      },
+      {
+        icon: 'R',
+        label: 'Rename',
+        shortcut: 'Enter',
+        enabled: canRename,
+        onSelect: () => dispatchEditorAction({ type: 'rename' }),
+      },
+      {
+        icon: 'L',
+        label: lockLabel,
+        enabled: hasSelection,
+        onSelect: () => dispatchEditorAction({ type: 'toggleLock' }),
+      },
+      {
+        icon: 'V',
+        label: visibleLabel,
+        enabled: hasSelection,
+        onSelect: () => dispatchEditorAction({ type: 'toggleVisible' }),
+      },
+      {
+        icon: '>',
+        label: 'Bring forward',
+        shortcut: 'Cmd/Ctrl+]',
+        enabled: hasSelection && canMoveForward,
+        onSelect: () => dispatchEditorAction({ type: 'reorderZ', dir: 'forward' }),
+      },
+      {
+        icon: '<',
+        label: 'Send backward',
+        shortcut: 'Cmd/Ctrl+[',
+        enabled: hasSelection && canMoveBackward,
+        onSelect: () => dispatchEditorAction({ type: 'reorderZ', dir: 'backward' }),
       },
     ];
+
+    const canvasItems: ContextMenuItem[] = [
+      { icon: 'P', label: 'Paste', enabled: false },
+      { icon: 'A', label: 'Select all', enabled: false },
+    ];
+
+    const pluginMenu: ContextMenuItem = {
+      label: 'Plugins',
+      submenu: [
+        { label: 'Recents', submenu: recentItems },
+        { label: 'All plugins', submenu: allPluginItems },
+        ...(isDev ? [{ label: 'Development', submenu: devItems }] : []),
+        { separator: true },
+        { label: 'Manage plugins...', onSelect: () => setPluginManagerOpen(true) },
+      ],
+    };
+
+    if (contextMenu?.target === 'canvas') {
+      return [
+        ...canvasItems,
+        { separator: true },
+        pluginMenu,
+      ];
+    }
+
+    return [
+      ...selectionItems,
+      { separator: true },
+      pluginMenu,
+    ];
   }, [
-    applyFramePreset,
+    contextMenu?.target,
     devPlugins,
+    dispatchEditorAction,
     document.nodes,
+    documentParentMap,
     handleLoadDevPlugin,
-    handleSetVisibility,
     isDev,
     recentPlugins,
     plugins,
@@ -1425,7 +1610,7 @@ export const App: React.FC = () => {
       if (handle) {
         const nodeId = selectionIds[0];
         const node = document.nodes[nodeId];
-        const startBounds = getNodeWorldBounds(document, nodeId);
+        const startBounds = getNodeWorldBounds(displayDocument, nodeId, boundsMap);
         if (node && startBounds) {
           setDragState({
             mode: 'resize',
@@ -1471,9 +1656,9 @@ export const App: React.FC = () => {
         }
       }
 
-      const startBounds = getSelectionBounds(document, nextSelection);
+      const startBounds = getSelectionBounds(displayDocument, nextSelection, boundsMap);
       const snapTargets = nextSelection.length === 1
-        ? buildSiblingSnapTargets(document, nodeId, parentMap, worldMap)
+        ? buildSiblingSnapTargets(document, nodeId, parentMap, boundsMap)
         : { x: [], y: [] };
 
       setDragState({
@@ -1505,7 +1690,25 @@ export const App: React.FC = () => {
       additive,
     });
     return true;
-  }, [displayDocument, document, parentMap, selectionBounds, selectionIds, selectNode, setSelection, toggleSelection, view, worldMap, hitTestAtPoint]);
+  }, [displayDocument, document, parentMap, selectionBounds, selectionIds, selectNode, setSelection, toggleSelection, view, boundsMap, hitTestAtPoint]);
+
+  const openContextMenuAt = useCallback((clientX: number, clientY: number) => {
+    const rect = canvasWrapperRef.current?.getBoundingClientRect();
+    const screenX = rect ? clientX - rect.left : clientX;
+    const screenY = rect ? clientY - rect.top : clientY;
+    const safeZoom = zoom === 0 ? 1 : zoom;
+    const worldX = (screenX - panOffset.x) / safeZoom;
+    const worldY = (screenY - panOffset.y) / safeZoom;
+    const hit = hitTestAtPoint(worldX, worldY);
+    if (hit && hit.node.id !== displayDocument.rootId) {
+      if (!selectionIds.includes(hit.node.id)) {
+        selectNode(hit.node.id);
+      }
+      setContextMenu({ x: clientX, y: clientY, worldX, worldY, target: 'selection' });
+      return;
+    }
+    setContextMenu({ x: clientX, y: clientY, worldX, worldY, target: 'canvas' });
+  }, [displayDocument.rootId, hitTestAtPoint, panOffset.x, panOffset.y, selectNode, selectionIds, zoom]);
 
   const handleCanvasMouseDown = useCallback((info: CanvasPointerInfo) => {
     const { worldX, worldY, screenX, screenY } = info;
@@ -1513,13 +1716,17 @@ export const App: React.FC = () => {
     setHoverHit(null);
     setSnapGuides([]);
 
+    if (transformSession) {
+      return;
+    }
+
     if (info.button === 2 || (info.buttons & 2) === 2) {
-      setContextMenu({ x: info.clientX, y: info.clientY });
+      openContextMenuAt(info.clientX, info.clientY);
       return;
     }
 
     if (info.button === 0 && info.ctrlKey) {
-      setContextMenu({ x: info.clientX, y: info.clientY });
+      openContextMenuAt(info.clientX, info.clientY);
       return;
     }
 
@@ -1636,21 +1843,20 @@ export const App: React.FC = () => {
         setActiveTool('select');
       }
     }
-  }, [activeTool, displayDocument, document, executeCommand, handleSelectionPointerDown, selectNode, selectionBounds, selectionIds, setActiveTool, view, measureTextSize, hitTestAtPoint]);
+  }, [activeTool, displayDocument, document, executeCommand, handleSelectionPointerDown, selectNode, selectionBounds, selectionIds, setActiveTool, view, measureTextSize, hitTestAtPoint, transformSession, openContextMenuAt]);
 
   const handleCanvasContextMenu = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     event.preventDefault();
-    const rect = canvasWrapperRef.current?.getBoundingClientRect();
-    const screenX = rect ? event.clientX - rect.left : event.clientX;
-    const screenY = rect ? event.clientY - rect.top : event.clientY;
-    const safeZoom = zoom === 0 ? 1 : zoom;
-    const worldX = (screenX - panOffset.x) / safeZoom;
-    const worldY = (screenY - panOffset.y) / safeZoom;
-    setContextMenu({ x: event.clientX, y: event.clientY, worldX, worldY });
-  }, [panOffset.x, panOffset.y, zoom]);
+    event.stopPropagation();
+    openContextMenuAt(event.clientX, event.clientY);
+  }, [openContextMenuAt]);
 
   const handleCanvasMouseMove = useCallback((info: CanvasPointerInfo) => {
     const { worldX, worldY, screenX, screenY } = info;
+
+    if (transformSession) {
+      return;
+    }
 
     if (dragState?.mode === 'pan') {
       setPanOffset({
@@ -1667,7 +1873,7 @@ export const App: React.FC = () => {
       });
 
       const rect = rectFromPoints(dragState.startWorld, { x: worldX, y: worldY });
-      const hits = getMarqueeSelection(document, worldMap, rect);
+      const hits = getMarqueeSelection(displayDocument, boundsMap, rect);
       const merged = dragState.additive
         ? Array.from(new Set([...dragState.baseSelection, ...hits]))
         : hits;
@@ -1721,7 +1927,7 @@ export const App: React.FC = () => {
         dragState.baseDoc,
         dragState.nodeId,
         parentMap,
-        worldMap
+        boundsMap
       );
       const snap = snapDisabled
         ? { bounds: rawBounds, guides: [] }
@@ -1764,9 +1970,15 @@ export const App: React.FC = () => {
     } else if (hoverHit) {
       setHoverHit(null);
     }
-  }, [activeTool, dragState, selectionBounds, selectionIds, view, snapDisabled, hoverHandle, hoverHit, document, displayDocument, worldMap, parentMap, setSelection, hitTestAtPoint, getEdgeCursorForNode]);
+  }, [activeTool, dragState, transformSession, selectionBounds, selectionIds, view, snapDisabled, hoverHandle, hoverHit, document, displayDocument, boundsMap, parentMap, setSelection, hitTestAtPoint, getEdgeCursorForNode]);
 
   const handleCanvasMouseUp = useCallback((info: CanvasPointerInfo) => {
+    if (transformSession) {
+      setTransformSession(null);
+      setSnapGuides([]);
+      return;
+    }
+
     if (!dragState) return;
 
     if (dragState.mode === 'marquee') {
@@ -1845,7 +2057,7 @@ export const App: React.FC = () => {
         dragState.baseDoc,
         dragState.nodeId,
         parentMap,
-        worldMap
+        boundsMap
       );
       const snap = snapDisabled
         ? { bounds: rawBounds, guides: [] }
@@ -1886,7 +2098,7 @@ export const App: React.FC = () => {
     setSnapGuides([]);
     setHoverHandle(null);
     setHoverHit(null);
-  }, [dragState, snapDisabled, zoom, executeCommand, parentMap, worldMap]);
+  }, [dragState, transformSession, snapDisabled, zoom, executeCommand, parentMap, boundsMap]);
 
   const handleCanvasWheel = useCallback((info: CanvasWheelInfo) => {
     if (info.ctrlKey || info.metaKey) {
@@ -1952,6 +2164,40 @@ export const App: React.FC = () => {
       },
     });
   }, [document.nodes, executeCommand, measureTextSize]);
+
+  const handleRenameNode = useCallback((id: string, name?: string) => {
+    executeCommand({
+      id: generateId(),
+      timestamp: Date.now(),
+      source: 'user',
+      description: 'Rename node',
+      type: 'setProps',
+      payload: {
+        id,
+        props: { name },
+      },
+    });
+  }, [executeCommand]);
+
+  const handleToggleNodeVisible = useCallback((id: string, _visible: boolean) => {
+    dispatchEditorAction({ type: 'toggleVisible' }, [id]);
+  }, [dispatchEditorAction]);
+
+  const handleToggleNodeLocked = useCallback((id: string, _locked: boolean) => {
+    dispatchEditorAction({ type: 'toggleLock' }, [id]);
+  }, [dispatchEditorAction]);
+
+  const handleReorderChild = useCallback((parentId: string, fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    executeCommand({
+      id: generateId(),
+      timestamp: Date.now(),
+      source: 'user',
+      description: 'Reorder layer',
+      type: 'reorderChild',
+      payload: { parentId, fromIndex, toIndex },
+    });
+  }, [executeCommand]);
 
   const handleSave = useCallback(async () => {
     try {
@@ -2254,41 +2500,87 @@ export const App: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const editable = isEditableTarget(e.target);
+      const hasSelection = selectionIds.length > 0;
+      const isCmd = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
 
-      if ((e.key === 'Delete' || e.key === 'Backspace') && !isEditableTarget(e.target)) {
-        if (selectionIds.length === 0) {
+      if (e.key === 'Escape') {
+        if (contextMenu) {
+          e.preventDefault();
+          setContextMenu(null);
+          return;
+        }
+        if (activePlugin) {
+          e.preventDefault();
+          setActivePlugin(null);
+          return;
+        }
+        if (pluginManagerOpen) {
+          e.preventDefault();
+          setPluginManagerOpen(false);
+          return;
+        }
+        if (transformSession) {
+          e.preventDefault();
+          setTransformSession(null);
+          setSnapGuides([]);
+          return;
+        }
+        if (dragState) {
+          e.preventDefault();
+          if (dragState.mode === 'pan') {
+            setPanOffset(dragState.startPan);
+          }
+          if (dragState.mode === 'marquee') {
+            setSelection(dragState.baseSelection);
+          }
+          setPreviewDocument(null);
+          setDragState(null);
+          setSnapGuides([]);
+          setHoverHandle(null);
+          setHoverHit(null);
+          return;
+        }
+      }
+
+      if (!editable) {
+        if (isCmd && key === 'd') {
+          if (!hasSelection) return;
+          e.preventDefault();
+          dispatchEditorAction({ type: 'duplicate' });
           return;
         }
 
-        const deletable = selectionIds.filter(id => id !== document.rootId);
-        if (deletable.length === 0) {
+        if (e.key === 'Enter') {
+          if (selectionIds.length !== 1) return;
+          e.preventDefault();
+          dispatchEditorAction({ type: 'rename' });
           return;
         }
 
-        e.preventDefault();
-        const commands = deletable.map(id => ({
-          id: generateId(),
-          timestamp: Date.now(),
-          source: 'user',
-          description: 'Delete node',
-          type: 'deleteNode' as const,
-          payload: { id },
-        }));
-
-        if (commands.length === 1) {
-          executeCommand(commands[0] as Command);
-        } else {
-          executeCommand({
-            id: generateId(),
-            timestamp: Date.now(),
-            source: 'user',
-            description: 'Delete nodes',
-            type: 'batch',
-            payload: { commands: commands as Command[] },
-          } as Command);
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          if (!hasSelection) return;
+          e.preventDefault();
+          dispatchEditorAction({ type: 'delete' });
+          return;
         }
-        setSelection([]);
-        return;
+
+        if (isCmd && (e.code === 'BracketRight' || e.code === 'BracketLeft')) {
+          if (!hasSelection) return;
+          e.preventDefault();
+          if (e.shiftKey) {
+            dispatchEditorAction({
+              type: 'reorderZ',
+              dir: e.code === 'BracketRight' ? 'front' : 'back',
+            });
+          } else {
+            dispatchEditorAction({
+              type: 'reorderZ',
+              dir: e.code === 'BracketRight' ? 'forward' : 'backward',
+            });
+          }
+          return;
+        }
       }
 
       if (!editable) {
@@ -2298,17 +2590,17 @@ export const App: React.FC = () => {
       }
 
       if (editable) {
-        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        if (isCmd && key === 's') {
           e.preventDefault();
           handleSave();
         }
 
-        if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
+        if (isCmd && key === 'o') {
           e.preventDefault();
           handleLoad();
         }
 
-        if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
+        if (isCmd && key === 'i') {
           e.preventDefault();
           handleImportImage();
         }
@@ -2316,7 +2608,7 @@ export const App: React.FC = () => {
         return;
       }
 
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+      if (isCmd && key === 'z') {
         e.preventDefault();
         if (e.shiftKey) {
           if (canRedo) redoCommand();
@@ -2325,25 +2617,42 @@ export const App: React.FC = () => {
         }
       }
 
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      if (isCmd && key === 's') {
         e.preventDefault();
         handleSave();
       }
 
-      if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
+      if (isCmd && key === 'o') {
         e.preventDefault();
         handleLoad();
       }
 
-      if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
+      if (isCmd && key === 'i') {
         e.preventDefault();
         handleImportImage();
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectionIds, document.rootId, executeCommand, setSelection, canUndo, canRedo, redoCommand, undoCommand, handleSave, handleLoad, handleImportImage]);
+    const options = { capture: true };
+    window.addEventListener('keydown', handleKeyDown, options);
+    return () => window.removeEventListener('keydown', handleKeyDown, options);
+  }, [
+    selectionIds,
+    canUndo,
+    canRedo,
+    redoCommand,
+    undoCommand,
+    handleSave,
+    handleLoad,
+    handleImportImage,
+    transformSession,
+    contextMenu,
+    activePlugin,
+    pluginManagerOpen,
+    dragState,
+    dispatchEditorAction,
+    setSelection,
+  ]);
 
   return (
     <div style={{
@@ -2388,6 +2697,18 @@ export const App: React.FC = () => {
           onImport={handleImportImage}
         />
 
+        <LayersPanel
+          document={displayDocument}
+          selectionIds={selectionIds}
+          renameRequestId={renameRequestId}
+          onRenameRequestHandled={() => setRenameRequestId(null)}
+          onSelect={selectNode}
+          onRename={handleRenameNode}
+          onToggleVisible={handleToggleNodeVisible}
+          onToggleLocked={handleToggleNodeLocked}
+          onReorder={handleReorderChild}
+        />
+
         <div
           ref={canvasWrapperRef}
           style={{ flex: 1, overflow: 'hidden', position: 'relative' }}
@@ -2397,6 +2718,7 @@ export const App: React.FC = () => {
             width={canvasSize.width}
             height={canvasSize.height}
             document={displayDocument}
+            boundsMap={boundsMap}
             view={view}
             selectionBounds={selectionBounds}
             hoverBounds={hoverBounds}

@@ -2,7 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 
 export type ContextMenuItem = {
   id?: string;
+  icon?: string;
   label?: string;
+  shortcut?: string;
   enabled?: boolean;
   onSelect?: () => void;
   submenu?: ContextMenuItem[];
@@ -16,8 +18,8 @@ interface ContextMenuProps {
   onClose: () => void;
 }
 
-const MENU_WIDTH = 220;
-const ITEM_HEIGHT = 28;
+const MENU_WIDTH = 232;
+const ITEM_HEIGHT = 30;
 
 const MenuList: React.FC<{
   items: ContextMenuItem[];
@@ -25,16 +27,17 @@ const MenuList: React.FC<{
   style?: React.CSSProperties;
 }> = ({ items, onClose, style }) => {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   return (
     <div
       style={{
         minWidth: MENU_WIDTH,
-        backgroundColor: '#1c1c1c',
+        backgroundColor: '#1f1f1f',
         color: '#f4f4f4',
-        borderRadius: 6,
-        padding: 6,
-        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)',
+        borderRadius: 8,
+        padding: 8,
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.12)',
         fontSize: 13,
         fontFamily: 'system-ui, -apple-system, sans-serif',
         position: 'relative',
@@ -62,10 +65,27 @@ const MenuList: React.FC<{
           <div
             key={item.id || item.label || index}
             onMouseEnter={() => setOpenIndex(hasSubmenu ? index : null)}
+            onMouseMove={() => {
+              if (hasSubmenu) {
+                setOpenIndex(index);
+              }
+            }}
+            onMouseLeave={() => setActiveIndex(null)}
+            onMouseDown={() => setActiveIndex(index)}
+            onMouseUp={() => setActiveIndex(null)}
             onClick={() => {
-              if (!enabled || hasSubmenu) return;
+              if (!enabled) return;
+              if (hasSubmenu) {
+                setOpenIndex(index);
+                return;
+              }
               item.onSelect?.();
               onClose();
+            }}
+            onContextMenu={(event) => {
+              if (!hasSubmenu) return;
+              event.preventDefault();
+              setOpenIndex(index);
             }}
             style={{
               display: 'flex',
@@ -76,12 +96,34 @@ const MenuList: React.FC<{
               borderRadius: 4,
               cursor: enabled ? 'pointer' : 'default',
               opacity: enabled ? 1 : 0.4,
-              backgroundColor: openIndex === index ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+              backgroundColor:
+                activeIndex === index
+                  ? 'rgba(255, 255, 255, 0.12)'
+                  : openIndex === index
+                    ? 'rgba(255, 255, 255, 0.08)'
+                    : 'transparent',
               userSelect: 'none',
             }}
           >
-            <span>{item.label}</span>
-            {hasSubmenu && <span style={{ opacity: 0.6 }}>›</span>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{
+                width: 16,
+                textAlign: 'center',
+                opacity: 0.7,
+                fontSize: 11,
+              }}>
+                {item.icon || ''}
+              </span>
+              <span>{item.label}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {item.shortcut && (
+                <span style={{ opacity: 0.55, fontSize: 11, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}>
+                  {item.shortcut}
+                </span>
+              )}
+              {hasSubmenu && <span style={{ opacity: 0.6 }}>{'>'}</span>}
+            </div>
             {hasSubmenu && openIndex === index && (
               <MenuList
                 items={item.submenu || []}
@@ -102,6 +144,22 @@ const MenuList: React.FC<{
 
 export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState({ x, y });
+
+  useEffect(() => {
+    setPosition({ x, y });
+  }, [x, y]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   useEffect(() => {
     const handleClick = (event: MouseEvent) => {
       if (containerRef.current && event.target instanceof Node && containerRef.current.contains(event.target)) {
@@ -125,14 +183,27 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }
     };
   }, [onClose]);
 
+  useEffect(() => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const padding = 8;
+    const maxX = window.innerWidth - rect.width - padding;
+    const maxY = window.innerHeight - rect.height - padding;
+    const nextX = Math.min(Math.max(padding, position.x), Math.max(padding, maxX));
+    const nextY = Math.min(Math.max(padding, position.y), Math.max(padding, maxY));
+    if (nextX !== position.x || nextY !== position.y) {
+      setPosition({ x: nextX, y: nextY });
+    }
+  }, [items, position.x, position.y]);
+
   return (
     <div
       ref={containerRef}
       onContextMenu={(event) => event.preventDefault()}
       style={{
         position: 'fixed',
-        left: x,
-        top: y,
+        left: position.x,
+        top: position.y,
         zIndex: 1000,
       }}
     >
