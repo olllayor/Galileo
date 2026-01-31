@@ -2972,33 +2972,22 @@ export const App: React.FC = () => {
 
 	return (
 		<div
-			style={
-				{
-					display: 'flex',
-					flexDirection: 'column',
-					height: '100vh',
-					overflow: 'hidden',
-					fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif',
-					backgroundColor: '#1c1c1e', // macOS dark mode background
-					WebkitFontSmoothing: 'antialiased',
-					MozOsxFontSmoothing: 'grayscale',
-				} as React.CSSProperties
-			}
+			style={{
+				display: 'flex',
+				flexDirection: 'column',
+				height: '100vh',
+				overflow: 'hidden',
+				fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", sans-serif',
+				backgroundColor: '#1a1a1a',
+			}}
 		>
-			{/* Drag region for macOS window controls */}
+			{/* Spacer for native macOS traffic lights */}
 			<div
-				data-tauri-drag-region
-				style={
-					{
-						height: '28px',
-						width: '100%',
-						position: 'absolute',
-						top: 0,
-						left: 0,
-						zIndex: 1000,
-						WebkitAppRegion: 'drag',
-					} as React.CSSProperties
-				}
+				style={{
+					height: '28px',
+					width: '100%',
+					flexShrink: 0,
+				}}
 			/>
 
 			<div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
@@ -3045,7 +3034,13 @@ export const App: React.FC = () => {
 						onContextMenu={handleCanvasContextMenu}
 					/>
 
-					<ActionBar activeTool={activeTool} onToolChange={handleToolChange} onImport={handleImportImage} />
+					<ActionBar
+						activeTool={activeTool}
+						onToolChange={handleToolChange}
+						onSave={handleSave}
+						onLoad={handleLoad}
+						onImport={handleImportImage}
+					/>
 				</div>
 
 				<PropertiesPanel

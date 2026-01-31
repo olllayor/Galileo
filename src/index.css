@@ -1,16 +1,16 @@
 :root {
-  /* macOS-inspired dark theme */
-  --bg-primary: #1c1c1e;
-  --bg-secondary: rgba(28, 28, 30, 0.85);
-  --bg-tertiary: rgba(44, 44, 46, 0.9);
-  --bg-canvas: #141416;
-  --bg-hover: rgba(255, 255, 255, 0.06);
-  --bg-active: rgba(255, 255, 255, 0.1);
-  --bg-selected: rgba(10, 132, 255, 0.2);
+  /* Native macOS-inspired dark theme */
+  --bg-primary: #1e1e1e;
+  --bg-secondary: #252526;
+  --bg-tertiary: #2d2d2d;
+  --bg-canvas: #1a1a1a;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-active: rgba(255, 255, 255, 0.08);
+  --bg-selected: rgba(24, 160, 251, 0.15);
 
-  --border-subtle: rgba(255, 255, 255, 0.04);
-  --border-default: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.12);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.15);
   --border-focus: #0a84ff;
 
   --text-primary: #ffffff;
@@ -20,13 +20,13 @@
 
   --accent-primary: #0a84ff;
   --accent-hover: #0077ed;
-  --accent-pressed: #006edb;
+  --accent-pressed: #006adb;
 
   --selection-stroke: #0a84ff;
-  --selection-fill: rgba(10, 132, 255, 0.15);
+  --selection-fill: rgba(10, 132, 255, 0.1);
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
-  --font-mono: "SF Mono", Menlo, Monaco, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+  --font-mono: "SF Mono", "Menlo", "Monaco", Consolas, monospace;
 
   font-family: var(--font-sans);
   line-height: 1.4;
@@ -87,24 +87,24 @@ button:disabled {
   cursor: not-allowed !important;
 }
 
-/* Focus states - macOS blue */
+/* Focus states */
 input:focus,
 textarea:focus,
 select:focus {
   outline: none;
   border-color: var(--border-focus) !important;
-  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.25);
+  box-shadow: 0 0 0 2px rgba(24, 160, 251, 0.2);
 }
 
 button:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.35);
+  box-shadow: 0 0 0 2px rgba(24, 160, 251, 0.4);
 }
 
-/* macOS-style scrollbars */
+/* Figma-style scrollbars */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -112,24 +112,20 @@ button:focus-visible {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 5px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
-  border: 2px solid transparent;
-  background-clip: padding-box;
+  background: rgba(255, 255, 255, 0.25);
 }
 
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
 
-/* Selection colors - macOS blue */
+/* Selection colors */
 ::selection {
-  background: rgba(10, 132, 255, 0.35);
+  background: rgba(24, 160, 251, 0.3);
   color: inherit;
 }

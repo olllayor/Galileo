@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import type { Document, Node } from '../core/doc/types';
-import { colors, spacing, typography, radii, transitions, panels, vibrancy } from './design-system';
+import { colors, spacing, typography, radii, transitions, panels } from './design-system';
 
 const TYPE_LABELS: Record<Node['type'], string> = {
 	frame: 'Frame',
@@ -390,11 +390,11 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 				style={{
 					width: `${panels.left.collapsedWidth}px`,
 					borderRight: `1px solid ${colors.border.subtle}`,
-					...vibrancy.panel,
+					backgroundColor: colors.bg.secondary,
 					display: 'flex',
 					flexDirection: 'column',
 					alignItems: 'center',
-					paddingTop: '36px', // Account for window controls
+					paddingTop: spacing.sm,
 					transition: `width ${transitions.normal}`,
 				}}
 			>
@@ -475,7 +475,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 			style={{
 				width: `${panels.left.width}px`,
 				borderRight: `1px solid ${colors.border.subtle}`,
-				...vibrancy.panel,
+				backgroundColor: colors.bg.secondary,
 				display: 'flex',
 				flexDirection: 'column',
 				overflow: 'hidden',
@@ -486,15 +486,14 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 			{/* Panel Header */}
 			<div
 				style={{
-					padding: `10px ${spacing.md}`,
-					paddingTop: '36px', // Account for macOS window controls
+					padding: `${spacing.sm} ${spacing.md}`,
 					fontSize: typography.fontSize.sm,
 					fontWeight: typography.fontWeight.medium,
-					color: colors.text.tertiary,
+					color: colors.text.secondary,
 					borderBottom: `1px solid ${colors.border.subtle}`,
 					position: 'sticky',
 					top: 0,
-					backgroundColor: 'transparent',
+					backgroundColor: colors.bg.secondary,
 					zIndex: 1,
 					display: 'flex',
 					alignItems: 'center',

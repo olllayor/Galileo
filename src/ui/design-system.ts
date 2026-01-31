@@ -1,27 +1,27 @@
 /**
- * Galileo Design System - Figma-inspired professional design tokens
+ * Galileo Design System - Native macOS-inspired design tokens
  *
  * This system provides consistent styling across the application,
- * optimized for professional designer workflows.
+ * using Apple's Human Interface Guidelines as reference.
  */
 
 export const colors = {
-	// Background colors - macOS native feel
+	// Background colors - macOS dark mode inspired
 	bg: {
-		primary: '#1c1c1e', // Main app background (matches macOS dark)
-		secondary: 'rgba(28, 28, 30, 0.85)', // Panel backgrounds with transparency
-		tertiary: 'rgba(44, 44, 46, 0.9)', // Elevated surfaces
-		canvas: '#141416', // Canvas area background
-		hover: 'rgba(255, 255, 255, 0.06)',
-		active: 'rgba(255, 255, 255, 0.1)',
-		selected: 'rgba(10, 132, 255, 0.2)', // macOS accent blue
+		primary: '#1e1e1e', // Main app background
+		secondary: '#252526', // Panel backgrounds
+		tertiary: '#2d2d2d', // Elevated surfaces
+		canvas: '#1a1a1a', // Canvas area background
+		hover: 'rgba(255, 255, 255, 0.05)',
+		active: 'rgba(255, 255, 255, 0.08)',
+		selected: 'rgba(10, 132, 255, 0.15)', // macOS blue selection
 	},
 
-	// Border colors - subtle like macOS
+	// Border colors
 	border: {
-		subtle: 'rgba(255, 255, 255, 0.04)',
-		default: 'rgba(255, 255, 255, 0.08)',
-		strong: 'rgba(255, 255, 255, 0.12)',
+		subtle: 'rgba(255, 255, 255, 0.06)',
+		default: 'rgba(255, 255, 255, 0.1)',
+		strong: 'rgba(255, 255, 255, 0.15)',
 		focus: '#0a84ff', // macOS system blue
 	},
 
@@ -38,38 +38,24 @@ export const colors = {
 	accent: {
 		primary: '#0a84ff', // macOS system blue
 		hover: '#0077ed',
-		pressed: '#006edb',
-		subtle: 'rgba(10, 132, 255, 0.15)',
+		pressed: '#006adb',
+		subtle: 'rgba(10, 132, 255, 0.1)',
 	},
 
-	// Semantic colors
+	// Semantic colors - macOS system colors
 	semantic: {
-		success: '#1bc47d',
-		warning: '#f5a623',
-		error: '#f24822',
-		info: '#18a0fb',
+		success: '#30d158', // macOS green
+		warning: '#ff9f0a', // macOS orange
+		error: '#ff453a', // macOS red
+		info: '#0a84ff', // macOS blue
 	},
 
 	// Selection colors
 	selection: {
 		stroke: '#0a84ff',
-		fill: 'rgba(10, 132, 255, 0.15)',
+		fill: 'rgba(10, 132, 255, 0.1)',
 		handle: '#ffffff',
 		handleBorder: '#0a84ff',
-	},
-} as const;
-
-// macOS-style vibrancy effect
-export const vibrancy = {
-	panel: {
-		backgroundColor: 'rgba(28, 28, 30, 0.85)',
-		backdropFilter: 'blur(40px) saturate(180%)',
-		WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-	},
-	toolbar: {
-		backgroundColor: 'rgba(28, 28, 30, 0.9)',
-		backdropFilter: 'blur(20px) saturate(150%)',
-		WebkitBackdropFilter: 'blur(20px) saturate(150%)',
 	},
 } as const;
 
@@ -84,8 +70,8 @@ export const spacing = {
 
 export const typography = {
 	fontFamily: {
-		sans: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif',
-		mono: '"SF Mono", "Menlo", "Monaco", monospace',
+		sans: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif',
+		mono: '"SF Mono", "Menlo", "Monaco", Consolas, monospace',
 	},
 	fontSize: {
 		xs: '10px',
@@ -116,11 +102,11 @@ export const radii = {
 } as const;
 
 export const shadows = {
-	sm: '0 1px 2px rgba(0, 0, 0, 0.3)',
-	md: '0 2px 8px rgba(0, 0, 0, 0.4)',
-	lg: '0 4px 16px rgba(0, 0, 0, 0.5)',
-	xl: '0 8px 32px rgba(0, 0, 0, 0.6)',
-	focus: '0 0 0 2px rgba(24, 160, 251, 0.4)',
+	sm: '0 1px 3px rgba(0, 0, 0, 0.25)',
+	md: '0 4px 12px rgba(0, 0, 0, 0.35)',
+	lg: '0 8px 24px rgba(0, 0, 0, 0.45)',
+	xl: '0 12px 40px rgba(0, 0, 0, 0.55)',
+	focus: '0 0 0 3px rgba(10, 132, 255, 0.35)', // macOS-style focus ring
 } as const;
 
 export const transitions = {

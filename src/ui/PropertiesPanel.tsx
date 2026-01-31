@@ -12,7 +12,7 @@ import {
 } from 'akar-icons';
 import type { Document, Layout, Node } from '../core/doc/types';
 import { findParentNode } from '../core/doc';
-import { colors, spacing, typography, radii, transitions, panels, vibrancy } from './design-system';
+import { colors, spacing, typography, radii, transitions, panels } from './design-system';
 
 interface PropertiesPanelProps {
 	selectedNode: Node | null;
@@ -58,11 +58,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 				style={{
 					width: `${panels.right.collapsedWidth}px`,
 					borderLeft: `1px solid ${colors.border.subtle}`,
-					...vibrancy.panel,
+					backgroundColor: colors.bg.secondary,
 					display: 'flex',
 					flexDirection: 'column',
 					alignItems: 'center',
-					paddingTop: '36px', // Account for window controls
+					paddingTop: spacing.sm,
 					transition: `width ${transitions.normal}`,
 				}}
 			>
@@ -138,8 +138,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 				style={{
 					width: `${panels.right.width}px`,
 					padding: spacing.md,
-					paddingTop: '36px', // Account for macOS window controls
-					...vibrancy.panel,
+					backgroundColor: colors.bg.secondary,
 					borderLeft: `1px solid ${colors.border.subtle}`,
 					overflowY: 'auto',
 					transition: `width ${transitions.normal}`,
@@ -157,7 +156,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						style={{
 							fontSize: typography.fontSize.sm,
 							fontWeight: typography.fontWeight.medium,
-							color: colors.text.tertiary,
+							color: colors.text.secondary,
 							textTransform: 'uppercase',
 							letterSpacing: '0.5px',
 						}}
@@ -303,8 +302,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 			style={{
 				width: `${panels.right.width}px`,
 				padding: spacing.md,
-				paddingTop: '36px', // Account for macOS window controls
-				...vibrancy.panel,
+				backgroundColor: colors.bg.secondary,
 				borderLeft: `1px solid ${colors.border.subtle}`,
 				overflowY: 'auto',
 				transition: `width ${transitions.normal}`,
@@ -323,7 +321,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						style={{
 							fontSize: typography.fontSize.sm,
 							fontWeight: typography.fontWeight.medium,
-							color: colors.text.tertiary,
+							color: colors.text.secondary,
 							textTransform: 'uppercase',
 							letterSpacing: '0.5px',
 						}}

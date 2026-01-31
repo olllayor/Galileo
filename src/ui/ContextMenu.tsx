@@ -116,15 +116,13 @@ const MenuList: React.FC<MenuListProps> = ({ items, onClose, style, depth = 0 })
 			ref={menuRef}
 			style={{
 				minWidth: MENU_WIDTH,
-				backgroundColor: 'rgba(28, 28, 30, 0.95)',
-				color: '#f5f5f7',
-				borderRadius: 10,
+				backgroundColor: '#1f1f1f',
+				color: '#f4f4f4',
+				borderRadius: 8,
 				padding: MENU_PADDING,
-				boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.05)',
-				backdropFilter: 'blur(40px) saturate(180%)',
-				WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+				boxShadow: '0 4px 12px rgba(0, 0, 0, 0.12)',
 				fontSize: 13,
-				fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif',
+				fontFamily: 'system-ui, -apple-system, sans-serif',
 				position: 'relative',
 				...style,
 			}}
@@ -137,7 +135,7 @@ const MenuList: React.FC<MenuListProps> = ({ items, onClose, style, depth = 0 })
 							style={{
 								height: 1,
 								margin: '6px 6px',
-								backgroundColor: 'rgba(255, 255, 255, 0.06)',
+								backgroundColor: 'rgba(255, 255, 255, 0.08)',
 							}}
 						/>
 					);
@@ -181,18 +179,16 @@ const MenuList: React.FC<MenuListProps> = ({ items, onClose, style, depth = 0 })
 							justifyContent: 'space-between',
 							height: ITEM_HEIGHT,
 							padding: '0 10px',
-							borderRadius: 6,
+							borderRadius: 4,
 							cursor: enabled ? 'pointer' : 'default',
-							opacity: enabled ? 1 : 0.35,
+							opacity: enabled ? 1 : 0.4,
 							backgroundColor:
 								activeIndex === index
-									? 'rgba(10, 132, 255, 0.5)'
+									? 'rgba(255, 255, 255, 0.12)'
 									: openIndex === index
-										? 'rgba(10, 132, 255, 0.35)'
+										? 'rgba(255, 255, 255, 0.08)'
 										: 'transparent',
-							color: activeIndex === index || openIndex === index ? '#fff' : '#f5f5f7',
 							userSelect: 'none',
-							transition: 'background-color 0.1s ease',
 						}}
 					>
 						<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
