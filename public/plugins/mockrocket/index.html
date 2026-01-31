@@ -1,1349 +1,1659 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MockRocket</title>
-    <style>
-      :root {
-        color-scheme: light;
-        font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-      * {
-        box-sizing: border-box;
-      }
-      body {
-        margin: 0;
-        background: #1d1d1d;
-        color: #f5f5f5;
-        overflow: hidden;
-      }
-      .app {
-        display: flex;
-        flex-direction: column;
-        height: 100vh;
-      }
-      .topbar {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 10px 14px;
-        background: #2a2a2a;
-        border-bottom: 1px solid #3a3a3a;
-        flex-wrap: wrap;
-        row-gap: 8px;
-      }
-      .brand {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-weight: 600;
-        font-size: 13px;
-        margin-right: 10px;
-      }
-      .brand-badge {
-        width: 18px;
-        height: 18px;
-        border-radius: 5px;
-        background: linear-gradient(135deg, #ff4bd8, #6b5bff);
-      }
-      .divider {
-        width: 1px;
-        height: 22px;
-        background: #3a3a3a;
-        margin: 0 4px;
-      }
-      .topbar button,
-      .topbar select {
-        border: 1px solid transparent;
-        background: #3a3a3a;
-        color: #f5f5f5;
-        padding: 6px 10px;
-        border-radius: 6px;
-        font-size: 12px;
-        cursor: pointer;
-      }
-      .topbar button.primary {
-        background: #4f8ef7;
-      }
-      .topbar button.ghost {
-        background: transparent;
-        border: 1px solid #4a4a4a;
-      }
-      .topbar button.disabled {
-        opacity: 0.6;
-        cursor: default;
-      }
-      .content {
-        flex: 1;
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 280px;
-        gap: 10px;
-        padding: 10px;
-        background: #262626;
-      }
-      .viewport {
-        position: relative;
-        border-radius: 12px;
-        overflow: hidden;
-        background: repeating-conic-gradient(#3b3b3b 0% 25%, #2d2d2d 0% 50%) 0% / 24px 24px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      #glCanvas {
-        width: 100%;
-        height: 100%;
-        display: block;
-        cursor: grab;
-      }
-      #glCanvas.dragging {
-        cursor: grabbing;
-      }
-      .viewport-overlay {
-        position: absolute;
-        inset: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        pointer-events: none;
-        color: rgba(255, 255, 255, 0.7);
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-      }
-      .sidebar {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-      .section {
-        background: #1b1b1b;
-        border-radius: 10px;
-        padding: 10px;
-        border: 1px solid #2c2c2c;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .label {
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: rgba(255, 255, 255, 0.6);
-      }
-      .thumb {
-        width: 100%;
-        height: 88px;
-        background: #121212;
-        border-radius: 8px;
-        border: 1px dashed #3a3a3a;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        overflow: hidden;
-      }
-      .thumb img {
-        max-width: 100%;
-        max-height: 100%;
-      }
-      .section button,
-      .section select,
-      .section input {
-        width: 100%;
-        padding: 6px 8px;
-        border-radius: 6px;
-        border: 1px solid #333333;
-        background: #262626;
-        color: #f5f5f5;
-        font-size: 12px;
-      }
-      .position-row {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 6px;
-      }
-      .icon-btn {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 6px;
-        border-radius: 8px;
-        border: 1px solid #333333;
-        background: #262626;
-        cursor: pointer;
-      }
-      .swatches {
-        display: flex;
-        gap: 6px;
-      }
-      .swatch {
-        width: 20px;
-        height: 20px;
-        border-radius: 50%;
-        border: 2px solid #2c2c2c;
-        cursor: pointer;
-      }
-      .toggle {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        font-size: 12px;
-      }
-      .toggle input {
-        width: auto;
-      }
-      .status {
-        font-size: 12px;
-        color: rgba(255, 255, 255, 0.6);
-        line-height: 1.3;
-        max-height: 44px;
-        overflow: hidden;
-      }
-      .status-inline {
-        margin-left: auto;
-        font-size: 12px;
-        color: rgba(255, 255, 255, 0.6);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        max-width: 220px;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="app">
-      <div class="topbar">
-        <div class="brand">
-          <span class="brand-badge"></span>
-          MockRocket - 3D Mockups
-        </div>
-        <button id="loadSelection" class="primary">Load selection</button>
-        <button class="ghost">Draw guide frame</button>
-        <button class="disabled">Activate</button>
-        <select id="scaleSelect">
-          <option value="1">1x</option>
-          <option value="2" selected>2x</option>
-          <option value="3">3x</option>
-        </select>
-        <div class="divider"></div>
-        <button id="download">Download</button>
-        <button id="insert" class="ghost">Export to Galileo</button>
-        <div class="status-inline" id="status"></div>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MockRocket</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #1d1d1d;
+      color: #f5f5f5;
+      overflow: hidden;
+    }
+
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: #2a2a2a;
+      border-bottom: 1px solid #3a3a3a;
+      flex-wrap: wrap;
+      row-gap: 8px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 13px;
+      margin-right: 10px;
+    }
+
+    .brand-badge {
+      width: 18px;
+      height: 18px;
+      border-radius: 5px;
+      background: linear-gradient(135deg, #ff4bd8, #6b5bff);
+    }
+
+    .divider {
+      width: 1px;
+      height: 22px;
+      background: #3a3a3a;
+      margin: 0 4px;
+    }
+
+    .topbar button,
+    .topbar select {
+      border: 1px solid transparent;
+      background: #3a3a3a;
+      color: #f5f5f5;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .topbar button.primary {
+      background: #4f8ef7;
+    }
+
+    .topbar button.ghost {
+      background: transparent;
+      border: 1px solid #4a4a4a;
+    }
+
+    .topbar button.disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .content {
+      flex: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: 10px;
+      padding: 10px;
+      background: #262626;
+    }
+
+    .viewport {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      background: repeating-conic-gradient(#3b3b3b 0% 25%, #2d2d2d 0% 50%) 0% / 24px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #glCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: grab;
+    }
+
+    #glCanvas.dragging {
+      cursor: grabbing;
+    }
+
+    .viewport-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .section {
+      background: #1b1b1b;
+      border-radius: 10px;
+      padding: 10px;
+      border: 1px solid #2c2c2c;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(255, 255, 255, 0.6);
+    }
+
+    .thumb {
+      width: 100%;
+      height: 88px;
+      background: #121212;
+      border-radius: 8px;
+      border: 1px dashed #3a3a3a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .thumb img {
+      max-width: 100%;
+      max-height: 100%;
+    }
+
+    .section button,
+    .section select,
+    .section input {
+      width: 100%;
+      padding: 6px 8px;
+      border-radius: 6px;
+      border: 1px solid #333333;
+      background: #262626;
+      color: #f5f5f5;
+      font-size: 12px;
+    }
+
+    .position-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+
+    .icon-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px;
+      border-radius: 8px;
+      border: 1px solid #333333;
+      background: #262626;
+      cursor: pointer;
+    }
+
+    .swatches {
+      display: flex;
+      gap: 6px;
+    }
+
+    .swatch {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 2px solid #2c2c2c;
+      cursor: pointer;
+    }
+
+    .toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .toggle input {
+      width: auto;
+    }
+
+    .status {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.6);
+      line-height: 1.3;
+      max-height: 44px;
+      overflow: hidden;
+    }
+
+    .status-inline {
+      margin-left: auto;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.6);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 220px;
+    }
+
+    .fit-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 8px 4px;
+      border-radius: 6px;
+      border: 1px solid #333333;
+      background: #262626;
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 10px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .fit-btn:hover {
+      background: #333333;
+      color: #f5f5f5;
+    }
+
+    .fit-btn.active {
+      background: #4f8ef7;
+      border-color: #4f8ef7;
+      color: #ffffff;
+    }
+
+    .fit-indicator-perfect {
+      background: rgba(52, 199, 89, 0.2);
+      color: #34c759;
+      border: 1px solid rgba(52, 199, 89, 0.3);
+    }
+
+    .fit-indicator-good {
+      background: rgba(79, 142, 247, 0.2);
+      color: #4f8ef7;
+      border: 1px solid rgba(79, 142, 247, 0.3);
+    }
+
+    .fit-indicator-info {
+      background: rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <div class="topbar">
+      <div class="brand">
+        <span class="brand-badge"></span>
+        MockRocket - 3D Mockups
       </div>
-      <div class="content">
-        <div class="viewport" id="viewport">
-          <canvas id="glCanvas"></canvas>
-          <div class="viewport-overlay" id="viewportOverlay">Drag to rotate</div>
-        </div>
-        <div class="sidebar">
-          <div class="section">
-            <div class="label">Selection</div>
-            <div class="thumb">
-              <img id="selectionPreview" alt="Selection preview" />
-              <span id="selectionEmpty">Select a frame</span>
-            </div>
-            <button id="refreshSelection">Refresh selection</button>
+      <button id="loadSelection" class="primary">Load selection</button>
+      <button class="ghost">Draw guide frame</button>
+      <button class="disabled">Activate</button>
+      <select id="scaleSelect">
+        <option value="1">1x</option>
+        <option value="2" selected>2x</option>
+        <option value="3">3x</option>
+      </select>
+      <div class="divider"></div>
+      <button id="download">Download</button>
+      <button id="insert" class="ghost">Export to Galileo</button>
+      <div class="status-inline" id="status"></div>
+    </div>
+    <div class="content">
+      <div class="viewport" id="viewport">
+        <canvas id="glCanvas"></canvas>
+        <div class="viewport-overlay" id="viewportOverlay">Drag to rotate</div>
+      </div>
+      <div class="sidebar">
+        <div class="section">
+          <div class="label">Selection</div>
+          <div class="thumb">
+            <img id="selectionPreview" alt="Selection preview" />
+            <span id="selectionEmpty">Select a frame</span>
           </div>
-          <div class="section">
-            <div class="label">Device</div>
-            <select id="deviceSelect">
-              <option value="iphone_16_free">iPhone 16 (free)</option>
-            </select>
-            <div class="label">Position</div>
-            <div class="position-row">
-              <button class="icon-btn" data-rot="front" title="Front">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5f5f5" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="3"/></svg>
-              </button>
-              <button class="icon-btn" data-rot="flat" title="Flat">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5f5f5" stroke-width="2"><rect x="3" y="9" width="18" height="6" rx="2"/></svg>
-              </button>
-              <button class="icon-btn" data-rot="tilt" title="Tilt">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5f5f5" stroke-width="2"><rect x="6" y="4" width="12" height="16" rx="3" transform="rotate(18 12 12)"/></svg>
-              </button>
-              <button class="icon-btn" data-rot="perspective" title="Perspective">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5f5f5" stroke-width="2"><path d="M6 4h12l-2 16H8L6 4Z"/></svg>
-              </button>
-            </div>
-            <div class="label">Colors</div>
-            <div class="swatches">
-              <div class="swatch" style="background:#1f1f1f;"></div>
-              <div class="swatch" style="background:#707070;"></div>
-              <div class="swatch" style="background:#cbb07b;"></div>
-              <div class="swatch" style="background:#f5f5f5; border-color:#555;"></div>
-              <div class="swatch" style="background:linear-gradient(135deg,#ff4bd8,#6b5bff);"></div>
-            </div>
-            <div class="toggle">
-              <span>Clay device</span>
-              <input type="checkbox" />
-            </div>
-            <div class="label">Environment</div>
-            <div class="toggle">
-              <span>Floor shadow</span>
-              <input type="checkbox" />
-            </div>
+          <div id="fitIndicator"
+            style="display: none; padding: 4px 8px; margin-bottom: 6px; border-radius: 6px; font-size: 11px; text-align: center;">
+          </div>
+          <button id="refreshSelection">Refresh selection</button>
+          <div class="label" style="margin-top: 8px;">Fit Mode</div>
+          <div class="fit-mode-row" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;">
+            <button class="fit-btn" data-fit="contain" title="Contain - Show entire design">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="6" width="18" height="12" rx="1" />
+                <rect x="7" y="8" width="10" height="8" rx="0.5" fill="currentColor" opacity="0.3" />
+              </svg>
+              <span>Contain</span>
+            </button>
+            <button class="fit-btn" data-fit="cover" title="Cover - Fill screen (may crop)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="6" width="18" height="12" rx="1" />
+                <rect x="3" y="6" width="18" height="12" rx="1" fill="currentColor" opacity="0.3" />
+              </svg>
+              <span>Cover</span>
+            </button>
+            <button class="fit-btn" data-fit="exact" title="Exact - No scaling">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="6" width="18" height="12" rx="1" />
+                <path d="M7 10h10M7 14h10" stroke="currentColor" stroke-width="1.5" />
+              </svg>
+              <span>Exact</span>
+            </button>
+          </div>
+        </div>
+        <div class="section">
+          <div class="label">Device</div>
+          <select id="deviceSelect">
+            <option value="iphone_16_free">iPhone 16 (free)</option>
+          </select>
+          <div class="label">Position</div>
+          <div class="position-row">
+            <button class="icon-btn" data-rot="front" title="Front">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5f5f5" stroke-width="2">
+                <rect x="6" y="2" width="12" height="20" rx="3" />
+              </svg>
+            </button>
+            <button class="icon-btn" data-rot="flat" title="Flat">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5f5f5" stroke-width="2">
+                <rect x="3" y="9" width="18" height="6" rx="2" />
+              </svg>
+            </button>
+            <button class="icon-btn" data-rot="tilt" title="Tilt">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5f5f5" stroke-width="2">
+                <rect x="6" y="4" width="12" height="16" rx="3" transform="rotate(18 12 12)" />
+              </svg>
+            </button>
+            <button class="icon-btn" data-rot="perspective" title="Perspective">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5f5f5" stroke-width="2">
+                <path d="M6 4h12l-2 16H8L6 4Z" />
+              </svg>
+            </button>
+          </div>
+          <div class="label">Colors</div>
+          <div class="swatches">
+            <div class="swatch" style="background:#1f1f1f;"></div>
+            <div class="swatch" style="background:#707070;"></div>
+            <div class="swatch" style="background:#cbb07b;"></div>
+            <div class="swatch" style="background:#f5f5f5; border-color:#555;"></div>
+            <div class="swatch" style="background:linear-gradient(135deg,#ff4bd8,#6b5bff);"></div>
+          </div>
+          <div class="toggle">
+            <span>Clay device</span>
+            <input type="checkbox" />
+          </div>
+          <div class="label">Environment</div>
+          <div class="toggle">
+            <span>Floor shadow</span>
+            <input type="checkbox" />
           </div>
         </div>
       </div>
     </div>
+  </div>
 
-    <script src="./lib/three.min.js?v=2"></script>
-    <script src="./lib/DRACOLoader.legacy.js?v=2"></script>
-    <script src="./lib/GLTFLoader.legacy.js?v=2"></script>
-    <script>
-      const { GLTFLoader, DRACOLoader } = THREE;
+  <script src="./lib/three.min.js?v=2"></script>
+  <script src="./lib/DRACOLoader.legacy.js?v=2"></script>
+  <script src="./lib/GLTFLoader.legacy.js?v=2"></script>
+  <script>
+    const { GLTFLoader, DRACOLoader } = THREE;
 
-      const selectionPreview = document.getElementById('selectionPreview');
-      const selectionEmpty = document.getElementById('selectionEmpty');
-      const statusEl = document.getElementById('status');
-      const scaleSelect = document.getElementById('scaleSelect');
-      const viewportOverlay = document.getElementById('viewportOverlay');
-      const glCanvas = document.getElementById('glCanvas');
-      const viewport = document.getElementById('viewport');
+    const selectionPreview = document.getElementById('selectionPreview');
+    const selectionEmpty = document.getElementById('selectionEmpty');
+    const statusEl = document.getElementById('status');
+    const scaleSelect = document.getElementById('scaleSelect');
+    const viewportOverlay = document.getElementById('viewportOverlay');
+    const glCanvas = document.getElementById('glCanvas');
+    const viewport = document.getElementById('viewport');
 
-      const pending = new Map();
-      const rpc = {
-        call(method, params) {
-          const id = (crypto.randomUUID && crypto.randomUUID()) || `rpc_${Date.now()}_${Math.random()}`;
-          const payload = { rpc: 1, id, method, params };
-          window.parent.postMessage(payload, '*');
-          return new Promise((resolve, reject) => {
-            pending.set(id, { resolve, reject });
-            setTimeout(() => {
-              if (pending.has(id)) {
-                pending.delete(id);
-                reject(new Error('RPC timeout'));
-              }
-            }, 10000);
-          });
-        },
-      };
-
-      window.addEventListener('message', (event) => {
-        const data = event.data;
-        if (!data || data.rpc !== 1 || !data.id) return;
-        const entry = pending.get(data.id);
-        if (!entry) return;
-        pending.delete(data.id);
-        if (data.ok) {
-          entry.resolve(data.result);
-        } else {
-          entry.reject(new Error(data.error?.message || 'RPC error'));
-        }
-      });
-
-      const base64ToArrayBuffer = (base64) => {
-        const binary = atob(base64);
-        const len = binary.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i += 1) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-        return bytes.buffer;
-      };
-
-      const base64ToText = (base64) => {
-        const binary = atob(base64);
-        const len = binary.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i += 1) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-        return new TextDecoder('utf-8').decode(bytes);
-      };
-
-      const assetCache = new Map();
-
-      const state = {
-        selectionSnapshot: null,
-        selectionTexture: null,
-        selectionImage: null,
-        selectionMeta: null,
-        selectionFit: 'cover',
-        output: null,
-        model: null,
-        screenMesh: null,
-        renderer: null,
-        scene: null,
-        camera: null,
-        preset: null,
-        forceFastMode: null,
-        envTexture: null,
-        rotationX: -0.2,
-        rotationY: -0.4,
-        dragging: false,
-        lastX: 0,
-        lastY: 0,
-      };
-
-      const setStatus = (text) => {
-        statusEl.textContent = text || '';
-      };
-
-      setStatus('Ready');
-
-      const loadAsset = async (ref) => {
-        if (!ref || !ref.scope || !ref.path) {
-          throw new Error('Invalid asset reference');
-        }
-        const key = `${ref.scope}:${ref.path}`;
-        if (assetCache.has(key)) return assetCache.get(key);
-        const asset = await rpc.call('asset.load', {
-          scope: ref.scope,
-          path: ref.path,
-          encoding: 'base64',
-        });
-        assetCache.set(key, asset);
-        return asset;
-      };
-
-      const loadJsonAsset = async (ref) => {
-        const asset = await loadAsset(ref);
-        const text = base64ToText(asset.dataBase64);
-        return JSON.parse(text);
-      };
-
-      const loadImageFromDataUrl = (dataUrl) => {
+    const pending = new Map();
+    const rpc = {
+      call(method, params) {
+        const id = (crypto.randomUUID && crypto.randomUUID()) || `rpc_${Date.now()}_${Math.random()}`;
+        const payload = { rpc: 1, id, method, params };
+        window.parent.postMessage(payload, '*');
         return new Promise((resolve, reject) => {
-          const img = new Image();
-          img.onload = () => resolve(img);
-          img.onerror = () => reject(new Error('Failed to load image'));
-          img.src = dataUrl;
+          pending.set(id, { resolve, reject });
+          setTimeout(() => {
+            if (pending.has(id)) {
+              pending.delete(id);
+              reject(new Error('RPC timeout'));
+            }
+          }, 10000);
         });
-      };
+      },
+    };
 
-      const loadImageAsset = async (ref) => {
-        const asset = await loadAsset(ref);
-        const dataUrl = `data:${asset.mime};base64,${asset.dataBase64}`;
-        return loadImageFromDataUrl(dataUrl);
-      };
+    window.addEventListener('message', (event) => {
+      const data = event.data;
+      if (!data || data.rpc !== 1 || !data.id) return;
+      const entry = pending.get(data.id);
+      if (!entry) return;
+      pending.delete(data.id);
+      if (data.ok) {
+        entry.resolve(data.result);
+      } else {
+        entry.reject(new Error(data.error?.message || 'RPC error'));
+      }
+    });
 
-      const decodeHDR = (buffer) => {
-        const bytes = new Uint8Array(buffer);
-        let offset = 0;
+    const base64ToArrayBuffer = (base64) => {
+      const binary = atob(base64);
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes.buffer;
+    };
 
-        const readLine = () => {
-          let line = '';
-          while (offset < bytes.length) {
-            const char = bytes[offset++];
-            if (char === 10) break;
-            if (char === 13) continue;
-            line += String.fromCharCode(char);
-          }
-          return line;
-        };
+    const base64ToText = (base64) => {
+      const binary = atob(base64);
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return new TextDecoder('utf-8').decode(bytes);
+    };
 
+    const assetCache = new Map();
+
+    const state = {
+      selectionSnapshot: null,
+      selectionTexture: null,
+      selectionImage: null,
+      selectionMeta: null,
+      selectionFit: 'cover',
+      output: null,
+      model: null,
+      screenMesh: null,
+      renderer: null,
+      scene: null,
+      camera: null,
+      preset: null,
+      forceFastMode: null,
+      envTexture: null,
+      rotationX: -0.2,
+      rotationY: -0.4,
+      dragging: false,
+      lastX: 0,
+      lastY: 0,
+      deviceMatch: null,
+    };
+
+    const setStatus = (text) => {
+      statusEl.textContent = text || '';
+    };
+
+    setStatus('Ready');
+
+    const loadAsset = async (ref) => {
+      if (!ref || !ref.scope || !ref.path) {
+        throw new Error('Invalid asset reference');
+      }
+      const key = `${ref.scope}:${ref.path}`;
+      if (assetCache.has(key)) return assetCache.get(key);
+      const asset = await rpc.call('asset.load', {
+        scope: ref.scope,
+        path: ref.path,
+        encoding: 'base64',
+      });
+      assetCache.set(key, asset);
+      return asset;
+    };
+
+    const loadJsonAsset = async (ref) => {
+      const asset = await loadAsset(ref);
+      const text = base64ToText(asset.dataBase64);
+      return JSON.parse(text);
+    };
+
+    const loadImageFromDataUrl = (dataUrl) => {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Failed to load image'));
+        img.src = dataUrl;
+      });
+    };
+
+    const loadImageAsset = async (ref) => {
+      const asset = await loadAsset(ref);
+      const dataUrl = `data:${asset.mime};base64,${asset.dataBase64}`;
+      return loadImageFromDataUrl(dataUrl);
+    };
+
+    const decodeHDR = (buffer) => {
+      const bytes = new Uint8Array(buffer);
+      let offset = 0;
+
+      const readLine = () => {
         let line = '';
         while (offset < bytes.length) {
-          line = readLine();
-          if (line === '') break;
+          const char = bytes[offset++];
+          if (char === 10) break;
+          if (char === 13) continue;
+          line += String.fromCharCode(char);
         }
+        return line;
+      };
 
-        const resolution = readLine();
-        const match = resolution.match(/-Y\\s+(\\d+)\\s+\\+X\\s+(\\d+)/i)
-          || resolution.match(/\\+Y\\s+(\\d+)\\s+\\+X\\s+(\\d+)/i);
-        if (!match) {
-          throw new Error('Invalid HDR resolution');
-        }
-        const height = Number(match[1]);
-        const width = Number(match[2]);
+      let line = '';
+      while (offset < bytes.length) {
+        line = readLine();
+        if (line === '') break;
+      }
 
-        const rgbe = new Uint8Array(width * height * 4);
-        let ptr = 0;
+      const resolution = readLine();
+      const match = resolution.match(/-Y\\s+(\\d+)\\s+\\+X\\s+(\\d+)/i)
+        || resolution.match(/\\+Y\\s+(\\d+)\\s+\\+X\\s+(\\d+)/i);
+      if (!match) {
+        throw new Error('Invalid HDR resolution');
+      }
+      const height = Number(match[1]);
+      const width = Number(match[2]);
 
-        for (let y = 0; y < height; y += 1) {
-          if (
-            offset + 4 <= bytes.length
-            && bytes[offset] === 2
-            && bytes[offset + 1] === 2
-          ) {
-            const scanlineWidth = (bytes[offset + 2] << 8) | bytes[offset + 3];
-            if (scanlineWidth !== width) {
-              throw new Error('HDR scanline width mismatch');
-            }
-            offset += 4;
-            const scanline = new Uint8Array(width * 4);
-            for (let channel = 0; channel < 4; channel += 1) {
-              let i = 0;
-              while (i < width) {
-                const count = bytes[offset++];
-                if (count > 128) {
-                  const run = count - 128;
-                  const value = bytes[offset++];
-                  for (let r = 0; r < run; r += 1) {
-                    scanline[channel * width + i++] = value;
-                  }
-                } else {
-                  for (let r = 0; r < count; r += 1) {
-                    scanline[channel * width + i++] = bytes[offset++];
-                  }
+      const rgbe = new Uint8Array(width * height * 4);
+      let ptr = 0;
+
+      for (let y = 0; y < height; y += 1) {
+        if (
+          offset + 4 <= bytes.length
+          && bytes[offset] === 2
+          && bytes[offset + 1] === 2
+        ) {
+          const scanlineWidth = (bytes[offset + 2] << 8) | bytes[offset + 3];
+          if (scanlineWidth !== width) {
+            throw new Error('HDR scanline width mismatch');
+          }
+          offset += 4;
+          const scanline = new Uint8Array(width * 4);
+          for (let channel = 0; channel < 4; channel += 1) {
+            let i = 0;
+            while (i < width) {
+              const count = bytes[offset++];
+              if (count > 128) {
+                const run = count - 128;
+                const value = bytes[offset++];
+                for (let r = 0; r < run; r += 1) {
+                  scanline[channel * width + i++] = value;
+                }
+              } else {
+                for (let r = 0; r < count; r += 1) {
+                  scanline[channel * width + i++] = bytes[offset++];
                 }
               }
             }
-            for (let x = 0; x < width; x += 1) {
-              rgbe[ptr++] = scanline[x];
-              rgbe[ptr++] = scanline[width + x];
-              rgbe[ptr++] = scanline[width * 2 + x];
-              rgbe[ptr++] = scanline[width * 3 + x];
-            }
-          } else {
-            const remaining = width * 4;
-            rgbe.set(bytes.subarray(offset, offset + remaining), ptr);
-            offset += remaining;
-            ptr += remaining;
           }
-        }
-
-        return { width, height, data: rgbe };
-      };
-
-      const createEnvironmentTexture = (hdr) => {
-        const { width, height, data } = hdr;
-        const ldr = new Uint8Array(width * height * 4);
-        const exposure = 1.0;
-        for (let i = 0; i < data.length; i += 4) {
-          const e = data[i + 3];
-          let r = 0;
-          let g = 0;
-          let b = 0;
-          if (e !== 0) {
-            const scale = Math.pow(2, e - 128) / 255;
-            r = data[i] * scale * exposure;
-            g = data[i + 1] * scale * exposure;
-            b = data[i + 2] * scale * exposure;
+          for (let x = 0; x < width; x += 1) {
+            rgbe[ptr++] = scanline[x];
+            rgbe[ptr++] = scanline[width + x];
+            rgbe[ptr++] = scanline[width * 2 + x];
+            rgbe[ptr++] = scanline[width * 3 + x];
           }
-          const idx = i;
-          ldr[idx] = Math.max(0, Math.min(255, Math.round(r * 255)));
-          ldr[idx + 1] = Math.max(0, Math.min(255, Math.round(g * 255)));
-          ldr[idx + 2] = Math.max(0, Math.min(255, Math.round(b * 255)));
-          ldr[idx + 3] = 255;
+        } else {
+          const remaining = width * 4;
+          rgbe.set(bytes.subarray(offset, offset + remaining), ptr);
+          offset += remaining;
+          ptr += remaining;
         }
-        const texture = new THREE.DataTexture(ldr, width, height, THREE.RGBAFormat);
-        texture.mapping = THREE.EquirectangularReflectionMapping;
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.needsUpdate = true;
-        return texture;
-      };
+      }
 
-      const applyEnvironment = async (envRef) => {
-        if (!envRef || !state.scene) return;
-        try {
-          const asset = await loadAsset(envRef);
-          const buffer = base64ToArrayBuffer(asset.dataBase64);
-          let texture = null;
-          if (envRef.path.endsWith('.hdr')) {
-            const hdr = decodeHDR(buffer);
-            texture = createEnvironmentTexture(hdr);
-          } else {
-            const dataUrl = `data:${asset.mime};base64,${asset.dataBase64}`;
-            const img = await loadImageFromDataUrl(dataUrl);
-            texture = new THREE.Texture(img);
-            texture.mapping = THREE.EquirectangularReflectionMapping;
-            texture.colorSpace = THREE.SRGBColorSpace;
-            texture.needsUpdate = true;
-          }
-          state.envTexture = texture;
-          state.scene.environment = texture;
-        } catch (error) {
-          console.warn('Failed to load environment', error);
+      return { width, height, data: rgbe };
+    };
+
+    const createEnvironmentTexture = (hdr) => {
+      const { width, height, data } = hdr;
+      const ldr = new Uint8Array(width * height * 4);
+      const exposure = 1.0;
+      for (let i = 0; i < data.length; i += 4) {
+        const e = data[i + 3];
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        if (e !== 0) {
+          const scale = Math.pow(2, e - 128) / 255;
+          r = data[i] * scale * exposure;
+          g = data[i + 1] * scale * exposure;
+          b = data[i + 2] * scale * exposure;
         }
-      };
+        const idx = i;
+        ldr[idx] = Math.max(0, Math.min(255, Math.round(r * 255)));
+        ldr[idx + 1] = Math.max(0, Math.min(255, Math.round(g * 255)));
+        ldr[idx + 2] = Math.max(0, Math.min(255, Math.round(b * 255)));
+        ldr[idx + 3] = 255;
+      }
+      const texture = new THREE.DataTexture(ldr, width, height, THREE.RGBAFormat);
+      texture.mapping = THREE.EquirectangularReflectionMapping;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+      return texture;
+    };
 
-      const parseFastVariant = (value) => {
-        if (!value) return null;
-        const parts = value.split('.');
-        if (parts.length === 2) return parts[1];
-        return value;
-      };
-
-      const getFallbackVariant = () => {
-        const fallback = state.preset?.fallback?.on3dError || 'fast.tilt';
-        return parseFastVariant(fallback) || 'tilt';
-      };
-
-      const loadPreset = async () => {
-        const preset = await loadJsonAsset({ scope: 'bundle', path: 'presets/iphone16.json' });
-        state.preset = preset;
-        if (preset?.defaultMode === 'fast' || preset?.ui?.fastModeDefault) {
-          state.forceFastMode = getFallbackVariant();
-        }
-        if (preset?.three?.camera?.orbit) {
-          state.rotationX = preset.three.camera.orbit.x ?? state.rotationX;
-          state.rotationY = preset.three.camera.orbit.y ?? state.rotationY;
-        }
-        if (state.camera && preset?.three?.camera?.fov) {
-          state.camera.fov = preset.three.camera.fov;
-          state.camera.updateProjectionMatrix();
-        }
-        return preset;
-      };
-
-      const findScreenMesh = (root) => {
-        let candidate = null;
-        const keys = ['screen', 'display', 'glass'];
-        root.traverse((child) => {
-          if (!child.isMesh) return;
-          const name = (child.name || '').toLowerCase();
-          const matName = (child.material?.name || '').toLowerCase();
-          if (keys.some(key => name.includes(key) || matName.includes(key))) {
-            candidate = child;
-          }
-        });
-        if (candidate) return candidate;
-        return pickScreenMeshByGeometry(root);
-      };
-
-      const pickScreenMeshByGeometry = (root) => {
-        if (!state.camera) return null;
-        const modelBox = new THREE.Box3().setFromObject(root);
-        const modelCenter = new THREE.Vector3();
-        modelBox.getCenter(modelCenter);
-        const modelSize = new THREE.Vector3();
-        modelBox.getSize(modelSize);
-        const modelDims = [modelSize.x, modelSize.y, modelSize.z].sort((a, b) => b - a);
-        const modelFaceArea = Math.max(1e-6, modelDims[0] * modelDims[1]);
-        const cameraDir = new THREE.Vector3()
-          .subVectors(state.camera.position, modelCenter)
-          .normalize();
-
-        let best = null;
-        let bestScore = -Infinity;
-        const expectedAspect = state.preset?.three?.screen?.expectedAspect ?? 2.15;
-        // minAreaRatio is the ratio of screen mesh projected area to overall device projected area.
-        const minAreaRatio = state.preset?.three?.screen?.minAreaRatio ?? 0.05;
-
-        root.traverse((child) => {
-          if (!child.isMesh) return;
-          const box = new THREE.Box3().setFromObject(child);
-          const size = new THREE.Vector3();
-          box.getSize(size);
-          const dims = [size.x, size.y, size.z].sort((a, b) => b - a);
-          const area = dims[0] * dims[1];
-          const thickness = dims[2];
-          if (!isFinite(area) || area <= 0) return;
-          if (!isFinite(thickness) || thickness <= 0) return;
-          if (dims[0] < 0.2 || dims[1] < 0.2) return;
-          if (thickness > dims[0] * 0.4) return;
-          if (area / modelFaceArea < minAreaRatio) return;
-
-          const center = new THREE.Vector3();
-          box.getCenter(center);
-          const fromCenter = new THREE.Vector3().subVectors(center, modelCenter).normalize();
-          const towardCamera = Math.max(0, cameraDir.dot(fromCenter));
-
-          const aspect = dims[0] / Math.max(1e-4, dims[1]);
-          const aspectScore = 1 / (1 + Math.abs(aspect - expectedAspect));
-
-          const score = (area / Math.max(thickness, 1e-3)) * (1 + towardCamera * 1.5) * aspectScore;
-          if (score > bestScore) {
-            bestScore = score;
-            best = child;
-          }
-        });
-
-        return best;
-      };
-
-      const generatePlanarUVs = (mesh) => {
-        const geom = mesh?.geometry;
-        if (!geom || !geom.attributes?.position) return false;
-        geom.computeBoundingBox();
-        const bbox = geom.boundingBox;
-        if (!bbox) return false;
-
-        const size = new THREE.Vector3();
-        bbox.getSize(size);
-        const axes = [
-          { axis: 'x', size: size.x },
-          { axis: 'y', size: size.y },
-          { axis: 'z', size: size.z },
-        ].sort((a, b) => b.size - a.size);
-        const uAxis = axes[0].axis;
-        const vAxis = axes[1].axis;
-
-        const minU = bbox.min[uAxis];
-        const maxU = bbox.max[uAxis];
-        const minV = bbox.min[vAxis];
-        const maxV = bbox.max[vAxis];
-        const rangeU = Math.max(1e-6, maxU - minU);
-        const rangeV = Math.max(1e-6, maxV - minV);
-
-        const pos = geom.attributes.position;
-        const uvArray = new Float32Array(pos.count * 2);
-
-        const getCoord = (i, axis) => {
-          if (axis === 'x') return pos.getX(i);
-          if (axis === 'y') return pos.getY(i);
-          return pos.getZ(i);
-        };
-
-        for (let i = 0; i < pos.count; i += 1) {
-          const u = (getCoord(i, uAxis) - minU) / rangeU;
-          const v = (getCoord(i, vAxis) - minV) / rangeV;
-          uvArray[i * 2] = u;
-          uvArray[i * 2 + 1] = 1 - v;
-        }
-
-        geom.setAttribute('uv', new THREE.BufferAttribute(uvArray, 2));
-        geom.attributes.uv.needsUpdate = true;
-        return true;
-      };
-
-      const normalizeScreenUVs = (mesh) => {
-        if (!mesh?.geometry) return null;
-        if (mesh.userData?.uvNormalization) {
-          return mesh.userData.uvNormalization;
-        }
-        const geom = mesh.geometry;
-        const uv = geom.attributes?.uv;
-        if (!uv || uv.count === 0) {
-          generatePlanarUVs(mesh);
-          const info = { repeatX: 1, repeatY: 1, offsetX: 0, offsetY: 0 };
-          mesh.userData.uvNormalization = info;
-          return info;
-        }
-
-        let minU = Infinity;
-        let minV = Infinity;
-        let maxU = -Infinity;
-        let maxV = -Infinity;
-        for (let i = 0; i < uv.count; i += 1) {
-          const u = uv.getX(i);
-          const v = uv.getY(i);
-          if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
-          minU = Math.min(minU, u);
-          minV = Math.min(minV, v);
-          maxU = Math.max(maxU, u);
-          maxV = Math.max(maxV, v);
-        }
-        const rangeU = maxU - minU;
-        const rangeV = maxV - minV;
-        if (!Number.isFinite(rangeU) || !Number.isFinite(rangeV) || rangeU < 1e-4 || rangeV < 1e-4) {
-          generatePlanarUVs(mesh);
-          const info = { repeatX: 1, repeatY: 1, offsetX: 0, offsetY: 0 };
-          mesh.userData.uvNormalization = info;
-          return info;
-        }
-        const repeatX = 1 / rangeU;
-        const repeatY = 1 / rangeV;
-        const offsetX = -minU * repeatX;
-        const offsetY = -minV * repeatY;
-        const info = { repeatX, repeatY, offsetX, offsetY };
-        mesh.userData.uvNormalization = info;
-        return info;
-      };
-
-      const applyTextureToMesh = (mesh, texture) => {
-        if (!mesh || !texture) return;
-        const uvInfo = normalizeScreenUVs(mesh);
-        if (uvInfo) {
-          texture.offset.set(uvInfo.offsetX, uvInfo.offsetY);
-          texture.repeat.set(uvInfo.repeatX, uvInfo.repeatY);
+    const applyEnvironment = async (envRef) => {
+      if (!envRef || !state.scene) return;
+      try {
+        const asset = await loadAsset(envRef);
+        const buffer = base64ToArrayBuffer(asset.dataBase64);
+        let texture = null;
+        if (envRef.path.endsWith('.hdr')) {
+          const hdr = decodeHDR(buffer);
+          texture = createEnvironmentTexture(hdr);
+        } else {
+          const dataUrl = `data:${asset.mime};base64,${asset.dataBase64}`;
+          const img = await loadImageFromDataUrl(dataUrl);
+          texture = new THREE.Texture(img);
+          texture.mapping = THREE.EquirectangularReflectionMapping;
+          texture.colorSpace = THREE.SRGBColorSpace;
           texture.needsUpdate = true;
         }
-        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        materials.forEach((material) => {
-          if (!material) return;
-          material.map = texture;
-          if ('color' in material) {
-            material.color = new THREE.Color(0xffffff);
-          }
-          if ('transparent' in material) {
-            material.transparent = false;
-            material.opacity = 1;
-          }
-          if ('emissive' in material) {
-            material.emissive = new THREE.Color(0xffffff);
-            material.emissiveMap = texture;
-            material.emissiveIntensity = 1;
-          }
-          material.needsUpdate = true;
-        });
+        state.envTexture = texture;
+        state.scene.environment = texture;
+      } catch (error) {
+        console.warn('Failed to load environment', error);
+      }
+    };
+
+    const parseFastVariant = (value) => {
+      if (!value) return null;
+      const parts = value.split('.');
+      if (parts.length === 2) return parts[1];
+      return value;
+    };
+
+    const getFallbackVariant = () => {
+      const fallback = state.preset?.fallback?.on3dError || 'fast.tilt';
+      return parseFastVariant(fallback) || 'tilt';
+    };
+
+    const loadPreset = async () => {
+      const preset = await loadJsonAsset({ scope: 'bundle', path: 'presets/iphone16.json' });
+      state.preset = preset;
+      if (preset?.defaultMode === 'fast' || preset?.ui?.fastModeDefault) {
+        state.forceFastMode = getFallbackVariant();
+      }
+      if (preset?.three?.camera?.orbit) {
+        state.rotationX = preset.three.camera.orbit.x ?? state.rotationX;
+        state.rotationY = preset.three.camera.orbit.y ?? state.rotationY;
+      }
+      if (state.camera && preset?.three?.camera?.fov) {
+        state.camera.fov = preset.three.camera.fov;
+        state.camera.updateProjectionMatrix();
+      }
+      return preset;
+    };
+
+    const findScreenMesh = (root) => {
+      let candidate = null;
+      const keys = ['screen', 'display', 'glass'];
+      root.traverse((child) => {
+        if (!child.isMesh) return;
+        const name = (child.name || '').toLowerCase();
+        const matName = (child.material?.name || '').toLowerCase();
+        if (keys.some(key => name.includes(key) || matName.includes(key))) {
+          candidate = child;
+        }
+      });
+      if (candidate) return candidate;
+      return pickScreenMeshByGeometry(root);
+    };
+
+    const pickScreenMeshByGeometry = (root) => {
+      if (!state.camera) return null;
+      const modelBox = new THREE.Box3().setFromObject(root);
+      const modelCenter = new THREE.Vector3();
+      modelBox.getCenter(modelCenter);
+      const modelSize = new THREE.Vector3();
+      modelBox.getSize(modelSize);
+      const modelDims = [modelSize.x, modelSize.y, modelSize.z].sort((a, b) => b - a);
+      const modelFaceArea = Math.max(1e-6, modelDims[0] * modelDims[1]);
+      const cameraDir = new THREE.Vector3()
+        .subVectors(state.camera.position, modelCenter)
+        .normalize();
+
+      let best = null;
+      let bestScore = -Infinity;
+      const expectedAspect = state.preset?.three?.screen?.expectedAspect ?? 2.15;
+      // minAreaRatio is the ratio of screen mesh projected area to overall device projected area.
+      const minAreaRatio = state.preset?.three?.screen?.minAreaRatio ?? 0.05;
+
+      root.traverse((child) => {
+        if (!child.isMesh) return;
+        const box = new THREE.Box3().setFromObject(child);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const dims = [size.x, size.y, size.z].sort((a, b) => b - a);
+        const area = dims[0] * dims[1];
+        const thickness = dims[2];
+        if (!isFinite(area) || area <= 0) return;
+        if (!isFinite(thickness) || thickness <= 0) return;
+        if (dims[0] < 0.2 || dims[1] < 0.2) return;
+        if (thickness > dims[0] * 0.4) return;
+        if (area / modelFaceArea < minAreaRatio) return;
+
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        const fromCenter = new THREE.Vector3().subVectors(center, modelCenter).normalize();
+        const towardCamera = Math.max(0, cameraDir.dot(fromCenter));
+
+        const aspect = dims[0] / Math.max(1e-4, dims[1]);
+        const aspectScore = 1 / (1 + Math.abs(aspect - expectedAspect));
+
+        const score = (area / Math.max(thickness, 1e-3)) * (1 + towardCamera * 1.5) * aspectScore;
+        if (score > bestScore) {
+          bestScore = score;
+          best = child;
+        }
+      });
+
+      return best;
+    };
+
+    const generatePlanarUVs = (mesh) => {
+      const geom = mesh?.geometry;
+      if (!geom || !geom.attributes?.position) return false;
+      geom.computeBoundingBox();
+      const bbox = geom.boundingBox;
+      if (!bbox) return false;
+
+      const size = new THREE.Vector3();
+      bbox.getSize(size);
+      const axes = [
+        { axis: 'x', size: size.x },
+        { axis: 'y', size: size.y },
+        { axis: 'z', size: size.z },
+      ].sort((a, b) => b.size - a.size);
+      const uAxis = axes[0].axis;
+      const vAxis = axes[1].axis;
+
+      const minU = bbox.min[uAxis];
+      const maxU = bbox.max[uAxis];
+      const minV = bbox.min[vAxis];
+      const maxV = bbox.max[vAxis];
+      const rangeU = Math.max(1e-6, maxU - minU);
+      const rangeV = Math.max(1e-6, maxV - minV);
+
+      const pos = geom.attributes.position;
+      const uvArray = new Float32Array(pos.count * 2);
+
+      const getCoord = (i, axis) => {
+        if (axis === 'x') return pos.getX(i);
+        if (axis === 'y') return pos.getY(i);
+        return pos.getZ(i);
       };
 
-      const setupScene = () => {
-        const renderer = new THREE.WebGLRenderer({
-          canvas: glCanvas,
-          antialias: true,
-          alpha: true,
-          preserveDrawingBuffer: true,
+      for (let i = 0; i < pos.count; i += 1) {
+        const u = (getCoord(i, uAxis) - minU) / rangeU;
+        const v = (getCoord(i, vAxis) - minV) / rangeV;
+        uvArray[i * 2] = u;
+        uvArray[i * 2 + 1] = 1 - v;
+      }
+
+      geom.setAttribute('uv', new THREE.BufferAttribute(uvArray, 2));
+      geom.attributes.uv.needsUpdate = true;
+      return true;
+    };
+
+    const normalizeScreenUVs = (mesh) => {
+      if (!mesh?.geometry) return null;
+      if (mesh.userData?.uvNormalization) {
+        return mesh.userData.uvNormalization;
+      }
+      const geom = mesh.geometry;
+      const uv = geom.attributes?.uv;
+      if (!uv || uv.count === 0) {
+        generatePlanarUVs(mesh);
+        const info = { repeatX: 1, repeatY: 1, offsetX: 0, offsetY: 0 };
+        mesh.userData.uvNormalization = info;
+        return info;
+      }
+
+      let minU = Infinity;
+      let minV = Infinity;
+      let maxU = -Infinity;
+      let maxV = -Infinity;
+      for (let i = 0; i < uv.count; i += 1) {
+        const u = uv.getX(i);
+        const v = uv.getY(i);
+        if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+        minU = Math.min(minU, u);
+        minV = Math.min(minV, v);
+        maxU = Math.max(maxU, u);
+        maxV = Math.max(maxV, v);
+      }
+      const rangeU = maxU - minU;
+      const rangeV = maxV - minV;
+      if (!Number.isFinite(rangeU) || !Number.isFinite(rangeV) || rangeU < 1e-4 || rangeV < 1e-4) {
+        generatePlanarUVs(mesh);
+        const info = { repeatX: 1, repeatY: 1, offsetX: 0, offsetY: 0 };
+        mesh.userData.uvNormalization = info;
+        return info;
+      }
+      const repeatX = 1 / rangeU;
+      const repeatY = 1 / rangeV;
+      const offsetX = -minU * repeatX;
+      const offsetY = -minV * repeatY;
+      const info = { repeatX, repeatY, offsetX, offsetY };
+      mesh.userData.uvNormalization = info;
+      return info;
+    };
+
+    const applyTextureToMesh = (mesh, texture) => {
+      if (!mesh || !texture) return;
+      const uvInfo = normalizeScreenUVs(mesh);
+      if (uvInfo) {
+        texture.offset.set(uvInfo.offsetX, uvInfo.offsetY);
+        texture.repeat.set(uvInfo.repeatX, uvInfo.repeatY);
+        texture.needsUpdate = true;
+      }
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      materials.forEach((material) => {
+        if (!material) return;
+        material.map = texture;
+        if ('color' in material) {
+          material.color = new THREE.Color(0xffffff);
+        }
+        if ('transparent' in material) {
+          material.transparent = false;
+          material.opacity = 1;
+        }
+        if ('emissive' in material) {
+          material.emissive = new THREE.Color(0xffffff);
+          material.emissiveMap = texture;
+          material.emissiveIntensity = 1;
+        }
+        material.needsUpdate = true;
+      });
+    };
+
+    const setupScene = () => {
+      const renderer = new THREE.WebGLRenderer({
+        canvas: glCanvas,
+        antialias: true,
+        alpha: true,
+        preserveDrawingBuffer: true,
+        powerPreference: 'high-performance',
+      });
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      // Use higher pixel ratio for better quality (capped at 2 for performance)
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      // Enable tone mapping for better color reproduction
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.0;
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
+      camera.position.set(0, 0, 5);
+
+      const ambient = new THREE.AmbientLight(0xffffff, 0.9);
+      const hemisphere = new THREE.HemisphereLight(0xffffff, 0x333333, 0.6);
+      const directional = new THREE.DirectionalLight(0xffffff, 1.4);
+      directional.position.set(2, 3, 5);
+      scene.add(ambient, hemisphere, directional);
+
+      state.renderer = renderer;
+      state.scene = scene;
+      state.camera = camera;
+    };
+
+    const fitCameraToObject = (object, offset = 1.6) => {
+      const box = new THREE.Box3().setFromObject(object);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const fov = state.camera.fov * (Math.PI / 180);
+      let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+      cameraZ *= offset;
+      state.camera.position.set(center.x, center.y, center.z + cameraZ);
+      state.camera.near = Math.max(0.1, maxDim / 100);
+      state.camera.far = Math.max(1000, maxDim * 10);
+      state.camera.lookAt(center);
+      state.camera.updateProjectionMatrix();
+    };
+
+    const createFallbackModel = () => {
+      const geometry = new THREE.BoxGeometry(1, 2, 0.1);
+      const material = new THREE.MeshStandardMaterial({ color: 0x5566ff });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = 'fallback_phone';
+      return mesh;
+    };
+
+    const loadModel = async () => {
+      const loader = new GLTFLoader();
+      const draco = new DRACOLoader();
+      draco.setDecoderPath(new URL('./lib/draco/', window.location.href).href);
+      loader.setDRACOLoader(draco);
+      try {
+        setStatus('Loading model...');
+        const presetModelRef = state.preset?.three?.model;
+        const fallbackModelRef = { scope: 'bundle', path: 'models/iphone_16_free.glb' };
+        let asset;
+        if (presetModelRef) {
+          try {
+            asset = await loadAsset(presetModelRef);
+          } catch (error) {
+            console.warn('Failed to load preset model, using fallback', error);
+            asset = await loadAsset(fallbackModelRef);
+          }
+        } else {
+          asset = await loadAsset(fallbackModelRef);
+        }
+        const buffer = base64ToArrayBuffer(asset.dataBase64);
+        const gltf = await new Promise((resolve, reject) => {
+          loader.parse(buffer, '', resolve, reject);
         });
-        renderer.outputColorSpace = THREE.SRGBColorSpace;
-        renderer.setPixelRatio(window.devicePixelRatio || 1);
-
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
-        camera.position.set(0, 0, 5);
-
-        const ambient = new THREE.AmbientLight(0xffffff, 0.9);
-        const hemisphere = new THREE.HemisphereLight(0xffffff, 0x333333, 0.6);
-        const directional = new THREE.DirectionalLight(0xffffff, 1.4);
-        directional.position.set(2, 3, 5);
-        scene.add(ambient, hemisphere, directional);
-
-        state.renderer = renderer;
-        state.scene = scene;
-        state.camera = camera;
-      };
-
-      const fitCameraToObject = (object, offset = 1.6) => {
-        const box = new THREE.Box3().setFromObject(object);
+        const model = gltf.scene || gltf.scenes?.[0];
+        if (!model) {
+          throw new Error('GLB scene is empty');
+        }
+        const box = new THREE.Box3().setFromObject(model);
         const size = new THREE.Vector3();
         box.getSize(size);
         const center = new THREE.Vector3();
         box.getCenter(center);
-        const maxDim = Math.max(size.x, size.y, size.z);
-        const fov = state.camera.fov * (Math.PI / 180);
-        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-        cameraZ *= offset;
-        state.camera.position.set(center.x, center.y, center.z + cameraZ);
-        state.camera.near = Math.max(0.1, maxDim / 100);
-        state.camera.far = Math.max(1000, maxDim * 10);
-        state.camera.lookAt(center);
-        state.camera.updateProjectionMatrix();
-      };
+        model.position.sub(center);
 
-      const createFallbackModel = () => {
-        const geometry = new THREE.BoxGeometry(1, 2, 0.1);
-        const material = new THREE.MeshStandardMaterial({ color: 0x5566ff });
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.name = 'fallback_phone';
-        return mesh;
-      };
-
-      const loadModel = async () => {
-        const loader = new GLTFLoader();
-        const draco = new DRACOLoader();
-        draco.setDecoderPath(new URL('./lib/draco/', window.location.href).href);
-        loader.setDRACOLoader(draco);
-        try {
-          setStatus('Loading model...');
-          const presetModelRef = state.preset?.three?.model;
-          const fallbackModelRef = { scope: 'bundle', path: 'models/iphone_16_free.glb' };
-          let asset;
-          if (presetModelRef) {
-            try {
-              asset = await loadAsset(presetModelRef);
-            } catch (error) {
-              console.warn('Failed to load preset model, using fallback', error);
-              asset = await loadAsset(fallbackModelRef);
-            }
-          } else {
-            asset = await loadAsset(fallbackModelRef);
+        let meshCount = 0;
+        model.traverse((child) => {
+          if (!child.isMesh) return;
+          meshCount += 1;
+          child.frustumCulled = false;
+          if (child.material) {
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            materials.forEach((mat) => {
+              if (!mat) return;
+              mat.side = THREE.DoubleSide;
+              mat.needsUpdate = true;
+            });
           }
-          const buffer = base64ToArrayBuffer(asset.dataBase64);
-          const gltf = await new Promise((resolve, reject) => {
-            loader.parse(buffer, '', resolve, reject);
-          });
-          const model = gltf.scene || gltf.scenes?.[0];
-          if (!model) {
-            throw new Error('GLB scene is empty');
-          }
-          const box = new THREE.Box3().setFromObject(model);
-          const size = new THREE.Vector3();
-          box.getSize(size);
-          const center = new THREE.Vector3();
-          box.getCenter(center);
-          model.position.sub(center);
+        });
 
-          let meshCount = 0;
-          model.traverse((child) => {
-            if (!child.isMesh) return;
-            meshCount += 1;
-            child.frustumCulled = false;
-            if (child.material) {
-              const materials = Array.isArray(child.material) ? child.material : [child.material];
-              materials.forEach((mat) => {
-                if (!mat) return;
-                mat.side = THREE.DoubleSide;
-                mat.needsUpdate = true;
-              });
-            }
-          });
+        state.model = model;
+        state.scene.add(model);
 
-          state.model = model;
-          state.scene.add(model);
-
-          state.screenMesh = findScreenMesh(model);
-          if (!state.screenMesh) {
-            state.forceFastMode = parseFastVariant(state.preset?.fallback?.onNoScreen || 'fast.tilt');
-            setStatus('Screen mesh not detected. Using Fast mode.');
-          } else if (state.selectionTexture) {
-            applyTextureToMesh(state.screenMesh, state.selectionTexture);
-          }
-
-          fitCameraToObject(model, state.preset?.three?.camera?.fit ?? 1.6);
-          await applyEnvironment(state.preset?.three?.env);
-          setStatus(meshCount > 0 ? 'Model loaded.' : 'Model loaded, but no meshes found.');
-          return;
-        } catch (error) {
-          console.error('Failed to load GLB', error);
-          if (!state.model) {
-            const fallback = createFallbackModel();
-            state.model = fallback;
-            state.scene.add(fallback);
-            fitCameraToObject(fallback, state.preset?.three?.camera?.fit ?? 1.6);
-          }
-          state.forceFastMode = parseFastVariant(state.preset?.fallback?.on3dError || 'fast.tilt');
-          const message = error instanceof Error ? error.message : 'Failed to load model.';
-          setStatus(`${message} Using Fast mode.`);
+        state.screenMesh = findScreenMesh(model);
+        if (!state.screenMesh) {
+          state.forceFastMode = parseFastVariant(state.preset?.fallback?.onNoScreen || 'fast.tilt');
+          setStatus('Screen mesh not detected. Using Fast mode.');
+        } else if (state.selectionTexture) {
+          applyTextureToMesh(state.screenMesh, state.selectionTexture);
         }
-      };
 
-      const updateCamera = () => {
-        const width = viewport.clientWidth;
-        const height = viewport.clientHeight;
-        state.renderer.setSize(width, height, false);
-        state.camera.aspect = width / height;
-        state.camera.updateProjectionMatrix();
-      };
-
-      const render = () => {
-        if (!state.renderer || !state.scene || !state.camera) return;
-        if (state.model) {
-          state.model.rotation.set(state.rotationX, state.rotationY, 0);
+        fitCameraToObject(model, state.preset?.three?.camera?.fit ?? 1.6);
+        await applyEnvironment(state.preset?.three?.env);
+        setStatus(meshCount > 0 ? 'Model loaded.' : 'Model loaded, but no meshes found.');
+        return;
+      } catch (error) {
+        console.error('Failed to load GLB', error);
+        if (!state.model) {
+          const fallback = createFallbackModel();
+          state.model = fallback;
+          state.scene.add(fallback);
+          fitCameraToObject(fallback, state.preset?.three?.camera?.fit ?? 1.6);
         }
-        state.renderer.render(state.scene, state.camera);
-      };
+        state.forceFastMode = parseFastVariant(state.preset?.fallback?.on3dError || 'fast.tilt');
+        const message = error instanceof Error ? error.message : 'Failed to load model.';
+        setStatus(`${message} Using Fast mode.`);
+      }
+    };
 
-      const animate = () => {
-        render();
-        requestAnimationFrame(animate);
-      };
+    const updateCamera = () => {
+      const width = viewport.clientWidth;
+      const height = viewport.clientHeight;
+      state.renderer.setSize(width, height, false);
+      state.camera.aspect = width / height;
+      state.camera.updateProjectionMatrix();
+    };
 
-      const createImageFromSnapshot = async (snapshot) => {
-        const dataUrl = `data:${snapshot.mime};base64,${snapshot.dataBase64}`;
-        return loadImageFromDataUrl(dataUrl);
-      };
+    const render = () => {
+      if (!state.renderer || !state.scene || !state.camera) return;
+      if (state.model) {
+        state.model.rotation.set(state.rotationX, state.rotationY, 0);
+      }
+      state.renderer.render(state.scene, state.camera);
+    };
 
-      const getScreenAspect = (mesh) => {
-        if (!mesh) return null;
-        const box = new THREE.Box3().setFromObject(mesh);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        const dims = [size.x, size.y, size.z].sort((a, b) => b - a);
-        const width = dims[0] || 1;
-        const height = dims[1] || 1;
-        return width / height;
-      };
+    const animate = () => {
+      render();
+      requestAnimationFrame(animate);
+    };
 
-      const createTextureFromSnapshot = async (snapshot, fitMode) => {
-        const img = state.selectionImage || await createImageFromSnapshot(snapshot);
-        let source = img;
-        if (fitMode !== 'exact') {
-          const aspect = getScreenAspect(state.screenMesh);
-          if (aspect) {
-            source = createFitCanvasForAspect(img, aspect, fitMode || 'cover');
-          }
+    const createImageFromSnapshot = async (snapshot) => {
+      const dataUrl = `data:${snapshot.mime};base64,${snapshot.dataBase64}`;
+      return loadImageFromDataUrl(dataUrl);
+    };
+
+    const getScreenAspect = (mesh) => {
+      if (!mesh) return null;
+      const box = new THREE.Box3().setFromObject(mesh);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const dims = [size.x, size.y, size.z].sort((a, b) => b - a);
+      const width = dims[0] || 1;
+      const height = dims[1] || 1;
+      return width / height;
+    };
+
+    const createTextureFromSnapshot = async (snapshot, fitMode) => {
+      const img = state.selectionImage || await createImageFromSnapshot(snapshot);
+      let source = img;
+      if (fitMode !== 'exact') {
+        const aspect = getScreenAspect(state.screenMesh);
+        if (aspect) {
+          source = createFitCanvasForAspect(img, aspect, fitMode || 'cover');
         }
-        const texture = new THREE.Texture(source);
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.needsUpdate = true;
-        texture.flipY = false;
-        return texture;
-      };
+      }
+      const texture = new THREE.Texture(source);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      // High-quality texture filtering settings
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = true;
+      texture.anisotropy = state.renderer?.capabilities?.getMaxAnisotropy?.() || 16;
+      texture.needsUpdate = true;
+      texture.flipY = false;
+      return texture;
+    };
 
-      const drawImageCover = (ctx, img, rect) => {
-        const padding = rect.padding || 0;
-        const x = rect.x + padding;
-        const y = rect.y + padding;
-        const w = rect.w - padding * 2;
-        const h = rect.h - padding * 2;
-        const scale = Math.max(w / img.width, h / img.height);
-        const drawW = img.width * scale;
-        const drawH = img.height * scale;
-        const dx = x + (w - drawW) / 2;
-        const dy = y + (h - drawH) / 2;
-        ctx.drawImage(img, dx, dy, drawW, drawH);
-      };
+    const drawImageCover = (ctx, img, rect) => {
+      const padding = rect.padding || 0;
+      const x = rect.x + padding;
+      const y = rect.y + padding;
+      const w = rect.w - padding * 2;
+      const h = rect.h - padding * 2;
+      const scale = Math.max(w / img.width, h / img.height);
+      const drawW = img.width * scale;
+      const drawH = img.height * scale;
+      const dx = x + (w - drawW) / 2;
+      const dy = y + (h - drawH) / 2;
+      // Enable high-quality image smoothing
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, dx, dy, drawW, drawH);
+    };
 
-      const drawImageContain = (ctx, img, rect) => {
-        const padding = rect.padding || 0;
-        const x = rect.x + padding;
-        const y = rect.y + padding;
-        const w = rect.w - padding * 2;
-        const h = rect.h - padding * 2;
-        const scale = Math.min(w / img.width, h / img.height);
-        const drawW = img.width * scale;
-        const drawH = img.height * scale;
-        const dx = x + (w - drawW) / 2;
-        const dy = y + (h - drawH) / 2;
-        ctx.drawImage(img, dx, dy, drawW, drawH);
-      };
+    const drawImageContain = (ctx, img, rect) => {
+      const padding = rect.padding || 0;
+      const x = rect.x + padding;
+      const y = rect.y + padding;
+      const w = rect.w - padding * 2;
+      const h = rect.h - padding * 2;
+      const scale = Math.min(w / img.width, h / img.height);
+      const drawW = img.width * scale;
+      const drawH = img.height * scale;
+      const dx = x + (w - drawW) / 2;
+      const dy = y + (h - drawH) / 2;
+      // Enable high-quality image smoothing
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, dx, dy, drawW, drawH);
+    };
 
-      const createCoverCanvas = (img, width, height) => {
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(width));
-        canvas.height = Math.max(1, Math.round(height));
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return canvas;
-        drawImageCover(ctx, img, { x: 0, y: 0, w: canvas.width, h: canvas.height, padding: 0 });
-        return canvas;
-      };
+    const createCoverCanvas = (img, width, height) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(width));
+      canvas.height = Math.max(1, Math.round(height));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return canvas;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      drawImageCover(ctx, img, { x: 0, y: 0, w: canvas.width, h: canvas.height, padding: 0 });
+      return canvas;
+    };
 
-      const createContainCanvas = (img, width, height) => {
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(width));
-        canvas.height = Math.max(1, Math.round(height));
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return canvas;
-        drawImageContain(ctx, img, { x: 0, y: 0, w: canvas.width, h: canvas.height, padding: 0 });
-        return canvas;
-      };
+    const createContainCanvas = (img, width, height) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(width));
+      canvas.height = Math.max(1, Math.round(height));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return canvas;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      drawImageContain(ctx, img, { x: 0, y: 0, w: canvas.width, h: canvas.height, padding: 0 });
+      return canvas;
+    };
 
-      const createFitCanvasForAspect = (img, aspect, mode) => {
-        if (!aspect || !isFinite(aspect)) return img;
-        const maxDim = Math.max(img.width, img.height);
-        let width = maxDim;
-        let height = Math.round(maxDim / aspect);
-        if (aspect < 1) {
-          width = Math.round(maxDim * aspect);
-          height = maxDim;
-        }
-        const rect = { x: 0, y: 0, w: width, h: height, padding: 0 };
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, width);
-        canvas.height = Math.max(1, height);
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return img;
-        if (mode === 'contain') {
-          drawImageContain(ctx, img, rect);
+    const createFitCanvasForAspect = (img, aspect, mode) => {
+      if (!aspect || !isFinite(aspect)) return img;
+      const maxDim = Math.max(img.width, img.height);
+      let width = maxDim;
+      let height = Math.round(maxDim / aspect);
+      if (aspect < 1) {
+        width = Math.round(maxDim * aspect);
+        height = maxDim;
+      }
+      const rect = { x: 0, y: 0, w: width, h: height, padding: 0 };
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, width);
+      canvas.height = Math.max(1, height);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return img;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      if (mode === 'contain') {
+        drawImageContain(ctx, img, rect);
+      } else {
+        drawImageCover(ctx, img, rect);
+      }
+      return canvas;
+    };
+
+    const estimateQuadSize = (quad) => {
+      if (!quad || quad.length !== 4) {
+        return { width: 1, height: 1 };
+      }
+      const edge = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+      const width = (edge(quad[0], quad[1]) + edge(quad[3], quad[2])) / 2;
+      const height = (edge(quad[0], quad[3]) + edge(quad[1], quad[2])) / 2;
+      return { width: Math.max(1, width), height: Math.max(1, height) };
+    };
+
+    const getAffineTransform = (src, dst) => {
+      const [s0, s1, s2] = src;
+      const [d0, d1, d2] = dst;
+      const denom = (s0.x * (s1.y - s2.y) + s1.x * (s2.y - s0.y) + s2.x * (s0.y - s1.y));
+      if (Math.abs(denom) < 1e-6) return null;
+      const a = (d0.x * (s1.y - s2.y) + d1.x * (s2.y - s0.y) + d2.x * (s0.y - s1.y)) / denom;
+      const c = (d0.x * (s2.x - s1.x) + d1.x * (s0.x - s2.x) + d2.x * (s1.x - s0.x)) / denom;
+      const e = (d0.x * (s1.x * s2.y - s2.x * s1.y) + d1.x * (s2.x * s0.y - s0.x * s2.y) + d2.x * (s0.x * s1.y - s1.x * s0.y)) / denom;
+
+      const b = (d0.y * (s1.y - s2.y) + d1.y * (s2.y - s0.y) + d2.y * (s0.y - s1.y)) / denom;
+      const d = (d0.y * (s2.x - s1.x) + d1.y * (s0.x - s2.x) + d2.y * (s1.x - s0.x)) / denom;
+      const f = (d0.y * (s1.x * s2.y - s2.x * s1.y) + d1.y * (s2.x * s0.y - s0.x * s2.y) + d2.y * (s0.x * s1.y - s1.x * s0.y)) / denom;
+
+      return [a, b, c, d, e, f];
+    };
+
+    const drawTriangle = (ctx, img, src, dst) => {
+      const transform = getAffineTransform(src, dst);
+      if (!transform) return;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(dst[0].x, dst[0].y);
+      ctx.lineTo(dst[1].x, dst[1].y);
+      ctx.lineTo(dst[2].x, dst[2].y);
+      ctx.closePath();
+      ctx.clip();
+      ctx.setTransform(transform[0], transform[1], transform[2], transform[3], transform[4], transform[5]);
+      ctx.drawImage(img, 0, 0);
+      ctx.restore();
+    };
+
+    const drawImageToQuad = (ctx, img, quad) => {
+      const w = img.width;
+      const h = img.height;
+      const src = [
+        { x: 0, y: 0 },
+        { x: w, y: 0 },
+        { x: w, y: h },
+        { x: 0, y: h },
+      ];
+      drawTriangle(ctx, img, [src[0], src[1], src[2]], [quad[0], quad[1], quad[2]]);
+      drawTriangle(ctx, img, [src[0], src[2], src[3]], [quad[0], quad[2], quad[3]]);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+    };
+
+    const renderFastOutput = async (variant) => {
+      const preset = state.preset?.fast?.[variant];
+      if (!preset) throw new Error('Fast mode preset missing');
+      const canvas = document.createElement('canvas');
+      canvas.width = preset.output.w;
+      canvas.height = preset.output.h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('No canvas context');
+
+      if (!state.selectionSnapshot) {
+        throw new Error('Load a selection first.');
+      }
+
+      const selectionImg = state.selectionImage || await createImageFromSnapshot(state.selectionSnapshot);
+      state.selectionImage = selectionImg;
+
+      if (preset.shadowPng) {
+        const shadow = await loadImageAsset(preset.shadowPng);
+        ctx.drawImage(shadow, 0, 0, canvas.width, canvas.height);
+      }
+
+      const fitMode = state.selectionFit || 'cover';
+      const useContain = fitMode === 'contain' || fitMode === 'exact';
+      if (preset.screenRect) {
+        if (useContain) {
+          drawImageContain(ctx, selectionImg, preset.screenRect);
         } else {
-          drawImageCover(ctx, img, rect);
+          drawImageCover(ctx, selectionImg, preset.screenRect);
         }
-        return canvas;
+      }
+
+      if (preset.screenQuad) {
+        const quadSize = estimateQuadSize(preset.screenQuad);
+        const fitCanvas = useContain
+          ? createContainCanvas(selectionImg, quadSize.width, quadSize.height)
+          : createCoverCanvas(selectionImg, quadSize.width, quadSize.height);
+        drawImageToQuad(ctx, fitCanvas, preset.screenQuad);
+      }
+
+      if (preset.framePng) {
+        const frame = await loadImageAsset(preset.framePng);
+        ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+      }
+
+      const dataUrl = canvas.toDataURL('image/png');
+      return {
+        mime: 'image/png',
+        dataBase64: dataUrl.split(',')[1],
+        width: canvas.width,
+        height: canvas.height,
       };
+    };
 
-      const estimateQuadSize = (quad) => {
-        if (!quad || quad.length !== 4) {
-          return { width: 1, height: 1 };
-        }
-        const edge = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-        const width = (edge(quad[0], quad[1]) + edge(quad[3], quad[2])) / 2;
-        const height = (edge(quad[0], quad[3]) + edge(quad[1], quad[2])) / 2;
-        return { width: Math.max(1, width), height: Math.max(1, height) };
-      };
+    // Device preset aspects for smart fitting
+    const DEVICE_ASPECTS = {
+      'iphone-16': 852 / 393,
+      'iphone-16-pro': 874 / 402,
+      'iphone-16-pro-max': 956 / 440,
+      'iphone-16-plus': 932 / 430,
+      'iphone-14-15-pro-max': 932 / 430,
+      'iphone-14-15-pro': 852 / 393,
+      'iphone-13-14': 844 / 390,
+      'iphone-14-plus': 926 / 428,
+      'iphone16': 2.15, // Preset file aspect
+    };
 
-      const getAffineTransform = (src, dst) => {
-        const [s0, s1, s2] = src;
-        const [d0, d1, d2] = dst;
-        const denom = (s0.x * (s1.y - s2.y) + s1.x * (s2.y - s0.y) + s2.x * (s0.y - s1.y));
-        if (Math.abs(denom) < 1e-6) return null;
-        const a = (d0.x * (s1.y - s2.y) + d1.x * (s2.y - s0.y) + d2.x * (s0.y - s1.y)) / denom;
-        const c = (d0.x * (s2.x - s1.x) + d1.x * (s0.x - s2.x) + d2.x * (s1.x - s0.x)) / denom;
-        const e = (d0.x * (s1.x * s2.y - s2.x * s1.y) + d1.x * (s2.x * s0.y - s0.x * s2.y) + d2.x * (s0.x * s1.y - s1.x * s0.y)) / denom;
+    // Helper to check if aspect ratios match within epsilon
+    const aspectsMatch = (a, b, epsilon = 0.01) => Math.abs(a - b) < epsilon;
 
-        const b = (d0.y * (s1.y - s2.y) + d1.y * (s2.y - s0.y) + d2.y * (s0.y - s1.y)) / denom;
-        const d = (d0.y * (s2.x - s1.x) + d1.y * (s0.x - s2.x) + d2.y * (s1.x - s0.x)) / denom;
-        const f = (d0.y * (s1.x * s2.y - s2.x * s1.y) + d1.y * (s2.x * s0.y - s0.x * s2.y) + d2.y * (s0.x * s1.y - s1.x * s0.y)) / denom;
-
-        return [a, b, c, d, e, f];
-      };
-
-      const drawTriangle = (ctx, img, src, dst) => {
-        const transform = getAffineTransform(src, dst);
-        if (!transform) return;
-        ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(dst[0].x, dst[0].y);
-        ctx.lineTo(dst[1].x, dst[1].y);
-        ctx.lineTo(dst[2].x, dst[2].y);
-        ctx.closePath();
-        ctx.clip();
-        ctx.setTransform(transform[0], transform[1], transform[2], transform[3], transform[4], transform[5]);
-        ctx.drawImage(img, 0, 0);
-        ctx.restore();
-      };
-
-      const drawImageToQuad = (ctx, img, quad) => {
-        const w = img.width;
-        const h = img.height;
-        const src = [
-          { x: 0, y: 0 },
-          { x: w, y: 0 },
-          { x: w, y: h },
-          { x: 0, y: h },
-        ];
-        drawTriangle(ctx, img, [src[0], src[1], src[2]], [quad[0], quad[1], quad[2]]);
-        drawTriangle(ctx, img, [src[0], src[2], src[3]], [quad[0], quad[2], quad[3]]);
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-      };
-
-      const renderFastOutput = async (variant) => {
-        const preset = state.preset?.fast?.[variant];
-        if (!preset) throw new Error('Fast mode preset missing');
-        const canvas = document.createElement('canvas');
-        canvas.width = preset.output.w;
-        canvas.height = preset.output.h;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error('No canvas context');
-
-        if (!state.selectionSnapshot) {
-          throw new Error('Load a selection first.');
+    const loadSelection = async () => {
+      try {
+        const selection = await rpc.call('selection.get');
+        if (!selection.primaryId) {
+          selectionPreview.src = '';
+          selectionEmpty.style.display = 'block';
+          state.selectionSnapshot = null;
+          state.selectionImage = null;
+          state.selectionMeta = null;
+          state.selectionFit = 'cover';
+          state.deviceMatch = null;
+          return;
         }
 
-        const selectionImg = state.selectionImage || await createImageFromSnapshot(state.selectionSnapshot);
-        state.selectionImage = selectionImg;
+        const meta = selection.nodes?.find((node) => node.id === selection.primaryId) || null;
+        const isFrame = meta?.isFrame || meta?.type === 'frame';
+        const devicePresetId = meta?.devicePresetId;
+        const selectionSize = meta?.size || { width: 100, height: 100 };
+        const selectionAspect = selectionSize.height / selectionSize.width;
 
-        if (preset.shadowPng) {
-          const shadow = await loadImageAsset(preset.shadowPng);
-          ctx.drawImage(shadow, 0, 0, canvas.width, canvas.height);
-        }
+        // Store metadata
+        state.selectionMeta = meta ? {
+          type: meta.type,
+          size: meta.size,
+          devicePresetId,
+          isFrame
+        } : null;
 
-        const fitMode = state.selectionFit || 'cover';
-        const useContain = fitMode === 'contain' || fitMode === 'exact';
-        if (preset.screenRect) {
-          if (useContain) {
-            drawImageContain(ctx, selectionImg, preset.screenRect);
+        // Determine best fit mode based on device preset matching
+        const targetAspect = state.preset?.three?.screen?.expectedAspect ?? 2.15;
+        let fitMode = 'cover'; // Default for non-frames
+        let matchQuality = null;
+
+        if (isFrame) {
+          if (devicePresetId) {
+            // Frame has device preset - check if it matches the mockup device
+            const presetAspect = DEVICE_ASPECTS[devicePresetId];
+            if (presetAspect && aspectsMatch(presetAspect, targetAspect)) {
+              fitMode = 'exact';
+              matchQuality = 'perfect';
+            } else {
+              fitMode = 'contain'; // Different device, use contain to preserve design
+              matchQuality = 'compatible';
+            }
           } else {
-            drawImageCover(ctx, selectionImg, preset.screenRect);
+            // Frame without device preset - check if dimensions match
+            if (aspectsMatch(selectionAspect, targetAspect)) {
+              fitMode = 'exact';
+              matchQuality = 'aspect-match';
+            } else {
+              fitMode = 'contain';
+              matchQuality = 'frame';
+            }
           }
+        } else {
+          // Non-frame (image, group, etc.) - use cover for best visual
+          fitMode = 'cover';
+          matchQuality = 'non-frame';
         }
 
-        if (preset.screenQuad) {
-          const quadSize = estimateQuadSize(preset.screenQuad);
-          const fitCanvas = useContain
-            ? createContainCanvas(selectionImg, quadSize.width, quadSize.height)
-            : createCoverCanvas(selectionImg, quadSize.width, quadSize.height);
-          drawImageToQuad(ctx, fitCanvas, preset.screenQuad);
-        }
+        state.selectionFit = fitMode;
+        state.deviceMatch = matchQuality;
 
-        if (preset.framePng) {
-          const frame = await loadImageAsset(preset.framePng);
-          ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
-        }
+        // Use higher resolution snapshot for better 3D mockup quality
+        // Scale based on user selection in topbar (1x, 2x, 3x)
+        const exportScale = Number(scaleSelect.value || 2);
+        const snapshotScale = Math.max(exportScale, 3); // Minimum 3x for quality
 
-        const dataUrl = canvas.toDataURL('image/png');
-        return {
-          mime: 'image/png',
-          dataBase64: dataUrl.split(',')[1],
-          width: canvas.width,
-          height: canvas.height,
-        };
+        const snapshot = await rpc.call('export.snapshot', {
+          nodeId: selection.primaryId,
+          scale: snapshotScale,
+          format: 'png',
+          background: 'transparent',
+          includeFrameFill: true,
+          clipToBounds: isFrame,
+        });
+
+        state.selectionSnapshot = snapshot;
+        selectionPreview.src = `data:${snapshot.mime};base64,${snapshot.dataBase64}`;
+        selectionEmpty.style.display = 'none';
+        viewportOverlay.style.display = 'none';
+        state.output = null;
+
+        state.selectionImage = await createImageFromSnapshot(snapshot);
+        const texture = await createTextureFromSnapshot(snapshot, state.selectionFit);
+        state.selectionTexture = texture;
+        if (!state.screenMesh && state.model) {
+          state.screenMesh = findScreenMesh(state.model);
+        }
+        if (!state.screenMesh) {
+          setStatus('Screen mesh not detected. Try a different device model.');
+          return;
+        }
+        applyTextureToMesh(state.screenMesh, texture);
+
+        // Update status with match quality indicator
+        if (matchQuality === 'perfect') {
+          setStatus('✅ Perfect fit! Device frame matches mockup.');
+        } else if (matchQuality === 'aspect-match') {
+          setStatus('✅ Selection loaded. Aspect ratio matches.');
+        } else if (matchQuality === 'compatible') {
+          setStatus('Selection loaded. Using contain mode for different device.');
+        } else if (isFrame) {
+          setStatus('Selection loaded.');
+        } else {
+          setStatus('Selection loaded. Tip: use a Device Frame for best results.');
+        }
+      } catch (error) {
+        setStatus(error.message);
+      }
+    };
+
+    const generateOutput = async () => {
+      if (state.forceFastMode) {
+        return renderFastOutput(state.forceFastMode);
+      }
+      if (state.preset?.defaultMode === 'fast' || state.preset?.ui?.fastModeDefault) {
+        return renderFastOutput(getFallbackVariant());
+      }
+      if (!state.renderer) return null;
+
+      const scale = Number(scaleSelect.value || 1);
+      const viewWidth = viewport.clientWidth;
+      const viewHeight = viewport.clientHeight;
+
+      // Calculate high-quality export resolution
+      // Base resolution on viewport but with a minimum quality floor
+      const minDimension = 2048; // Minimum export dimension for quality
+      const aspectRatio = viewWidth / viewHeight;
+
+      let exportWidth, exportHeight;
+      if (aspectRatio >= 1) {
+        // Landscape or square
+        exportWidth = Math.max(viewWidth * scale, minDimension * scale);
+        exportHeight = Math.round(exportWidth / aspectRatio);
+      } else {
+        // Portrait
+        exportHeight = Math.max(viewHeight * scale, minDimension * scale);
+        exportWidth = Math.round(exportHeight * aspectRatio);
+      }
+
+      // Cap at reasonable max to prevent memory issues (4K max per dimension)
+      const maxDimension = 4096;
+      if (exportWidth > maxDimension || exportHeight > maxDimension) {
+        const ratio = maxDimension / Math.max(exportWidth, exportHeight);
+        exportWidth = Math.round(exportWidth * ratio);
+        exportHeight = Math.round(exportHeight * ratio);
+      }
+
+      // Temporarily disable pixel ratio for export (we're already scaling)
+      const originalPixelRatio = state.renderer.getPixelRatio();
+      state.renderer.setPixelRatio(1);
+
+      state.renderer.setSize(exportWidth, exportHeight, false);
+      state.camera.aspect = exportWidth / exportHeight;
+      state.camera.updateProjectionMatrix();
+      render();
+
+      const dataUrl = state.renderer.domElement.toDataURL('image/png');
+
+      // Restore original settings
+      state.renderer.setPixelRatio(originalPixelRatio);
+      state.renderer.setSize(viewWidth, viewHeight, false);
+      state.camera.aspect = viewWidth / viewHeight;
+      state.camera.updateProjectionMatrix();
+      render();
+
+      return {
+        mime: 'image/png',
+        dataBase64: dataUrl.split(',')[1],
+        width: exportWidth,
+        height: exportHeight,
       };
+    };
 
-      const loadSelection = async () => {
-        try {
-          const selection = await rpc.call('selection.get');
-          if (!selection.primaryId) {
-            selectionPreview.src = '';
-            selectionEmpty.style.display = 'block';
-            state.selectionSnapshot = null;
-            state.selectionImage = null;
-            state.selectionMeta = null;
-            state.selectionFit = 'cover';
-            return;
-          }
+    const handleGenerate = async () => {
+      if (!state.selectionSnapshot) {
+        setStatus('Load a selection first.');
+        return;
+      }
+      const output = await generateOutput();
+      if (!output) {
+        setStatus('Failed to generate output.');
+        return;
+      }
+      state.output = output;
+      setStatus('Mockup generated.');
+    };
 
-          const meta = selection.nodes?.find((node) => node.id === selection.primaryId) || null;
-          const isFrame = meta?.type === 'frame';
-          state.selectionMeta = meta ? { type: meta.type, size: meta.size } : null;
-          state.selectionFit = isFrame ? 'exact' : 'contain';
-
-          const snapshot = await rpc.call('export.snapshot', {
-            nodeId: selection.primaryId,
-            scale: 2,
-            format: 'png',
-            background: 'transparent',
-            includeFrameFill: true,
-            clipToBounds: isFrame,
-          });
-
-          state.selectionSnapshot = snapshot;
-          selectionPreview.src = `data:${snapshot.mime};base64,${snapshot.dataBase64}`;
-          selectionEmpty.style.display = 'none';
-          viewportOverlay.style.display = 'none';
-          state.output = null;
-
-          state.selectionImage = await createImageFromSnapshot(snapshot);
-          const texture = await createTextureFromSnapshot(snapshot, state.selectionFit);
-          state.selectionTexture = texture;
-          if (!state.screenMesh && state.model) {
-            state.screenMesh = findScreenMesh(state.model);
-          }
-          if (!state.screenMesh) {
-            setStatus('Screen mesh not detected. Try a different device model.');
-            return;
-          }
-          applyTextureToMesh(state.screenMesh, texture);
-          if (state.selectionMeta?.type !== 'frame') {
-            setStatus('Selection loaded. Tip: for best results, wrap your design in a Frame preset.');
-          } else {
-            setStatus('Selection loaded.');
-          }
-        } catch (error) {
-          setStatus(error.message);
-        }
-      };
-
-      const generateOutput = async () => {
-        if (state.forceFastMode) {
-          return renderFastOutput(state.forceFastMode);
-        }
-        if (state.preset?.defaultMode === 'fast' || state.preset?.ui?.fastModeDefault) {
-          return renderFastOutput(getFallbackVariant());
-        }
-        if (!state.renderer) return null;
-        const scale = Number(scaleSelect.value || 1);
-        const width = viewport.clientWidth;
-        const height = viewport.clientHeight;
-
-        state.renderer.setSize(width * scale, height * scale, false);
-        state.camera.aspect = (width * scale) / (height * scale);
-        state.camera.updateProjectionMatrix();
-        render();
-
-        const dataUrl = state.renderer.domElement.toDataURL('image/png');
-
-        state.renderer.setSize(width, height, false);
-        state.camera.aspect = width / height;
-        state.camera.updateProjectionMatrix();
-        render();
-
-        return {
-          mime: 'image/png',
-          dataBase64: dataUrl.split(',')[1],
-          width: width * scale,
-          height: height * scale,
-        };
-      };
-
-      const handleGenerate = async () => {
+    const handleInsert = async () => {
+      if (!state.output) {
         if (!state.selectionSnapshot) {
           setStatus('Load a selection first.');
           return;
         }
-        const output = await generateOutput();
-        if (!output) {
+        state.output = await generateOutput();
+        if (!state.output) {
           setStatus('Failed to generate output.');
           return;
         }
-        state.output = output;
-        setStatus('Mockup generated.');
-      };
-
-      const handleInsert = async () => {
-        if (!state.output) {
-          if (!state.selectionSnapshot) {
-            setStatus('Load a selection first.');
-            return;
-          }
-          state.output = await generateOutput();
-          if (!state.output) {
-            setStatus('Failed to generate output.');
-            return;
-          }
-        }
-        try {
-          await rpc.call('document.insertImage', {
-            dataBase64: state.output.dataBase64,
-            mime: state.output.mime,
-            width: state.output.width,
-            height: state.output.height,
-            name: 'MockRocket Mockup',
-          });
-          setStatus('Inserted into canvas.');
-        } catch (error) {
-          setStatus(error.message);
-        }
-      };
-
-      const handleDownload = async () => {
-        if (!state.output) {
-          if (!state.selectionSnapshot) {
-            setStatus('Load a selection first.');
-            return;
-          }
-          state.output = await generateOutput();
-          if (!state.output) {
-            setStatus('Failed to generate output.');
-            return;
-          }
-        }
-        try {
-          await rpc.call('fs.saveFile', {
-            suggestedName: 'mockrocket-mockup.png',
-            mime: state.output.mime,
-            dataBase64: state.output.dataBase64,
-          });
-          setStatus('Saved file.');
-        } catch (error) {
-          setStatus(error.message);
-        }
-      };
-
-      const handlePointerDown = (event) => {
-        state.dragging = true;
-        state.lastX = event.clientX;
-        state.lastY = event.clientY;
-        glCanvas.classList.add('dragging');
-      };
-
-      const handlePointerMove = (event) => {
-        if (!state.dragging) return;
-        const dx = event.clientX - state.lastX;
-        const dy = event.clientY - state.lastY;
-        state.lastX = event.clientX;
-        state.lastY = event.clientY;
-        state.rotationY += dx * 0.005;
-        state.rotationX += dy * 0.005;
-        state.rotationX = Math.max(-1.2, Math.min(0.2, state.rotationX));
-      };
-
-      const handlePointerUp = () => {
-        state.dragging = false;
-        glCanvas.classList.remove('dragging');
-      };
-
-      document.querySelectorAll('.icon-btn').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          const mode = btn.dataset.rot;
-          if (mode === 'front') {
-            state.rotationX = 0;
-            state.rotationY = 0;
-          }
-          if (mode === 'flat') {
-            state.rotationX = -1.1;
-            state.rotationY = 0;
-          }
-          if (mode === 'tilt') {
-            state.rotationX = -0.4;
-            state.rotationY = -0.5;
-          }
-          if (mode === 'perspective') {
-            state.rotationX = -0.6;
-            state.rotationY = 0.7;
-          }
-          render();
+      }
+      try {
+        await rpc.call('document.insertImage', {
+          dataBase64: state.output.dataBase64,
+          mime: state.output.mime,
+          width: state.output.width,
+          height: state.output.height,
+          name: 'MockRocket Mockup',
         });
+        setStatus('Inserted into canvas.');
+      } catch (error) {
+        setStatus(error.message);
+      }
+    };
+
+    const handleDownload = async () => {
+      if (!state.output) {
+        if (!state.selectionSnapshot) {
+          setStatus('Load a selection first.');
+          return;
+        }
+        state.output = await generateOutput();
+        if (!state.output) {
+          setStatus('Failed to generate output.');
+          return;
+        }
+      }
+      try {
+        await rpc.call('fs.saveFile', {
+          suggestedName: 'mockrocket-mockup.png',
+          mime: state.output.mime,
+          dataBase64: state.output.dataBase64,
+        });
+        setStatus('Saved file.');
+      } catch (error) {
+        setStatus(error.message);
+      }
+    };
+
+    const handlePointerDown = (event) => {
+      state.dragging = true;
+      state.lastX = event.clientX;
+      state.lastY = event.clientY;
+      glCanvas.classList.add('dragging');
+    };
+
+    const handlePointerMove = (event) => {
+      if (!state.dragging) return;
+      const dx = event.clientX - state.lastX;
+      const dy = event.clientY - state.lastY;
+      state.lastX = event.clientX;
+      state.lastY = event.clientY;
+      state.rotationY += dx * 0.005;
+      state.rotationX += dy * 0.005;
+      state.rotationX = Math.max(-1.2, Math.min(0.2, state.rotationX));
+    };
+
+    const handlePointerUp = () => {
+      state.dragging = false;
+      glCanvas.classList.remove('dragging');
+    };
+
+    document.querySelectorAll('.icon-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.rot;
+        if (mode === 'front') {
+          state.rotationX = 0;
+          state.rotationY = 0;
+        }
+        if (mode === 'flat') {
+          state.rotationX = -1.1;
+          state.rotationY = 0;
+        }
+        if (mode === 'tilt') {
+          state.rotationX = -0.4;
+          state.rotationY = -0.5;
+        }
+        if (mode === 'perspective') {
+          state.rotationX = -0.6;
+          state.rotationY = 0.7;
+        }
+        render();
+      });
+    });
+
+    // Fit mode button handlers
+    const fitIndicator = document.getElementById('fitIndicator');
+    const fitButtons = document.querySelectorAll('.fit-btn');
+
+    const updateFitModeUI = () => {
+      fitButtons.forEach((btn) => {
+        const mode = btn.dataset.fit;
+        if (mode === state.selectionFit) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
       });
 
-      document.getElementById('loadSelection').addEventListener('click', loadSelection);
-      document.getElementById('refreshSelection').addEventListener('click', loadSelection);
-      document.getElementById('download').addEventListener('click', handleDownload);
-      document.getElementById('insert').addEventListener('click', handleInsert);
-
-      glCanvas.addEventListener('pointerdown', handlePointerDown);
-      window.addEventListener('pointermove', handlePointerMove);
-      window.addEventListener('pointerup', handlePointerUp);
-
-      const init = async () => {
-        setupScene();
-        try {
-          await loadPreset();
-        } catch (error) {
-          console.error('Failed to load preset', error);
-          setStatus('Failed to load preset. Using defaults.');
+      // Update fit indicator
+      if (state.deviceMatch) {
+        fitIndicator.style.display = 'block';
+        if (state.deviceMatch === 'perfect') {
+          fitIndicator.className = 'fit-indicator-perfect';
+          fitIndicator.textContent = '✅ Perfect fit';
+        } else if (state.deviceMatch === 'aspect-match') {
+          fitIndicator.className = 'fit-indicator-good';
+          fitIndicator.textContent = '✓ Aspect ratio matches';
+        } else if (state.deviceMatch === 'compatible') {
+          fitIndicator.className = 'fit-indicator-info';
+          fitIndicator.textContent = 'Different device';
+        } else if (state.deviceMatch === 'frame') {
+          fitIndicator.className = 'fit-indicator-info';
+          fitIndicator.textContent = 'Frame selected';
+        } else {
+          fitIndicator.style.display = 'none';
         }
-        await loadModel();
-        updateCamera();
-        animate();
-      };
+      } else {
+        fitIndicator.style.display = 'none';
+      }
+    };
 
-      init();
+    const applyFitMode = async (mode) => {
+      state.selectionFit = mode;
+      updateFitModeUI();
 
-      window.addEventListener('resize', updateCamera);
-    </script>
-  </body>
+      // Re-apply texture with new fit mode if we have a selection
+      if (state.selectionSnapshot && state.screenMesh) {
+        try {
+          state.selectionImage = state.selectionImage || await createImageFromSnapshot(state.selectionSnapshot);
+          const texture = await createTextureFromSnapshot(state.selectionSnapshot, mode);
+          state.selectionTexture = texture;
+          applyTextureToMesh(state.screenMesh, texture);
+          state.output = null; // Invalidate cached output
+          setStatus(`Fit mode: ${mode}`);
+        } catch (error) {
+          setStatus(error.message);
+        }
+      }
+    };
+
+    fitButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.fit;
+        applyFitMode(mode);
+      });
+    });
+
+    document.getElementById('loadSelection').addEventListener('click', async () => {
+      await loadSelection();
+      updateFitModeUI();
+    });
+    document.getElementById('refreshSelection').addEventListener('click', async () => {
+      await loadSelection();
+      updateFitModeUI();
+    });
+    document.getElementById('download').addEventListener('click', handleDownload);
+    document.getElementById('insert').addEventListener('click', handleInsert);
+
+    glCanvas.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    const init = async () => {
+      setupScene();
+      try {
+        await loadPreset();
+      } catch (error) {
+        console.error('Failed to load preset', error);
+        setStatus('Failed to load preset. Using defaults.');
+      }
+      await loadModel();
+      updateCamera();
+      animate();
+    };
+
+    init();
+
+    window.addEventListener('resize', updateCamera);
+  </script>
+</body>
+
 </html>

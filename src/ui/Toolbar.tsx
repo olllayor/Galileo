@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Cursor, Square, TextAlignLeft, Hand, ArrowCounterClockwise, ArrowClockwise, Minus, Plus } from 'akar-icons';
 import { colors, spacing, typography, radii, transitions, panels } from './design-system';
+import { DeviceFramePicker } from './DeviceFramePicker';
+import type { DevicePreset } from '../core/framePresets';
 
 export type Tool = 'select' | 'hand' | 'rectangle' | 'text';
 
@@ -23,6 +25,7 @@ interface ToolbarProps {
 	onZoom100?: () => void;
 	fileName?: string;
 	isDirty?: boolean;
+	onCreateDeviceFrame?: (preset: DevicePreset) => void;
 }
 
 interface MenuItemConfig {
@@ -215,6 +218,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 	onZoom100,
 	fileName = 'Untitled',
 	isDirty = false,
+	onCreateDeviceFrame,
 }) => {
 	const [openMenu, setOpenMenu] = useState<string | null>(null);
 
@@ -332,6 +336,19 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 					/>
 				))}
 			</div>
+
+			{/* Divider */}
+			<div
+				style={{
+					width: '1px',
+					height: '20px',
+					backgroundColor: colors.border.default,
+					margin: `0 ${spacing.xs}`,
+				}}
+			/>
+
+			{/* Device Frame Picker */}
+			{onCreateDeviceFrame && <DeviceFramePicker onSelectDevice={onCreateDeviceFrame} />}
 
 			{/* Spacer */}
 			<div style={{ flex: 1 }} />
