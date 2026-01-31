@@ -607,7 +607,7 @@ export const App: React.FC = () => {
 	const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
 	const canvasSize = { width: 1280, height: 800 };
-	const isDev = import.meta.env.DEV;
+	const isDev = import.meta.env?.DEV ?? false;
 
 	const displayDocument = previewDocument ?? document;
 	const selectedNode = selectedIds.length === 1 ? displayDocument.nodes[selectedIds[0]] : null;
@@ -1715,7 +1715,7 @@ export const App: React.FC = () => {
 						try {
 							if (crypto?.subtle) {
 								const bytesArray = base64ToUint8Array(dataBase64);
-								const digest = await crypto.subtle.digest('SHA-256', bytesArray);
+								const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(bytesArray));
 								sha256 = Array.from(new Uint8Array(digest))
 									.map((byte) => byte.toString(16).padStart(2, '0'))
 									.join('');
@@ -1764,7 +1764,7 @@ export const App: React.FC = () => {
 
 			void (async () => {
 				const response = await handlePluginRpcRequest(event.data, activePlugin);
-				event.source?.postMessage(response, '*');
+				event.source?.postMessage(response, { targetOrigin: '*' });
 			})();
 		};
 
@@ -2972,34 +2972,34 @@ export const App: React.FC = () => {
 
 	return (
 		<div
-			style={{
-				display: 'flex',
-				flexDirection: 'column',
-				height: '100vh',
-				overflow: 'hidden',
-				fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif',
-			}}
-		>
-			<div
-				style={{
-					height: '48px',
+			style={
+				{
 					display: 'flex',
-					alignItems: 'center',
-					padding: '0 16px',
-					backgroundColor: '#2d2d2d',
-					color: 'white',
-					borderBottom: '1px solid #444',
-				}}
-			>
-				<div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-					<h1 style={{ margin: 0, fontSize: '16px', fontWeight: '600' }}>Galileo</h1>
-					<span style={{ fontSize: '11px', color: '#bbb' }}>
-						{fileName}
-						{isDirty ? ' *' : ''}
-					</span>
-				</div>
-				<span style={{ marginLeft: 'auto', fontSize: '12px', color: '#888' }}>v0.1.0</span>
-			</div>
+					flexDirection: 'column',
+					height: '100vh',
+					overflow: 'hidden',
+					fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif',
+					backgroundColor: '#1c1c1e', // macOS dark mode background
+					WebkitFontSmoothing: 'antialiased',
+					MozOsxFontSmoothing: 'grayscale',
+				} as React.CSSProperties
+			}
+		>
+			{/* Drag region for macOS window controls */}
+			<div
+				data-tauri-drag-region
+				style={
+					{
+						height: '28px',
+						width: '100%',
+						position: 'absolute',
+						top: 0,
+						left: 0,
+						zIndex: 1000,
+						WebkitAppRegion: 'drag',
+					} as React.CSSProperties
+				}
+			/>
 
 			<div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 				<LayersPanel
@@ -3019,7 +3019,7 @@ export const App: React.FC = () => {
 				<div
 					ref={canvasWrapperRef}
 					style={{ flex: 1, overflow: 'hidden', position: 'relative' }}
-					onContextMenu={handleCanvasContextMenu}
+					onContextMenu={(e) => handleCanvasContextMenu(e as unknown as React.MouseEvent<HTMLCanvasElement>)}
 				>
 					<Canvas
 						width={canvasSize.width}
@@ -3045,7 +3045,7 @@ export const App: React.FC = () => {
 						onContextMenu={handleCanvasContextMenu}
 					/>
 
-					<ActionBar activeTool={activeTool} onToolChange={handleToolChange} />
+					<ActionBar activeTool={activeTool} onToolChange={handleToolChange} onImport={handleImportImage} />
 				</div>
 
 				<PropertiesPanel

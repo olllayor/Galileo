@@ -1,7 +1,7 @@
-use std::fs;
-use serde::{Deserialize, Serialize};
-use tauri::{Manager, path::BaseDirectory};
 use base64::{engine::general_purpose, Engine as _};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use tauri::{path::BaseDirectory, Manager};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -71,7 +71,10 @@ fn show_open_folder() -> Result<Option<String>, String> {
 #[tauri::command]
 fn show_import_dialog() -> Result<Option<String>, String> {
     let dialog = rfd::FileDialog::new()
-        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "icns"])
+        .add_filter(
+            "Images",
+            &["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "icns"],
+        )
         .set_title("Import Image")
         .pick_file();
 
@@ -134,10 +137,10 @@ fn main() {
             show_save_image_dialog,
             save_binary,
         ])
-        .setup(|app| {
+        .setup(|_app| {
             #[cfg(debug_assertions)]
             {
-                let window = app.get_webview_window("main").unwrap();
+                let window = _app.get_webview_window("main").unwrap();
                 window.open_devtools();
             }
 

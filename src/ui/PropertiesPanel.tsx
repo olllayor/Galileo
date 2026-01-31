@@ -12,6 +12,7 @@ import {
 } from 'akar-icons';
 import type { Document, Layout, Node } from '../core/doc/types';
 import { findParentNode } from '../core/doc';
+import { colors, spacing, typography, radii, transitions, panels, vibrancy } from './design-system';
 
 interface PropertiesPanelProps {
 	selectedNode: Node | null;
@@ -55,14 +56,14 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 		return (
 			<div
 				style={{
-					width: '48px',
-					borderLeft: '1px solid #ddd',
-					backgroundColor: '#f5f5f5',
+					width: `${panels.right.collapsedWidth}px`,
+					borderLeft: `1px solid ${colors.border.subtle}`,
+					...vibrancy.panel,
 					display: 'flex',
 					flexDirection: 'column',
 					alignItems: 'center',
-					paddingTop: '8px',
-					transition: 'width 0.2s ease',
+					paddingTop: '36px', // Account for window controls
+					transition: `width ${transitions.normal}`,
 				}}
 			>
 				<button
@@ -70,55 +71,57 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					onClick={onToggleCollapsed}
 					title="Expand Properties"
 					style={{
-						width: '32px',
-						height: '32px',
+						width: '28px',
+						height: '28px',
 						display: 'flex',
 						alignItems: 'center',
 						justifyContent: 'center',
 						backgroundColor: 'transparent',
 						border: 'none',
-						borderRadius: '6px',
+						borderRadius: radii.md,
 						cursor: 'pointer',
-						color: '#666',
+						color: colors.text.secondary,
 						fontSize: '14px',
 					}}
 				>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-						<path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4" />
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+						<path d="M15 18l-6-6 6-6" />
 					</svg>
 				</button>
 				<div
 					style={{
-						marginTop: '8px',
-						width: '32px',
-						height: '32px',
+						marginTop: spacing.sm,
+						width: '28px',
+						height: '28px',
 						display: 'flex',
 						alignItems: 'center',
 						justifyContent: 'center',
-						backgroundColor: '#e0e0e0',
-						borderRadius: '6px',
-						fontSize: '11px',
-						fontWeight: 600,
-						color: '#666',
+						backgroundColor: colors.bg.active,
+						borderRadius: radii.md,
+						fontSize: typography.fontSize.xs,
+						fontWeight: typography.fontWeight.semibold,
+						color: colors.text.secondary,
 					}}
 					title="Properties"
 				>
-					P
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+						<path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7" />
+					</svg>
 				</div>
 				{selectedNode && (
 					<div
 						style={{
-							marginTop: '8px',
+							marginTop: spacing.sm,
 							width: '24px',
 							height: '24px',
 							display: 'flex',
 							alignItems: 'center',
 							justifyContent: 'center',
-							backgroundColor: '#4a9eff',
-							borderRadius: '4px',
-							fontSize: '9px',
-							fontWeight: 600,
-							color: 'white',
+							backgroundColor: colors.accent.primary,
+							borderRadius: radii.md,
+							fontSize: typography.fontSize.xs,
+							fontWeight: typography.fontWeight.semibold,
+							color: colors.text.primary,
 						}}
 						title={selectedNode.type}
 					>
@@ -133,12 +136,13 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 		return (
 			<div
 				style={{
-					width: '280px',
-					padding: '16px',
-					backgroundColor: '#f5f5f5',
-					borderLeft: '1px solid #ddd',
+					width: `${panels.right.width}px`,
+					padding: spacing.md,
+					paddingTop: '36px', // Account for macOS window controls
+					...vibrancy.panel,
+					borderLeft: `1px solid ${colors.border.subtle}`,
 					overflowY: 'auto',
-					transition: 'width 0.2s ease',
+					transition: `width ${transitions.normal}`,
 				}}
 			>
 				<div
@@ -146,14 +150,24 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						display: 'flex',
 						alignItems: 'center',
 						justifyContent: 'space-between',
-						marginBottom: '16px',
+						marginBottom: spacing.lg,
 					}}
 				>
-					<span style={{ fontSize: '12px', fontWeight: 600, color: '#444' }}>Properties</span>
+					<span
+						style={{
+							fontSize: typography.fontSize.sm,
+							fontWeight: typography.fontWeight.medium,
+							color: colors.text.tertiary,
+							textTransform: 'uppercase',
+							letterSpacing: '0.5px',
+						}}
+					>
+						Design
+					</span>
 					<button
 						type="button"
 						onClick={onToggleCollapsed}
-						title="Minimize Properties"
+						title="Collapse panel"
 						style={{
 							width: '20px',
 							height: '20px',
@@ -162,9 +176,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 							justifyContent: 'center',
 							backgroundColor: 'transparent',
 							border: 'none',
-							borderRadius: '4px',
+							borderRadius: radii.sm,
 							cursor: 'pointer',
-							color: '#888',
+							color: colors.text.tertiary,
 							fontSize: '12px',
 						}}
 					>
@@ -173,8 +187,15 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						</svg>
 					</button>
 				</div>
-				<p style={{ color: '#888', fontSize: '14px', textAlign: 'center', marginTop: '80px' }}>
-					Select an element to view its properties
+				<p
+					style={{
+						color: colors.text.tertiary,
+						fontSize: typography.fontSize.md,
+						textAlign: 'center',
+						marginTop: '80px',
+					}}
+				>
+					Select a layer to see its properties
 				</p>
 			</div>
 		);
@@ -280,12 +301,13 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	return (
 		<div
 			style={{
-				width: '280px',
-				padding: '16px',
-				backgroundColor: '#f5f5f5',
-				borderLeft: '1px solid #ddd',
+				width: `${panels.right.width}px`,
+				padding: spacing.md,
+				paddingTop: '36px', // Account for macOS window controls
+				...vibrancy.panel,
+				borderLeft: `1px solid ${colors.border.subtle}`,
 				overflowY: 'auto',
-				transition: 'width 0.2s ease',
+				transition: `width ${transitions.normal}`,
 			}}
 		>
 			<div
@@ -293,17 +315,35 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					display: 'flex',
 					alignItems: 'center',
 					justifyContent: 'space-between',
-					marginBottom: '16px',
+					marginBottom: spacing.lg,
 				}}
 			>
 				<div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px' }}>
-					<span style={{ fontSize: '12px', fontWeight: 600, color: '#444' }}>Properties</span>
-					<span style={{ fontSize: '11px', color: '#888', fontFamily: 'monospace' }}>{Math.round(zoom * 100)}%</span>
+					<span
+						style={{
+							fontSize: typography.fontSize.sm,
+							fontWeight: typography.fontWeight.medium,
+							color: colors.text.tertiary,
+							textTransform: 'uppercase',
+							letterSpacing: '0.5px',
+						}}
+					>
+						Design
+					</span>
+					<span
+						style={{
+							fontSize: typography.fontSize.xs,
+							color: colors.text.tertiary,
+							fontFamily: typography.fontFamily.mono,
+						}}
+					>
+						{Math.round(zoom * 100)}%
+					</span>
 				</div>
 				<button
 					type="button"
 					onClick={onToggleCollapsed}
-					title="Minimize Properties"
+					title="Collapse panel"
 					style={{
 						width: '20px',
 						height: '20px',
@@ -312,9 +352,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						justifyContent: 'center',
 						backgroundColor: 'transparent',
 						border: 'none',
-						borderRadius: '4px',
+						borderRadius: radii.sm,
 						cursor: 'pointer',
-						color: '#888',
+						color: colors.text.tertiary,
 						fontSize: '12px',
 					}}
 				>
@@ -324,16 +364,25 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 				</button>
 			</div>
 
-			<div style={{ marginBottom: '16px' }}>
-				<h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#444' }}>Alignment</h4>
-				<div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+			<div style={{ marginBottom: spacing.lg }}>
+				<h4
+					style={{
+						margin: `0 0 ${spacing.sm} 0`,
+						fontSize: typography.fontSize.sm,
+						color: colors.text.secondary,
+						fontWeight: typography.fontWeight.medium,
+					}}
+				>
+					Alignment
+				</h4>
+				<div style={{ display: 'flex', gap: spacing.sm, marginBottom: spacing.lg }}>
 					<div
 						style={{
 							display: 'flex',
 							gap: '1px',
-							backgroundColor: '#ddd',
+							backgroundColor: colors.border.subtle,
 							padding: '1px',
-							borderRadius: '4px',
+							borderRadius: radii.md,
 							flex: 1,
 						}}
 					>
@@ -349,19 +398,20 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									display: 'flex',
 									alignItems: 'center',
 									justifyContent: 'center',
-									padding: '6px',
-									backgroundColor: '#ffffff',
+									padding: spacing.xs,
+									backgroundColor: colors.bg.tertiary,
 									border: 'none',
-									borderRadius: '3px',
-									fontSize: '11px',
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.sm,
 									cursor: parentNode ? 'pointer' : 'not-allowed',
-									opacity: parentNode ? 1 : 0.6,
-									height: '28px',
+									opacity: parentNode ? 1 : 0.4,
+									height: '26px',
+									color: colors.text.secondary,
 								}}
 							>
-								{alignment === 'start' && <AlignLeft size={16} />}
-								{alignment === 'center' && <AlignHorizontalCenter size={16} />}
-								{alignment === 'end' && <AlignRight size={16} />}
+								{alignment === 'start' && <AlignLeft size={14} />}
+								{alignment === 'center' && <AlignHorizontalCenter size={14} />}
+								{alignment === 'end' && <AlignRight size={14} />}
 							</button>
 						))}
 					</div>
@@ -370,9 +420,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						style={{
 							display: 'flex',
 							gap: '1px',
-							backgroundColor: '#ddd',
+							backgroundColor: colors.border.subtle,
 							padding: '1px',
-							borderRadius: '4px',
+							borderRadius: radii.md,
 							flex: 1,
 						}}
 					>
@@ -388,69 +438,101 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									display: 'flex',
 									alignItems: 'center',
 									justifyContent: 'center',
-									padding: '6px',
-									backgroundColor: '#ffffff',
+									padding: spacing.xs,
+									backgroundColor: colors.bg.tertiary,
 									border: 'none',
-									borderRadius: '3px',
-									fontSize: '11px',
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.sm,
 									cursor: parentNode ? 'pointer' : 'not-allowed',
-									opacity: parentNode ? 1 : 0.6,
-									height: '28px',
+									opacity: parentNode ? 1 : 0.4,
+									height: '26px',
+									color: colors.text.secondary,
 								}}
 							>
-								{alignment === 'start' && <AlignTop size={16} />}
-								{alignment === 'center' && <AlignVerticalCenter size={16} />}
-								{alignment === 'end' && <AlignBottom size={16} />}
+								{alignment === 'start' && <AlignTop size={14} />}
+								{alignment === 'center' && <AlignVerticalCenter size={14} />}
+								{alignment === 'end' && <AlignBottom size={14} />}
 							</button>
 						))}
 					</div>
 				</div>
 
-				<h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#444' }}>Transform</h4>
-				<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+				<h4
+					style={{
+						margin: `0 0 ${spacing.sm} 0`,
+						fontSize: typography.fontSize.sm,
+						color: colors.text.secondary,
+						fontWeight: typography.fontWeight.medium,
+					}}
+				>
+					Transform
+				</h4>
+				<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
 					<div>
-						<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>X</label>
+						<label
+							style={{
+								display: 'block',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								marginBottom: '4px',
+							}}
+						>
+							X
+						</label>
 						<input
 							type="number"
 							value={safeRound(selectedNode.position.x)}
 							onChange={(e) => handleNestedInputChange('position', 'x', Number(e.target.value))}
 							style={{
 								width: '100%',
-								padding: '6px',
-								border: '1px solid #ddd',
-								borderRadius: '4px',
-								fontSize: '12px',
+								padding: spacing.xs,
+								border: `1px solid ${colors.border.default}`,
+								borderRadius: radii.sm,
+								fontSize: typography.fontSize.md,
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.primary,
 							}}
 						/>
 					</div>
 					<div>
-						<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>Y</label>
+						<label
+							style={{
+								display: 'block',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								marginBottom: '4px',
+							}}
+						>
+							Y
+						</label>
 						<input
 							type="number"
 							value={safeRound(selectedNode.position.y)}
 							onChange={(e) => handleNestedInputChange('position', 'y', Number(e.target.value))}
 							style={{
 								width: '100%',
-								padding: '6px',
-								border: '1px solid #ddd',
-								borderRadius: '4px',
-								fontSize: '12px',
+								padding: spacing.xs,
+								border: `1px solid ${colors.border.default}`,
+								borderRadius: radii.sm,
+								fontSize: typography.fontSize.md,
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.primary,
 							}}
 						/>
 					</div>
 				</div>
-				<div style={{ marginBottom: '8px' }}>
+				<div style={{ marginBottom: spacing.sm }}>
 					<label
 						style={{
 							display: 'flex',
 							alignItems: 'center',
 							gap: '4px',
-							fontSize: '11px',
-							color: '#666',
+							fontSize: typography.fontSize.xs,
+							color: colors.text.tertiary,
 							marginBottom: '4px',
 						}}
 					>
-						<ArrowClockwise size={12} /> Rotation (deg)
+						<ArrowClockwise size={12} /> Rotation
 					</label>
 					<input
 						type="number"
@@ -458,38 +540,60 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						onChange={(e) => handleInputChange('rotation', Number(e.target.value))}
 						style={{
 							width: '100%',
-							padding: '6px',
-							border: '1px solid #ddd',
-							borderRadius: '4px',
-							fontSize: '12px',
+							padding: spacing.xs,
+							border: `1px solid ${colors.border.default}`,
+							borderRadius: radii.sm,
+							fontSize: typography.fontSize.md,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.primary,
 						}}
 					/>
 				</div>
 			</div>
 
-			<div style={{ marginBottom: '16px' }}>
-				<h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#444' }}>Layout</h4>
+			<div style={{ marginBottom: spacing.lg }}>
+				<h4
+					style={{
+						margin: `0 0 ${spacing.sm} 0`,
+						fontSize: typography.fontSize.sm,
+						color: colors.text.secondary,
+						fontWeight: typography.fontWeight.medium,
+					}}
+				>
+					Layout
+				</h4>
 				<div
 					style={{
 						display: 'grid',
 						gridTemplateColumns: '1fr auto 1fr',
-						gap: '8px',
-						marginBottom: '8px',
+						gap: spacing.sm,
+						marginBottom: spacing.sm,
 						alignItems: 'end',
 					}}
 				>
 					<div>
-						<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>W</label>
+						<label
+							style={{
+								display: 'block',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								marginBottom: '4px',
+							}}
+						>
+							W
+						</label>
 						<input
 							type="number"
 							value={safeRound(selectedNode.size.width, 100)}
 							onChange={(e) => handleNestedInputChange('size', 'width', Number(e.target.value))}
 							style={{
 								width: '100%',
-								padding: '6px',
-								border: '1px solid #ddd',
-								borderRadius: '4px',
-								fontSize: '12px',
+								padding: spacing.xs,
+								border: `1px solid ${colors.border.default}`,
+								borderRadius: radii.sm,
+								fontSize: typography.fontSize.md,
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.primary,
 							}}
 						/>
 					</div>
@@ -499,56 +603,87 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 							onClick={() => handleInputChange('aspectRatioLocked', !selectedNode.aspectRatioLocked)}
 							title={selectedNode.aspectRatioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
 							style={{
-								padding: '6px 8px',
-								backgroundColor: selectedNode.aspectRatioLocked ? '#007bff' : 'transparent',
-								color: selectedNode.aspectRatioLocked ? '#fff' : '#666',
-								border: '1px solid #ddd',
-								borderRadius: '4px',
+								padding: `${spacing.xs} ${spacing.sm}`,
+								backgroundColor: selectedNode.aspectRatioLocked ? colors.accent.primary : 'transparent',
+								color: selectedNode.aspectRatioLocked ? colors.text.primary : colors.text.tertiary,
+								border: `1px solid ${colors.border.default}`,
+								borderRadius: radii.sm,
 								fontSize: '14px',
 								cursor: 'pointer',
 								display: 'flex',
 								alignItems: 'center',
 								justifyContent: 'center',
-								width: '32px',
-								height: '32px',
+								width: '28px',
+								height: '28px',
 								marginBottom: '1px',
-								transition: 'all 0.2s ease',
+								transition: `all ${transitions.fast}`,
 							}}
 						>
 							{selectedNode.aspectRatioLocked ? (
-								<LockOn size={16} strokeWidth={2} />
+								<LockOn size={14} strokeWidth={2} />
 							) : (
-								<LockOff size={16} strokeWidth={2} />
+								<LockOff size={14} strokeWidth={2} />
 							)}
 						</button>
 					)}
 					<div>
-						<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>H</label>
+						<label
+							style={{
+								display: 'block',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								marginBottom: '4px',
+							}}
+						>
+							H
+						</label>
 						<input
 							type="number"
 							value={safeRound(selectedNode.size.height, 100)}
 							onChange={(e) => handleNestedInputChange('size', 'height', Number(e.target.value))}
 							style={{
 								width: '100%',
-								padding: '6px',
-								border: '1px solid #ddd',
-								borderRadius: '4px',
-								fontSize: '12px',
+								padding: spacing.xs,
+								border: `1px solid ${colors.border.default}`,
+								borderRadius: radii.sm,
+								fontSize: typography.fontSize.md,
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.primary,
 							}}
 						/>
 					</div>
 				</div>
 
-				<label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#666' }}>
-					<input type="checkbox" checked={Boolean(layout)} onChange={(e) => handleLayoutToggle(e.target.checked)} />
-					Auto layout flow
+				<label
+					style={{
+						display: 'flex',
+						alignItems: 'center',
+						gap: spacing.sm,
+						fontSize: typography.fontSize.md,
+						color: colors.text.secondary,
+					}}
+				>
+					<input
+						type="checkbox"
+						checked={Boolean(layout)}
+						onChange={(e) => handleLayoutToggle(e.target.checked)}
+						style={{ accentColor: colors.accent.primary }}
+					/>
+					Auto layout
 				</label>
 
 				{layout && (
-					<div style={{ marginTop: '8px', display: 'grid', gap: '8px' }}>
-						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+					<div style={{ marginTop: spacing.sm, display: 'grid', gap: spacing.sm }}>
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm }}>
 							<div>
-								<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
 									Direction
 								</label>
 								<select
@@ -556,10 +691,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									onChange={(e) => handleLayoutChange({ direction: e.target.value as Layout['direction'] })}
 									style={{
 										width: '100%',
-										padding: '6px',
-										border: '1px solid #ddd',
-										borderRadius: '4px',
-										fontSize: '12px',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
 									}}
 								>
 									<option value="row">Row</option>
@@ -567,7 +704,16 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								</select>
 							</div>
 							<div>
-								<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>Gap</label>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Gap
+								</label>
 								<input
 									type="number"
 									value={safeNumber(layout.gap)}
@@ -578,17 +724,26 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									}}
 									style={{
 										width: '100%',
-										padding: '6px',
-										border: '1px solid #ddd',
-										borderRadius: '4px',
-										fontSize: '12px',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
 									}}
 								/>
 							</div>
 						</div>
 
 						<div>
-							<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
 								Alignment
 							</label>
 							<select
@@ -596,10 +751,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								onChange={(e) => handleLayoutChange({ alignment: e.target.value as Layout['alignment'] })}
 								style={{
 									width: '100%',
-									padding: '6px',
-									border: '1px solid #ddd',
-									borderRadius: '4px',
-									fontSize: '12px',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
 								}}
 							>
 								<option value="start">Start</option>
@@ -609,8 +766,17 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						</div>
 
 						<div>
-							<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>Padding</label>
-							<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								Padding
+							</label>
+							<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm }}>
 								<input
 									type="number"
 									value={safeNumber(layout.padding.top)}
@@ -618,10 +784,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									placeholder="T"
 									style={{
 										width: '100%',
-										padding: '6px',
-										border: '1px solid #ddd',
-										borderRadius: '4px',
-										fontSize: '12px',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
 									}}
 								/>
 								<input
@@ -631,10 +799,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									placeholder="R"
 									style={{
 										width: '100%',
-										padding: '6px',
-										border: '1px solid #ddd',
-										borderRadius: '4px',
-										fontSize: '12px',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
 									}}
 								/>
 								<input
@@ -644,10 +814,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									placeholder="B"
 									style={{
 										width: '100%',
-										padding: '6px',
-										border: '1px solid #ddd',
-										borderRadius: '4px',
-										fontSize: '12px',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
 									}}
 								/>
 								<input
@@ -657,10 +829,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									placeholder="L"
 									style={{
 										width: '100%',
-										padding: '6px',
-										border: '1px solid #ddd',
-										borderRadius: '4px',
-										fontSize: '12px',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
 									}}
 								/>
 							</div>
@@ -669,11 +843,29 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 				)}
 			</div>
 
-			<div style={{ marginBottom: '16px' }}>
-				<h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#444' }}>Appearance</h4>
-				<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+			<div style={{ marginBottom: spacing.lg }}>
+				<h4
+					style={{
+						margin: `0 0 ${spacing.sm} 0`,
+						fontSize: typography.fontSize.sm,
+						color: colors.text.secondary,
+						fontWeight: typography.fontWeight.medium,
+					}}
+				>
+					Appearance
+				</h4>
+				<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
 					<div>
-						<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>Opacity</label>
+						<label
+							style={{
+								display: 'block',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								marginBottom: '4px',
+							}}
+						>
+							Opacity
+						</label>
 						<div style={{ position: 'relative' }}>
 							<input
 								type="number"
@@ -688,11 +880,13 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								}}
 								style={{
 									width: '100%',
-									padding: '6px',
-									paddingRight: '20px',
-									border: '1px solid #ddd',
-									borderRadius: '4px',
-									fontSize: '12px',
+									padding: spacing.xs,
+									paddingRight: '22px',
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
 								}}
 							/>
 							<span
@@ -701,8 +895,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									right: '6px',
 									top: '50%',
 									transform: 'translateY(-50%)',
-									fontSize: '11px',
-									color: '#888',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
 								}}
 							>
 								%
@@ -715,8 +909,15 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						selectedNode.type === 'image' ||
 						selectedNode.type === 'componentInstance') && (
 						<div>
-							<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
-								Corner Radius
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								Radius
 							</label>
 							<input
 								type="number"
@@ -728,10 +929,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								}}
 								style={{
 									width: '100%',
-									padding: '6px',
-									border: '1px solid #ddd',
-									borderRadius: '4px',
-									fontSize: '12px',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
 								}}
 							/>
 						</div>
@@ -739,49 +942,61 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 				</div>
 			</div>
 
-			<div style={{ marginBottom: '16px' }}>
-				<h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#444' }}>Fill</h4>
+			<div style={{ marginBottom: spacing.lg }}>
+				<h4
+					style={{
+						margin: `0 0 ${spacing.sm} 0`,
+						fontSize: typography.fontSize.sm,
+						color: colors.text.secondary,
+						fontWeight: typography.fontWeight.medium,
+					}}
+				>
+					Fill
+				</h4>
 				<label
 					style={{
 						display: 'flex',
 						alignItems: 'center',
-						gap: '8px',
-						fontSize: '12px',
-						color: '#666',
-						marginBottom: '8px',
+						gap: spacing.sm,
+						fontSize: typography.fontSize.md,
+						color: colors.text.secondary,
+						marginBottom: spacing.sm,
 					}}
 				>
 					<input
 						type="checkbox"
 						checked={selectedNode.visible !== false}
 						onChange={(e) => handleInputChange('visible', e.target.checked)}
+						style={{ accentColor: colors.accent.primary }}
 					/>
 					Visible
 				</label>
 
 				{selectedNode.fill ? (
-					<div style={{ display: 'grid', gap: '8px' }}>
+					<div style={{ display: 'grid', gap: spacing.sm }}>
 						<input
 							type="color"
 							value={selectedNode.fill.type === 'solid' ? selectedNode.fill.value : defaultFill}
 							onChange={(e) => handleInputChange('fill', { type: 'solid', value: e.target.value })}
 							style={{
 								width: '100%',
-								height: '32px',
-								border: '1px solid #ddd',
-								borderRadius: '4px',
+								height: '28px',
+								border: `1px solid ${colors.border.default}`,
+								borderRadius: radii.sm,
 								cursor: 'pointer',
+								backgroundColor: colors.bg.tertiary,
 							}}
 						/>
 						<button
 							type="button"
 							onClick={() => handleInputChange('fill', undefined)}
 							style={{
-								padding: '6px',
-								borderRadius: '4px',
-								border: '1px solid #ccc',
-								backgroundColor: '#ffffff',
-								fontSize: '12px',
+								padding: spacing.xs,
+								borderRadius: radii.sm,
+								border: `1px solid ${colors.border.default}`,
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.secondary,
+								fontSize: typography.fontSize.md,
 								cursor: 'pointer',
 							}}
 						>
@@ -793,11 +1008,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						type="button"
 						onClick={() => handleInputChange('fill', { type: 'solid', value: defaultFill })}
 						style={{
-							padding: '6px',
-							borderRadius: '4px',
-							border: '1px solid #ccc',
-							backgroundColor: '#ffffff',
-							fontSize: '12px',
+							padding: spacing.xs,
+							borderRadius: radii.sm,
+							border: `1px solid ${colors.border.default}`,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.secondary,
+							fontSize: typography.fontSize.md,
 							cursor: 'pointer',
 							width: '100%',
 						}}
@@ -808,29 +1024,56 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 			</div>
 
 			{selectedNode.type === 'text' && (
-				<div style={{ marginBottom: '16px' }}>
-					<h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#444' }}>Text</h4>
-					<div style={{ marginBottom: '8px' }}>
-						<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>Content</label>
+				<div style={{ marginBottom: spacing.lg }}>
+					<h4
+						style={{
+							margin: `0 0 ${spacing.sm} 0`,
+							fontSize: typography.fontSize.sm,
+							color: colors.text.secondary,
+							fontWeight: typography.fontWeight.medium,
+						}}
+					>
+						Text
+					</h4>
+					<div style={{ marginBottom: spacing.sm }}>
+						<label
+							style={{
+								display: 'block',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								marginBottom: '4px',
+							}}
+						>
+							Content
+						</label>
 						<textarea
 							value={selectedNode.text || ''}
 							onChange={(e) => handleInputChange('text', e.target.value)}
 							style={{
 								width: '100%',
-								padding: '6px',
-								border: '1px solid #ddd',
-								borderRadius: '4px',
-								fontSize: '12px',
+								padding: spacing.xs,
+								border: `1px solid ${colors.border.default}`,
+								borderRadius: radii.sm,
+								fontSize: typography.fontSize.md,
 								minHeight: '60px',
 								resize: 'vertical',
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.primary,
 							}}
 						/>
 					</div>
 
-					<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+					<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
 						<div>
-							<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
-								Font Size
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								Size
 							</label>
 							<input
 								type="number"
@@ -842,24 +1085,37 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								}}
 								style={{
 									width: '100%',
-									padding: '6px',
-									border: '1px solid #ddd',
-									borderRadius: '4px',
-									fontSize: '12px',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
 								}}
 							/>
 						</div>
 						<div>
-							<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>Weight</label>
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								Weight
+							</label>
 							<select
 								value={selectedNode.fontWeight ?? 'normal'}
 								onChange={(e) => handleInputChange('fontWeight', e.target.value)}
 								style={{
 									width: '100%',
-									padding: '6px',
-									border: '1px solid #ddd',
-									borderRadius: '4px',
-									fontSize: '12px',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
 								}}
 							>
 								<option value="normal">Normal</option>
@@ -871,7 +1127,14 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					</div>
 
 					<div>
-						<label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>
+						<label
+							style={{
+								display: 'block',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								marginBottom: '4px',
+							}}
+						>
 							Font Family
 						</label>
 						<input
@@ -880,10 +1143,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 							onChange={(e) => handleInputChange('fontFamily', e.target.value)}
 							style={{
 								width: '100%',
-								padding: '6px',
-								border: '1px solid #ddd',
-								borderRadius: '4px',
-								fontSize: '12px',
+								padding: spacing.xs,
+								border: `1px solid ${colors.border.default}`,
+								borderRadius: radii.sm,
+								fontSize: typography.fontSize.md,
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.primary,
 							}}
 						/>
 					</div>
