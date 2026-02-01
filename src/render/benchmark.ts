@@ -80,6 +80,7 @@ export const runExportBenchmark = async (
 				scale,
 				format: 'png',
 				useNativeEncoder: true,
+				allowUpscale: true,
 			},
 			`PNG @${scale}x (Rust)`,
 		);
@@ -93,6 +94,7 @@ export const runExportBenchmark = async (
 				scale,
 				format: 'png',
 				useNativeEncoder: false,
+				allowUpscale: true,
 			},
 			`PNG @${scale}x (Canvas)`,
 		);
@@ -107,6 +109,7 @@ export const runExportBenchmark = async (
 				format: 'webp',
 				useNativeEncoder: true,
 				webpQuality: 90,
+				allowUpscale: true,
 			},
 			`WebP @${scale}x (Rust)`,
 		);
@@ -121,6 +124,7 @@ export const runExportBenchmark = async (
 				format: 'webp',
 				useNativeEncoder: false,
 				webpQuality: 90,
+				allowUpscale: true,
 			},
 			`WebP @${scale}x (Canvas)`,
 		);

@@ -17,7 +17,10 @@ export const builtinPlugins: PluginRegistration[] = [
       ],
       assets: {
         bundle: [
+          'models/iphone_15_pro_max.glb',
           'models/iphone_16_free.glb',
+          'models/iphone_17_air.glb',
+          'models/iphone_17_pro.glb',
           'presets/iphone16.json',
           'templates/iphone16/front_frame.svg',
           'templates/iphone16/front_shadow.svg',
@@ -28,7 +31,7 @@ export const builtinPlugins: PluginRegistration[] = [
       },
       ui: { width: 980, height: 640 },
     },
-    entryUrl: '/plugins/mockrocket/index.html?v=9',
+    entryUrl: '/plugins/mockrocket/index.html?v=10',
     source: 'builtin',
   },
 ];

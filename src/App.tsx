@@ -322,6 +322,17 @@ const getMarqueeSelection = (
 	return ids;
 };
 
+const getSelectableNodeIds = (doc: Document): string[] => {
+	const ids: string[] = [];
+	for (const [id, node] of Object.entries(doc.nodes)) {
+		if (id === doc.rootId) continue;
+		if (node.visible === false) continue;
+		if (node.locked === true) continue;
+		ids.push(id);
+	}
+	return ids;
+};
+
 const sameSelectionSet = (a: string[], b: string[]): boolean => {
 	if (a.length !== b.length) return false;
 	const set = new Set(a);
@@ -1554,6 +1565,8 @@ export const App: React.FC = () => {
 							background?: 'transparent' | 'solid';
 							includeFrameFill?: boolean;
 							clipToBounds?: boolean;
+							maxDim?: number;
+							allowUpscale?: boolean;
 						};
 						const targetId = params.nodeId || selectionIds[0];
 						if (!targetId) {
@@ -1566,6 +1579,8 @@ export const App: React.FC = () => {
 							background: params.background,
 							includeFrameFill: params.includeFrameFill,
 							clipToBounds: params.clipToBounds,
+							maxDim: params.maxDim,
+							allowUpscale: params.allowUpscale,
 						});
 						return { rpc: 1, id: request.id, ok: true, result: snapshot };
 					}
@@ -2881,6 +2896,11 @@ export const App: React.FC = () => {
 			}
 
 			if (!editable) {
+				if (isCmd && key === 'a') {
+					e.preventDefault();
+					setSelection(getSelectableNodeIds(document));
+					return;
+				}
 				if (isCmd && key === 'd') {
 					if (!hasSelection) return;
 					e.preventDefault();
