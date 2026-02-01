@@ -3,7 +3,7 @@ import { createNode } from '../../core/doc';
 import type { WorldBoundsMap } from '../../core/doc';
 
 export interface Tool {
-	type: 'select' | 'rectangle' | 'text';
+	type: 'select' | 'rectangle' | 'text' | 'frame';
 	handleMouseDown: (doc: Document, x: number, y: number, selectedIds: string[]) => Document | null;
 	handleMouseMove?: (doc: Document, x: number, y: number, selectedIds: string[]) => Document | null;
 	handleMouseUp?: (doc: Document, x: number, y: number, selectedIds: string[]) => Document | null;
@@ -37,6 +37,23 @@ export const createTextTool = (): Tool => ({
 			fontFamily: 'Inter, sans-serif',
 			fontWeight: 'normal',
 			fill: { type: 'solid', value: '#000000' },
+			visible: true,
+		};
+
+		return createNode(doc, doc.rootId, newNode);
+	},
+});
+
+export const createFrameTool = (): Tool => ({
+	type: 'frame',
+	handleMouseDown: (doc, x, y) => {
+		const newNode: Partial<Node> & { type: Node['type'] } = {
+			type: 'frame',
+			name: 'Frame',
+			position: { x, y },
+			size: { width: 300, height: 200 },
+			fill: { type: 'solid', value: '#ffffff' },
+			clipContent: false,
 			visible: true,
 		};
 

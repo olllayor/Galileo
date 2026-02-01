@@ -10,6 +10,7 @@ import { LayersPanel } from './ui/LayersPanel';
 import { useDocument } from './hooks/useDocument';
 import {
 	createRectangleTool,
+	createFrameTool,
 	createTextTool,
 	hitTestNodeAtPosition,
 	findSelectableNode,
@@ -579,7 +580,7 @@ export const App: React.FC = () => {
 		isDirty,
 	} = useDocument();
 
-	const [activeTool, setActiveTool] = useState<'select' | 'rectangle' | 'text' | 'hand'>('select');
+	const [activeTool, setActiveTool] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text'>('select');
 	const [spaceKeyHeld, setSpaceKeyHeld] = useState(false);
 	const [toolBeforeSpace, setToolBeforeSpace] = useState<'select' | 'rectangle' | 'text' | 'hand' | null>(null);
 	const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
@@ -754,7 +755,7 @@ export const App: React.FC = () => {
 		if (hoverHit?.kind === 'edge') return hoverHit.edgeCursor || 'move';
 		if (hoverHit?.kind === 'fill')
 			return 'url(\'data:image/svg+xml;utf8,<svg viewBox="-0.5 -0.5 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" height="16" width="16"><path fill-rule="evenodd" clip-rule="evenodd" d="M13.2403125 5.168374999999999c0.9875625 0.401125 0.9121875 1.82375 -0.11225 2.1181875l-5.1691875 1.4859375 -2.3609375 4.8326875000000005c-0.4679375 0.9576875 -1.8820625 0.784875 -2.1055625 -0.25725000000000003L1.0856875000000001 2.1243125c-0.18887500000000002 -0.8808125 0.6848124999999999 -1.6139375 1.5195 -1.275l10.635125 4.3190625Z" stroke="black" stroke-width="1"/></svg>\') 2 2, pointer';
-		if (activeTool === 'rectangle' || activeTool === 'text') return 'crosshair';
+		if (activeTool === 'frame' || activeTool === 'rectangle' || activeTool === 'text') return 'crosshair';
 		return undefined; // Let CSS custom cursor apply
 	}, [dragState, transformSession, hoverHandle, hoverHit, activeTool, isInPanMode]);
 
@@ -2045,6 +2046,54 @@ export const App: React.FC = () => {
 				return;
 			}
 
+			if (activeTool === 'frame') {
+				if (selectionBounds && selectionIds.length === 1) {
+					const handle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
+					if (handle) {
+						setActiveTool('select');
+						handleSelectionPointerDown(info);
+						return;
+					}
+				}
+
+				const hit = hitTestAtPoint(worldX, worldY);
+				if (hit && hit.node.id !== displayDocument.rootId) {
+					if (hit.locked) {
+						return;
+					}
+					setActiveTool('select');
+					handleSelectionPointerDown(info);
+					return;
+				}
+
+				const tool = createFrameTool();
+				const result = tool.handleMouseDown(document, worldX, worldY, []);
+				if (result) {
+					const newIds = Object.keys(result.nodes).filter((id) => !(id in document.nodes));
+					const newId = newIds[0];
+					const newNode = newId ? result.nodes[newId] : null;
+					if (!newId || !newNode) {
+						return;
+					}
+
+					executeCommand({
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'user',
+						description: 'Create frame',
+						type: 'createNode',
+						payload: {
+							id: newId,
+							parentId: document.rootId,
+							node: newNode,
+						},
+					} as Command);
+					selectNode(newId);
+					setActiveTool('select');
+				}
+				return;
+			}
+
 			if (activeTool === 'text') {
 				if (selectionBounds && selectionIds.length === 1) {
 					const handle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
@@ -2967,6 +3016,7 @@ export const App: React.FC = () => {
 			if (!editable) {
 				if (e.key === 'v') setActiveTool('select');
 				if (e.key === 'h') setActiveTool('hand');
+				if (e.key === 'f') setActiveTool('frame');
 				if (e.key === 'r') setActiveTool('rectangle');
 				if (e.key === 't') setActiveTool('text');
 
@@ -3086,7 +3136,7 @@ export const App: React.FC = () => {
 
 	// Handle tool change including 'hand' tool
 	const handleToolChange = useCallback((tool: Tool) => {
-		setActiveTool(tool as 'select' | 'rectangle' | 'text' | 'hand');
+		setActiveTool(tool as 'select' | 'hand' | 'frame' | 'rectangle' | 'text');
 	}, []);
 
 	return (

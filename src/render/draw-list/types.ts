@@ -24,6 +24,7 @@ export type DrawCommand =
   | DrawImageCommand
   | DrawPathCommand
   | ClipCommand
+  | RestoreCommand
   | TransformCommand;
 
 export interface DrawRectCommand {
@@ -92,6 +93,10 @@ export interface ClipCommand {
   y: number;
   width: number;
   height: number;
+}
+
+export interface RestoreCommand {
+  type: 'restore';
 }
 
 export interface TransformCommand {

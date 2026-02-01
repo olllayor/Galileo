@@ -670,6 +670,27 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					Auto layout
 				</label>
 
+				{selectedNode.type === 'frame' && (
+					<label
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							gap: spacing.sm,
+							fontSize: typography.fontSize.md,
+							color: colors.text.secondary,
+							marginTop: spacing.sm,
+						}}
+					>
+						<input
+							type="checkbox"
+							checked={Boolean(selectedNode.clipContent)}
+							onChange={(e) => handleInputChange('clipContent', e.target.checked)}
+							style={{ accentColor: colors.accent.primary }}
+						/>
+						Clip content
+					</label>
+				)}
+
 				{layout && (
 					<div style={{ marginTop: spacing.sm, display: 'grid', gap: spacing.sm }}>
 						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm }}>

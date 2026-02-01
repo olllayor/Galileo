@@ -92,11 +92,25 @@ const buildNodeCommandsFromBounds = (
 		}
 
 		if (node.children && node.children.length > 0) {
+			if (node.clipContent) {
+				commands.push({
+					type: 'clip',
+					x,
+					y,
+					width,
+					height,
+				});
+			}
+
 			for (const childId of node.children) {
 				const child = doc.nodes[childId];
 				if (child) {
 					buildNodeCommandsFromBounds(doc, child, commands, boundsMap, base, rootId, includeRootFrameFill);
 				}
+			}
+
+			if (node.clipContent) {
+				commands.push({ type: 'restore' });
 			}
 		}
 	} else if (node.type === 'group') {
