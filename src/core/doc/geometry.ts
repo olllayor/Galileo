@@ -12,6 +12,39 @@ export type WorldBoundsMap = Record<string, Bounds>;
 export type BoundsOverrideMap = Record<string, Bounds>;
 export type ParentMap = Record<string, string | null>;
 
+export const computeGroupLocalBounds = (children: Node[]): Bounds => {
+	let minX = Number.POSITIVE_INFINITY;
+	let minY = Number.POSITIVE_INFINITY;
+	let maxX = Number.NEGATIVE_INFINITY;
+	let maxY = Number.NEGATIVE_INFINITY;
+
+	for (const child of children) {
+		if (child.visible === false) continue;
+		const left = child.position.x;
+		const top = child.position.y;
+		const right = child.position.x + child.size.width;
+		const bottom = child.position.y + child.size.height;
+		minX = Math.min(minX, left);
+		minY = Math.min(minY, top);
+		maxX = Math.max(maxX, right);
+		maxY = Math.max(maxY, bottom);
+	}
+
+	if (!Number.isFinite(minX)) {
+		return { x: 0, y: 0, width: 0, height: 0 };
+	}
+
+	return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+};
+
+const getNodeLocalBounds = (node: Node, children: Node[]): Bounds => {
+	if (node.type === 'group') {
+		return computeGroupLocalBounds(children);
+	}
+
+	return { x: 0, y: 0, width: node.size.width, height: node.size.height };
+};
+
 /**
  * Compute layout positions for children of a node with auto-layout enabled.
  * Returns a map of childId -> computed local position within the parent.
@@ -183,17 +216,18 @@ export const buildWorldBoundsMap = (doc: Document, overrides?: BoundsOverrideMap
 		const override = overrides?.[node.id];
 		const worldX = override?.x ?? current.x;
 		const worldY = override?.y ?? current.y;
-		const width = override?.width ?? node.size.width;
-		const height = override?.height ?? node.size.height;
+		const childNodes = node.children
+			? node.children.map((childId) => doc.nodes[childId]).filter((child): child is Node => child !== undefined)
+			: [];
+		const localBounds = getNodeLocalBounds(node, childNodes);
+		const boundsX = override?.x ?? worldX + localBounds.x;
+		const boundsY = override?.y ?? worldY + localBounds.y;
+		const width = override?.width ?? localBounds.width;
+		const height = override?.height ?? localBounds.height;
 
-		boundsMap[node.id] = { x: worldX, y: worldY, width, height };
+		boundsMap[node.id] = { x: boundsX, y: boundsY, width, height };
 
 		if (!node.children || node.children.length === 0) continue;
-
-		// Get child nodes
-		const childNodes = node.children
-			.map((childId) => doc.nodes[childId])
-			.filter((child): child is Node => child !== undefined);
 
 		// Compute auto-layout positions if parent has layout
 		const layoutPositions = computeAutoLayoutPositions(node, childNodes);

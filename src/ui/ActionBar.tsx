@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Cursor, Square, TextAlignLeft, Hand, Save, Folder, Image } from 'akar-icons';
 import { devicePresetGroups, type DevicePreset } from '../core/framePresets';
 
-export type Tool = 'select' | 'rectangle' | 'text' | 'hand';
+export type Tool = 'select' | 'hand' | 'frame' | 'rectangle' | 'text';
 
 interface ActionBarProps {
 	activeTool: Tool;
@@ -55,6 +55,17 @@ export const ActionBar: React.FC<ActionBarProps> = ({
 	const tools = [
 		{ id: 'select' as const, label: 'Select', shortcut: 'V', icon: <Cursor strokeWidth={2} size={16} /> },
 		{ id: 'hand' as const, label: 'Hand', shortcut: 'H', icon: <Hand strokeWidth={2} size={16} /> },
+		{
+			id: 'frame' as const,
+			label: 'Frame',
+			shortcut: 'F',
+			icon: (
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+					<rect x="4" y="5" width="16" height="14" rx="2" />
+					<line x1="4" y1="9" x2="20" y2="9" />
+				</svg>
+			),
+		},
 		{ id: 'rectangle' as const, label: 'Rectangle', shortcut: 'R', icon: <Square strokeWidth={2} size={16} /> },
 		{ id: 'text' as const, label: 'Text', shortcut: 'T', icon: <TextAlignLeft strokeWidth={2} size={16} /> },
 	];
@@ -121,7 +132,7 @@ export const ActionBar: React.FC<ActionBarProps> = ({
 					<button
 						type="button"
 						onClick={() => setDevicePickerOpen(!devicePickerOpen)}
-						title="Device Frame (F)"
+						title="Device Frame"
 						style={{
 							display: 'flex',
 							alignItems: 'center',

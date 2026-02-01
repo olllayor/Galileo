@@ -65,6 +65,9 @@ export class CanvasRenderer {
       case 'clip':
         this.applyClip(command);
         break;
+      case 'restore':
+        this.ctx.restore();
+        break;
       case 'transform':
         this.applyTransform(command);
         break;

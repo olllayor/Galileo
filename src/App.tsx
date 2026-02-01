@@ -10,14 +10,19 @@ import { LayersPanel } from './ui/LayersPanel';
 import { useDocument } from './hooks/useDocument';
 import {
 	createRectangleTool,
+	createFrameTool,
 	createTextTool,
 	hitTestNodeAtPosition,
+	hitTestNodeStackAtPosition,
 	findSelectableNode,
+	getHitStackInContainer,
+	pickHitCycle,
 	type HitKind,
 } from './interaction/tools';
 import {
 	buildParentMap,
 	buildWorldBoundsMap,
+	findParentNode,
 	getNodeWorldBounds,
 	getSelectionBounds,
 	parseDocumentText,
@@ -33,6 +38,7 @@ import { getHandleCursor, hitTestHandle } from './interaction/handles';
 import type { ResizeHandle } from './interaction/handles';
 import { applyResizeSnapping, applySnapping, buildSiblingSnapTargets } from './interaction/snapping';
 import type { SnapGuide, SnapTargets } from './interaction/snapping';
+import { applyNormalizedEdges, computeNormalizedEdges, type NormalizedEdges } from './interaction/transform-session';
 import { exportNodeSnapshot } from './render/export';
 import { builtinPlugins } from './plugins/builtin';
 import {
@@ -115,9 +121,8 @@ type EditorAction =
 	| { type: 'group' }
 	| { type: 'ungroup' };
 
-type NormalizedEdges = { nl: number; nt: number; nr: number; nb: number };
-
 type TransformSession = {
+	baseDoc: Document;
 	activeIds: string[];
 	initialBounds: { x: number; y: number; width: number; height: number };
 	normalizedEdgesById: Record<string, NormalizedEdges>;
@@ -158,6 +163,20 @@ const applyBoundsUpdate = (
 			},
 		},
 	};
+};
+
+const applyBoundsUpdates = (
+	doc: Document,
+	updates: Record<string, { position: { x: number; y: number }; size: { width: number; height: number } }>,
+): Document => {
+	const nodes = { ...doc.nodes };
+	for (const [id, update] of Object.entries(updates)) {
+		const node = nodes[id];
+		if (!node) continue;
+		nodes[id] = { ...node, position: update.position, size: update.size };
+	}
+
+	return { ...doc, nodes };
 };
 
 const computeResizeBounds = (
@@ -579,14 +598,16 @@ export const App: React.FC = () => {
 		isDirty,
 	} = useDocument();
 
-	const [activeTool, setActiveTool] = useState<'select' | 'rectangle' | 'text' | 'hand'>('select');
+	const [activeTool, setActiveTool] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text'>('select');
 	const [spaceKeyHeld, setSpaceKeyHeld] = useState(false);
-	const [toolBeforeSpace, setToolBeforeSpace] = useState<'select' | 'rectangle' | 'text' | 'hand' | null>(null);
+	const [toolBeforeSpace, setToolBeforeSpace] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text' | null>(null);
 	const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
 	const [zoom, setZoom] = useState(1);
 	const [previewDocument, setPreviewDocument] = useState<Document | null>(null);
 	const [dragState, setDragState] = useState<DragState | null>(null);
 	const [transformSession, setTransformSession] = useState<TransformSession | null>(null);
+	const [containerFocusId, setContainerFocusId] = useState<string | null>(null);
+	const [hitCycle, setHitCycle] = useState<{ key: string; index: number } | null>(null);
 	const [hoverHandle, setHoverHandle] = useState<ResizeHandle | null>(null);
 	const [hoverHit, setHoverHit] = useState<HoverHit | null>(null);
 	const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
@@ -690,6 +711,15 @@ export const App: React.FC = () => {
 			}),
 		[displayDocument, zoom, boundsMap],
 	);
+	const hitTestStackAtPoint = useCallback(
+		(worldX: number, worldY: number) =>
+			hitTestNodeStackAtPosition(displayDocument, worldX, worldY, zoom, {
+				hitSlopPx: HIT_SLOP_PX,
+				edgeMinPx: EDGE_MIN_PX,
+				boundsMap,
+			}),
+		[displayDocument, zoom, boundsMap],
+	);
 	const getEdgeCursorForNode = useCallback(
 		(nodeId: string, worldX: number, worldY: number): string => {
 			const node = displayDocument.nodes[nodeId];
@@ -754,7 +784,7 @@ export const App: React.FC = () => {
 		if (hoverHit?.kind === 'edge') return hoverHit.edgeCursor || 'move';
 		if (hoverHit?.kind === 'fill')
 			return 'url(\'data:image/svg+xml;utf8,<svg viewBox="-0.5 -0.5 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" height="16" width="16"><path fill-rule="evenodd" clip-rule="evenodd" d="M13.2403125 5.168374999999999c0.9875625 0.401125 0.9121875 1.82375 -0.11225 2.1181875l-5.1691875 1.4859375 -2.3609375 4.8326875000000005c-0.4679375 0.9576875 -1.8820625 0.784875 -2.1055625 -0.25725000000000003L1.0856875000000001 2.1243125c-0.18887500000000002 -0.8808125 0.6848124999999999 -1.6139375 1.5195 -1.275l10.635125 4.3190625Z" stroke="black" stroke-width="1"/></svg>\') 2 2, pointer';
-		if (activeTool === 'rectangle' || activeTool === 'text') return 'crosshair';
+		if (activeTool === 'frame' || activeTool === 'rectangle' || activeTool === 'text') return 'crosshair';
 		return undefined; // Let CSS custom cursor apply
 	}, [dragState, transformSession, hoverHandle, hoverHit, activeTool, isInPanMode]);
 
@@ -1835,23 +1865,71 @@ export const App: React.FC = () => {
 			// Cmd/Meta key enables deep selection (select inside groups)
 			const deepSelect = info.metaKey || info.ctrlKey;
 
-			if (selectionBounds && selectionIds.length === 1) {
+			if (selectionBounds && selectionIds.length >= 1) {
 				const handle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
 				if (handle) {
-					const nodeId = selectionIds[0];
-					const node = document.nodes[nodeId];
-					const startBounds = getNodeWorldBounds(displayDocument, nodeId, boundsMap);
-					if (node && startBounds) {
-						setDragState({
-							mode: 'resize',
-							startWorld: { x: worldX, y: worldY },
+					if (selectionIds.length === 1) {
+						const nodeId = selectionIds[0];
+						const node = document.nodes[nodeId];
+						const startBounds = getNodeWorldBounds(displayDocument, nodeId, boundsMap);
+						if (node && startBounds) {
+							setDragState({
+								mode: 'resize',
+								startWorld: { x: worldX, y: worldY },
+								baseDoc: document,
+								nodeId,
+								handle,
+								startBounds,
+								initialPosition: { ...node.position },
+								initialSize: { ...node.size },
+								lockAspectRatio: Boolean(node.aspectRatioLocked || info.shiftKey),
+							});
+							setPreviewDocument(document);
+							return true;
+						}
+					} else {
+						const isDescendantOf = (nodeId: string, potentialAncestorId: string): boolean => {
+							let current = parentMap[nodeId];
+							while (current) {
+								if (current === potentialAncestorId) return true;
+								current = parentMap[current] || null;
+							}
+							return false;
+						};
+
+						const activeIds = selectionIds.filter((id) => {
+							const node = document.nodes[id];
+							if (!node || node.locked === true) return false;
+							return !selectionIds.some((otherId) => otherId !== id && isDescendantOf(id, otherId));
+						});
+						if (activeIds.length === 0) {
+							return true;
+						}
+
+						const activeBounds = getSelectionBounds(displayDocument, activeIds, boundsMap);
+						if (!activeBounds) {
+							return true;
+						}
+
+						const normalizedEdgesById: Record<string, NormalizedEdges> = {};
+						const startBoundsMap: WorldBoundsMap = {};
+						for (const id of activeIds) {
+							const bounds = boundsMap[id];
+							if (!bounds) continue;
+							normalizedEdgesById[id] = computeNormalizedEdges(activeBounds, bounds);
+							startBoundsMap[id] = { ...bounds };
+						}
+
+						setTransformSession({
 							baseDoc: document,
-							nodeId,
+							activeIds,
+							initialBounds: activeBounds,
+							normalizedEdgesById,
 							handle,
-							startBounds,
-							initialPosition: { ...node.position },
-							initialSize: { ...node.size },
-							lockAspectRatio: Boolean(node.aspectRatioLocked || info.shiftKey),
+							aspectRatio: activeBounds.width / activeBounds.height,
+							startPointerWorld: { x: worldX, y: worldY },
+							startBoundsMap,
+							modifiers: { shiftKey: info.shiftKey, altKey: info.altKey },
 						});
 						setPreviewDocument(document);
 						return true;
@@ -1859,7 +1937,20 @@ export const App: React.FC = () => {
 				}
 			}
 
-			const hit = hitTestAtPoint(worldX, worldY);
+			const hitStack = hitTestStackAtPoint(worldX, worldY).filter((entry) => entry.node.id !== displayDocument.rootId);
+			const hitIds = hitStack.map((entry) => entry.node.id);
+			const filteredIds = getHitStackInContainer(displayDocument, hitIds, containerFocusId);
+			const hitMap = new Map(hitStack.map((entry) => [entry.node.id, entry]));
+			const hitKey = `${Math.round(worldX)}:${Math.round(worldY)}:${filteredIds.join('|')}`;
+			const cycleIndex = info.altKey && hitCycle?.key === hitKey ? hitCycle.index + 1 : 0;
+			const nextId = info.altKey ? pickHitCycle(filteredIds, cycleIndex) : filteredIds[0] ?? null;
+			if (info.altKey) {
+				setHitCycle(nextId ? { key: hitKey, index: cycleIndex } : null);
+			} else if (hitCycle) {
+				setHitCycle(null);
+			}
+			const hit = nextId ? hitMap.get(nextId) ?? null : null;
+
 			if (hit && hit.node.id !== displayDocument.rootId) {
 				if (hit.locked) {
 					return true;
@@ -1929,6 +2020,8 @@ export const App: React.FC = () => {
 			displayDocument,
 			document,
 			parentMap,
+			containerFocusId,
+			hitCycle,
 			selectionBounds,
 			selectionIds,
 			selectNode,
@@ -1936,7 +2029,7 @@ export const App: React.FC = () => {
 			toggleSelection,
 			view,
 			boundsMap,
-			hitTestAtPoint,
+			hitTestStackAtPoint,
 		],
 	);
 
@@ -2045,6 +2138,54 @@ export const App: React.FC = () => {
 				return;
 			}
 
+			if (activeTool === 'frame') {
+				if (selectionBounds && selectionIds.length === 1) {
+					const handle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
+					if (handle) {
+						setActiveTool('select');
+						handleSelectionPointerDown(info);
+						return;
+					}
+				}
+
+				const hit = hitTestAtPoint(worldX, worldY);
+				if (hit && hit.node.id !== displayDocument.rootId) {
+					if (hit.locked) {
+						return;
+					}
+					setActiveTool('select');
+					handleSelectionPointerDown(info);
+					return;
+				}
+
+				const tool = createFrameTool();
+				const result = tool.handleMouseDown(document, worldX, worldY, []);
+				if (result) {
+					const newIds = Object.keys(result.nodes).filter((id) => !(id in document.nodes));
+					const newId = newIds[0];
+					const newNode = newId ? result.nodes[newId] : null;
+					if (!newId || !newNode) {
+						return;
+					}
+
+					executeCommand({
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'user',
+						description: 'Create frame',
+						type: 'createNode',
+						payload: {
+							id: newId,
+							parentId: document.rootId,
+							node: newNode,
+						},
+					} as Command);
+					selectNode(newId);
+					setActiveTool('select');
+				}
+				return;
+			}
+
 			if (activeTool === 'text') {
 				if (selectionBounds && selectionIds.length === 1) {
 					const handle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
@@ -2135,6 +2276,39 @@ export const App: React.FC = () => {
 			const { worldX, worldY, screenX, screenY } = info;
 
 			if (transformSession) {
+				const deltaX = worldX - transformSession.startPointerWorld.x;
+				const deltaY = worldY - transformSession.startPointerWorld.y;
+				const rawBounds = computeResizeBounds(
+					transformSession.initialBounds,
+					transformSession.handle,
+					deltaX,
+					deltaY,
+					1,
+					info.shiftKey,
+				);
+				const snap = snapDisabled
+					? { bounds: rawBounds, guides: [] }
+					: applyResizeSnapping(transformSession.initialBounds, rawBounds, { x: [], y: [] }, zoom);
+				const nextBounds = snap.bounds;
+
+				const updates: Record<string, { position: { x: number; y: number }; size: { width: number; height: number } }> =
+					{};
+				for (const id of transformSession.activeIds) {
+					const edges = transformSession.normalizedEdgesById[id];
+					if (!edges) continue;
+					const next = applyNormalizedEdges(nextBounds, edges);
+					const parentId = documentParentMap[id];
+					const parentBounds = parentId ? boundsMap[parentId] : null;
+					const parentX = parentBounds?.x ?? 0;
+					const parentY = parentBounds?.y ?? 0;
+					updates[id] = {
+						position: { x: next.x - parentX, y: next.y - parentY },
+						size: { width: next.width, height: next.height },
+					};
+				}
+
+				setPreviewDocument(applyBoundsUpdates(transformSession.baseDoc, updates));
+				setSnapGuides(snap.guides);
 				return;
 			}
 
@@ -2225,7 +2399,7 @@ export const App: React.FC = () => {
 			}
 
 			let nextHandle: ResizeHandle | null = null;
-			if (activeTool === 'select' && selectionBounds && selectionIds.length === 1) {
+			if (activeTool === 'select' && selectionBounds && selectionIds.length > 0) {
 				nextHandle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
 			}
 			if (nextHandle !== hoverHandle) {
@@ -2262,6 +2436,7 @@ export const App: React.FC = () => {
 			hoverHandle,
 			hoverHit,
 			document,
+			documentParentMap,
 			displayDocument,
 			boundsMap,
 			parentMap,
@@ -2274,8 +2449,79 @@ export const App: React.FC = () => {
 	const handleCanvasMouseUp = useCallback(
 		(info: CanvasPointerInfo) => {
 			if (transformSession) {
+				const deltaX = info.worldX - transformSession.startPointerWorld.x;
+				const deltaY = info.worldY - transformSession.startPointerWorld.y;
+				const rawBounds = computeResizeBounds(
+					transformSession.initialBounds,
+					transformSession.handle,
+					deltaX,
+					deltaY,
+					1,
+					info.shiftKey,
+				);
+				const snap = snapDisabled
+					? { bounds: rawBounds, guides: [] }
+					: applyResizeSnapping(transformSession.initialBounds, rawBounds, { x: [], y: [] }, zoom);
+				const nextBounds = snap.bounds;
+
+				const subCommands: Command[] = [];
+				let hasChange = false;
+
+				for (const id of transformSession.activeIds) {
+					const edges = transformSession.normalizedEdgesById[id];
+					if (!edges) continue;
+					const next = applyNormalizedEdges(nextBounds, edges);
+					const start = transformSession.startBoundsMap?.[id];
+					if (start) {
+						const changed =
+							Math.abs(next.x - start.x) > 0.01 ||
+							Math.abs(next.y - start.y) > 0.01 ||
+							Math.abs(next.width - start.width) > 0.01 ||
+							Math.abs(next.height - start.height) > 0.01;
+						hasChange = hasChange || changed;
+					}
+
+					const parentId = documentParentMap[id];
+					const parentBounds = parentId ? boundsMap[parentId] : null;
+					const parentX = parentBounds?.x ?? 0;
+					const parentY = parentBounds?.y ?? 0;
+
+					subCommands.push({
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'user',
+						description: 'Resize node',
+						type: 'setProps',
+						payload: {
+							id,
+							props: {
+								position: { x: next.x - parentX, y: next.y - parentY },
+								size: { width: next.width, height: next.height },
+							},
+						},
+					});
+				}
+
+				if (hasChange && subCommands.length > 0) {
+					if (subCommands.length === 1) {
+						executeCommand(subCommands[0]);
+					} else {
+						executeCommand({
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Resize nodes',
+							type: 'batch',
+							payload: { commands: subCommands },
+						} as Command);
+					}
+				}
+
+				setPreviewDocument(null);
 				setTransformSession(null);
 				setSnapGuides([]);
+				setHoverHandle(null);
+				setHoverHit(null);
 				return;
 			}
 
@@ -2401,7 +2647,7 @@ export const App: React.FC = () => {
 			setHoverHandle(null);
 			setHoverHit(null);
 		},
-		[dragState, transformSession, snapDisabled, zoom, executeCommand, parentMap, boundsMap],
+		[dragState, transformSession, snapDisabled, zoom, executeCommand, parentMap, boundsMap, documentParentMap],
 	);
 
 	const handleCanvasWheel = useCallback((info: CanvasWheelInfo) => {
@@ -2658,6 +2904,7 @@ export const App: React.FC = () => {
 	useEffect(() => {
 		setHoverHandle(null);
 		setHoverHit(null);
+		setHitCycle(null);
 	}, [selectionIds]);
 
 	useEffect(() => {
@@ -2893,6 +3140,14 @@ export const App: React.FC = () => {
 					setHoverHit(null);
 					return;
 				}
+				if (containerFocusId) {
+					e.preventDefault();
+					const parent = findParentNode(displayDocument, containerFocusId);
+					const nextFocus = parent && parent.id !== displayDocument.rootId ? parent.id : null;
+					setContainerFocusId(nextFocus);
+					setSelection([containerFocusId]);
+					return;
+				}
 			}
 
 			if (!editable) {
@@ -2934,6 +3189,12 @@ export const App: React.FC = () => {
 
 				if (e.key === 'Enter') {
 					if (selectionIds.length !== 1) return;
+					const target = document.nodes[selectionIds[0]];
+					if (target && (target.type === 'group' || target.type === 'frame')) {
+						e.preventDefault();
+						setContainerFocusId(target.id);
+						return;
+					}
 					e.preventDefault();
 					dispatchEditorAction({ type: 'rename' });
 					return;
@@ -2967,6 +3228,7 @@ export const App: React.FC = () => {
 			if (!editable) {
 				if (e.key === 'v') setActiveTool('select');
 				if (e.key === 'h') setActiveTool('hand');
+				if (e.key === 'f') setActiveTool('frame');
 				if (e.key === 'r') setActiveTool('rectangle');
 				if (e.key === 't') setActiveTool('text');
 
@@ -3047,6 +3309,8 @@ export const App: React.FC = () => {
 			window.removeEventListener('keyup', handleKeyUp, options);
 		};
 	}, [
+		displayDocument,
+		document,
 		selectionIds,
 		canUndo,
 		canRedo,
@@ -3062,6 +3326,8 @@ export const App: React.FC = () => {
 		dragState,
 		dispatchEditorAction,
 		setSelection,
+		containerFocusId,
+		setContainerFocusId,
 		spaceKeyHeld,
 		toolBeforeSpace,
 		activeTool,
@@ -3086,7 +3352,7 @@ export const App: React.FC = () => {
 
 	// Handle tool change including 'hand' tool
 	const handleToolChange = useCallback((tool: Tool) => {
-		setActiveTool(tool as 'select' | 'rectangle' | 'text' | 'hand');
+		setActiveTool(tool as 'select' | 'hand' | 'frame' | 'rectangle' | 'text');
 	}, []);
 
 	return (
@@ -3137,7 +3403,7 @@ export const App: React.FC = () => {
 						view={view}
 						selectionBounds={selectionBounds}
 						hoverBounds={hoverBounds}
-						showHandles={selectionIds.length === 1}
+						showHandles={selectionIds.length > 0}
 						hoverHandle={hoverHandle}
 						snapGuides={snapGuides}
 						marqueeRect={marqueeRect}
