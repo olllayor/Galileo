@@ -38,6 +38,7 @@ import { getHandleCursor, hitTestHandle } from './interaction/handles';
 import type { ResizeHandle } from './interaction/handles';
 import { applyResizeSnapping, applySnapping, buildSiblingSnapTargets } from './interaction/snapping';
 import type { SnapGuide, SnapTargets } from './interaction/snapping';
+import { applyNormalizedEdges, computeNormalizedEdges, type NormalizedEdges } from './interaction/transform-session';
 import { exportNodeSnapshot } from './render/export';
 import { builtinPlugins } from './plugins/builtin';
 import {
@@ -120,9 +121,8 @@ type EditorAction =
 	| { type: 'group' }
 	| { type: 'ungroup' };
 
-type NormalizedEdges = { nl: number; nt: number; nr: number; nb: number };
-
 type TransformSession = {
+	baseDoc: Document;
 	activeIds: string[];
 	initialBounds: { x: number; y: number; width: number; height: number };
 	normalizedEdgesById: Record<string, NormalizedEdges>;
@@ -163,6 +163,20 @@ const applyBoundsUpdate = (
 			},
 		},
 	};
+};
+
+const applyBoundsUpdates = (
+	doc: Document,
+	updates: Record<string, { position: { x: number; y: number }; size: { width: number; height: number } }>,
+): Document => {
+	const nodes = { ...doc.nodes };
+	for (const [id, update] of Object.entries(updates)) {
+		const node = nodes[id];
+		if (!node) continue;
+		nodes[id] = { ...node, position: update.position, size: update.size };
+	}
+
+	return { ...doc, nodes };
 };
 
 const computeResizeBounds = (
@@ -1851,23 +1865,71 @@ export const App: React.FC = () => {
 			// Cmd/Meta key enables deep selection (select inside groups)
 			const deepSelect = info.metaKey || info.ctrlKey;
 
-			if (selectionBounds && selectionIds.length === 1) {
+			if (selectionBounds && selectionIds.length >= 1) {
 				const handle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
 				if (handle) {
-					const nodeId = selectionIds[0];
-					const node = document.nodes[nodeId];
-					const startBounds = getNodeWorldBounds(displayDocument, nodeId, boundsMap);
-					if (node && startBounds) {
-						setDragState({
-							mode: 'resize',
-							startWorld: { x: worldX, y: worldY },
+					if (selectionIds.length === 1) {
+						const nodeId = selectionIds[0];
+						const node = document.nodes[nodeId];
+						const startBounds = getNodeWorldBounds(displayDocument, nodeId, boundsMap);
+						if (node && startBounds) {
+							setDragState({
+								mode: 'resize',
+								startWorld: { x: worldX, y: worldY },
+								baseDoc: document,
+								nodeId,
+								handle,
+								startBounds,
+								initialPosition: { ...node.position },
+								initialSize: { ...node.size },
+								lockAspectRatio: Boolean(node.aspectRatioLocked || info.shiftKey),
+							});
+							setPreviewDocument(document);
+							return true;
+						}
+					} else {
+						const isDescendantOf = (nodeId: string, potentialAncestorId: string): boolean => {
+							let current = parentMap[nodeId];
+							while (current) {
+								if (current === potentialAncestorId) return true;
+								current = parentMap[current] || null;
+							}
+							return false;
+						};
+
+						const activeIds = selectionIds.filter((id) => {
+							const node = document.nodes[id];
+							if (!node || node.locked === true) return false;
+							return !selectionIds.some((otherId) => otherId !== id && isDescendantOf(id, otherId));
+						});
+						if (activeIds.length === 0) {
+							return true;
+						}
+
+						const activeBounds = getSelectionBounds(displayDocument, activeIds, boundsMap);
+						if (!activeBounds) {
+							return true;
+						}
+
+						const normalizedEdgesById: Record<string, NormalizedEdges> = {};
+						const startBoundsMap: WorldBoundsMap = {};
+						for (const id of activeIds) {
+							const bounds = boundsMap[id];
+							if (!bounds) continue;
+							normalizedEdgesById[id] = computeNormalizedEdges(activeBounds, bounds);
+							startBoundsMap[id] = { ...bounds };
+						}
+
+						setTransformSession({
 							baseDoc: document,
-							nodeId,
+							activeIds,
+							initialBounds: activeBounds,
+							normalizedEdgesById,
 							handle,
-							startBounds,
-							initialPosition: { ...node.position },
-							initialSize: { ...node.size },
-							lockAspectRatio: Boolean(node.aspectRatioLocked || info.shiftKey),
+							aspectRatio: activeBounds.width / activeBounds.height,
+							startPointerWorld: { x: worldX, y: worldY },
+							startBoundsMap,
+							modifiers: { shiftKey: info.shiftKey, altKey: info.altKey },
 						});
 						setPreviewDocument(document);
 						return true;
@@ -2214,6 +2276,39 @@ export const App: React.FC = () => {
 			const { worldX, worldY, screenX, screenY } = info;
 
 			if (transformSession) {
+				const deltaX = worldX - transformSession.startPointerWorld.x;
+				const deltaY = worldY - transformSession.startPointerWorld.y;
+				const rawBounds = computeResizeBounds(
+					transformSession.initialBounds,
+					transformSession.handle,
+					deltaX,
+					deltaY,
+					1,
+					info.shiftKey,
+				);
+				const snap = snapDisabled
+					? { bounds: rawBounds, guides: [] }
+					: applyResizeSnapping(transformSession.initialBounds, rawBounds, { x: [], y: [] }, zoom);
+				const nextBounds = snap.bounds;
+
+				const updates: Record<string, { position: { x: number; y: number }; size: { width: number; height: number } }> =
+					{};
+				for (const id of transformSession.activeIds) {
+					const edges = transformSession.normalizedEdgesById[id];
+					if (!edges) continue;
+					const next = applyNormalizedEdges(nextBounds, edges);
+					const parentId = documentParentMap[id];
+					const parentBounds = parentId ? boundsMap[parentId] : null;
+					const parentX = parentBounds?.x ?? 0;
+					const parentY = parentBounds?.y ?? 0;
+					updates[id] = {
+						position: { x: next.x - parentX, y: next.y - parentY },
+						size: { width: next.width, height: next.height },
+					};
+				}
+
+				setPreviewDocument(applyBoundsUpdates(transformSession.baseDoc, updates));
+				setSnapGuides(snap.guides);
 				return;
 			}
 
@@ -2304,7 +2399,7 @@ export const App: React.FC = () => {
 			}
 
 			let nextHandle: ResizeHandle | null = null;
-			if (activeTool === 'select' && selectionBounds && selectionIds.length === 1) {
+			if (activeTool === 'select' && selectionBounds && selectionIds.length > 0) {
 				nextHandle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
 			}
 			if (nextHandle !== hoverHandle) {
@@ -2341,6 +2436,7 @@ export const App: React.FC = () => {
 			hoverHandle,
 			hoverHit,
 			document,
+			documentParentMap,
 			displayDocument,
 			boundsMap,
 			parentMap,
@@ -2353,8 +2449,79 @@ export const App: React.FC = () => {
 	const handleCanvasMouseUp = useCallback(
 		(info: CanvasPointerInfo) => {
 			if (transformSession) {
+				const deltaX = info.worldX - transformSession.startPointerWorld.x;
+				const deltaY = info.worldY - transformSession.startPointerWorld.y;
+				const rawBounds = computeResizeBounds(
+					transformSession.initialBounds,
+					transformSession.handle,
+					deltaX,
+					deltaY,
+					1,
+					info.shiftKey,
+				);
+				const snap = snapDisabled
+					? { bounds: rawBounds, guides: [] }
+					: applyResizeSnapping(transformSession.initialBounds, rawBounds, { x: [], y: [] }, zoom);
+				const nextBounds = snap.bounds;
+
+				const subCommands: Command[] = [];
+				let hasChange = false;
+
+				for (const id of transformSession.activeIds) {
+					const edges = transformSession.normalizedEdgesById[id];
+					if (!edges) continue;
+					const next = applyNormalizedEdges(nextBounds, edges);
+					const start = transformSession.startBoundsMap?.[id];
+					if (start) {
+						const changed =
+							Math.abs(next.x - start.x) > 0.01 ||
+							Math.abs(next.y - start.y) > 0.01 ||
+							Math.abs(next.width - start.width) > 0.01 ||
+							Math.abs(next.height - start.height) > 0.01;
+						hasChange = hasChange || changed;
+					}
+
+					const parentId = documentParentMap[id];
+					const parentBounds = parentId ? boundsMap[parentId] : null;
+					const parentX = parentBounds?.x ?? 0;
+					const parentY = parentBounds?.y ?? 0;
+
+					subCommands.push({
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'user',
+						description: 'Resize node',
+						type: 'setProps',
+						payload: {
+							id,
+							props: {
+								position: { x: next.x - parentX, y: next.y - parentY },
+								size: { width: next.width, height: next.height },
+							},
+						},
+					});
+				}
+
+				if (hasChange && subCommands.length > 0) {
+					if (subCommands.length === 1) {
+						executeCommand(subCommands[0]);
+					} else {
+						executeCommand({
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Resize nodes',
+							type: 'batch',
+							payload: { commands: subCommands },
+						} as Command);
+					}
+				}
+
+				setPreviewDocument(null);
 				setTransformSession(null);
 				setSnapGuides([]);
+				setHoverHandle(null);
+				setHoverHit(null);
 				return;
 			}
 
@@ -2480,7 +2647,7 @@ export const App: React.FC = () => {
 			setHoverHandle(null);
 			setHoverHit(null);
 		},
-		[dragState, transformSession, snapDisabled, zoom, executeCommand, parentMap, boundsMap],
+		[dragState, transformSession, snapDisabled, zoom, executeCommand, parentMap, boundsMap, documentParentMap],
 	);
 
 	const handleCanvasWheel = useCallback((info: CanvasWheelInfo) => {
@@ -3236,7 +3403,7 @@ export const App: React.FC = () => {
 						view={view}
 						selectionBounds={selectionBounds}
 						hoverBounds={hoverBounds}
-						showHandles={selectionIds.length === 1}
+						showHandles={selectionIds.length > 0}
 						hoverHandle={hoverHandle}
 						snapGuides={snapGuides}
 						marqueeRect={marqueeRect}
