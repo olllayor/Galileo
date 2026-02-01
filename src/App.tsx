@@ -69,7 +69,6 @@ const AUTOSAVE_KEY = 'galileo.autosave.v1';
 const AUTOSAVE_DELAY_MS = 1500;
 const ZOOM_SENSITIVITY = 0.0035;
 const TEXT_PADDING = 4;
-
 type DragState =
 	| {
 			mode: 'pan';
@@ -720,6 +719,96 @@ export const App: React.FC = () => {
 			}),
 		[displayDocument, zoom, boundsMap],
 	);
+	const findTopmostFrameAtPoint = useCallback(
+		(worldX: number, worldY: number) => {
+			const root = displayDocument.nodes[displayDocument.rootId];
+			if (!root?.children || root.children.length === 0) {
+				return null;
+			}
+
+			const stack = [...root.children];
+			while (stack.length > 0) {
+				const nodeId = stack.pop();
+				if (!nodeId) continue;
+				const node = displayDocument.nodes[nodeId];
+				if (!node) continue;
+
+				if (node.children && node.children.length > 0) {
+					for (const childId of node.children) {
+						stack.push(childId);
+					}
+				}
+
+				if (node.type !== 'frame' || node.locked === true) {
+					continue;
+				}
+				const bounds = boundsMap[node.id];
+				if (!bounds) continue;
+				if (worldX >= bounds.x && worldX <= bounds.x + bounds.width && worldY >= bounds.y && worldY <= bounds.y + bounds.height) {
+					return node.id;
+				}
+			}
+			return null;
+		},
+		[displayDocument, boundsMap],
+	);
+	const getInsertionParentId = useCallback(
+		(worldX: number, worldY: number) => {
+			if (containerFocusId) {
+				return containerFocusId;
+			}
+			const hits = hitTestStackAtPoint(worldX, worldY);
+			for (const hit of hits) {
+				const node = hit.node;
+				if (node.id === displayDocument.rootId) continue;
+				if (node.type === 'frame' && node.locked !== true) {
+					return node.id;
+				}
+			}
+			const topmostFrame = findTopmostFrameAtPoint(worldX, worldY);
+			if (topmostFrame) {
+				return topmostFrame;
+			}
+			if (selectionIds.length === 1) {
+				const selected = displayDocument.nodes[selectionIds[0]];
+				if (selected?.type === 'frame' && selected.locked !== true) {
+					const bounds = boundsMap[selected.id];
+					if (
+						bounds &&
+						worldX >= bounds.x &&
+						worldX <= bounds.x + bounds.width &&
+						worldY >= bounds.y &&
+						worldY <= bounds.y + bounds.height
+					) {
+						return selected.id;
+					}
+				}
+			}
+			return document.rootId;
+		},
+		[
+			containerFocusId,
+			hitTestStackAtPoint,
+			displayDocument,
+			selectionIds,
+			document.rootId,
+			boundsMap,
+			findTopmostFrameAtPoint,
+		],
+	);
+	const getLocalPointForParent = useCallback(
+		(parentId: string, worldX: number, worldY: number) => {
+			if (parentId === document.rootId) {
+				return { x: worldX, y: worldY };
+			}
+			const parentBounds = boundsMap[parentId];
+			if (!parentBounds) {
+				return { x: worldX, y: worldY };
+			}
+			return { x: worldX - parentBounds.x, y: worldY - parentBounds.y };
+		},
+		[boundsMap, document.rootId],
+	);
 	const getEdgeCursorForNode = useCallback(
 		(nodeId: string, worldX: number, worldY: number): string => {
 			const node = displayDocument.nodes[nodeId];
@@ -782,8 +871,7 @@ export const App: React.FC = () => {
 		if (hoverHandle) return getHandleCursor(hoverHandle);
 		if (hoverHit?.locked) return 'not-allowed';
 		if (hoverHit?.kind === 'edge') return hoverHit.edgeCursor || 'move';
-		if (hoverHit?.kind === 'fill')
-			return 'url(\'data:image/svg+xml;utf8,<svg viewBox="-0.5 -0.5 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" height="16" width="16"><path fill-rule="evenodd" clip-rule="evenodd" d="M13.2403125 5.168374999999999c0.9875625 0.401125 0.9121875 1.82375 -0.11225 2.1181875l-5.1691875 1.4859375 -2.3609375 4.8326875000000005c-0.4679375 0.9576875 -1.8820625 0.784875 -2.1055625 -0.25725000000000003L1.0856875000000001 2.1243125c-0.18887500000000002 -0.8808125 0.6848124999999999 -1.6139375 1.5195 -1.275l10.635125 4.3190625Z" stroke="black" stroke-width="1"/></svg>\') 2 2, pointer';
+		if (hoverHit?.kind === 'fill') return 'default';
 		if (activeTool === 'frame' || activeTool === 'rectangle' || activeTool === 'text') return 'crosshair';
 		return undefined; // Let CSS custom cursor apply
 	}, [dragState, transformSession, hoverHandle, hoverHit, activeTool, isInPanMode]);
@@ -1939,7 +2027,12 @@ export const App: React.FC = () => {
 
 			const hitStack = hitTestStackAtPoint(worldX, worldY).filter((entry) => entry.node.id !== displayDocument.rootId);
 			const hitIds = hitStack.map((entry) => entry.node.id);
-			const filteredIds = getHitStackInContainer(displayDocument, hitIds, containerFocusId);
+			let filteredIds = getHitStackInContainer(displayDocument, hitIds, containerFocusId);
+			if (containerFocusId && filteredIds.length === 0 && hitIds.length > 0) {
+				setContainerFocusId(null);
+				filteredIds = hitIds;
+				setHitCycle(null);
+			}
 			const hitMap = new Map(hitStack.map((entry) => [entry.node.id, entry]));
 			const hitKey = `${Math.round(worldX)}:${Math.round(worldY)}:${filteredIds.join('|')}`;
 			const cycleIndex = info.altKey && hitCycle?.key === hitKey ? hitCycle.index + 1 : 0;
@@ -2100,18 +2193,10 @@ export const App: React.FC = () => {
 					}
 				}
 
-				const hit = hitTestAtPoint(worldX, worldY);
-				if (hit && hit.node.id !== displayDocument.rootId) {
-					if (hit.locked) {
-						return;
-					}
-					setActiveTool('select');
-					handleSelectionPointerDown(info);
-					return;
-				}
-
-				const tool = createRectangleTool();
-				const result = tool.handleMouseDown(document, worldX, worldY, []);
+				const parentId = getInsertionParentId(worldX, worldY);
+				const localPoint = getLocalPointForParent(parentId, worldX, worldY);
+				const tool = createRectangleTool(parentId);
+				const result = tool.handleMouseDown(document, localPoint.x, localPoint.y, []);
 				if (result) {
 					const newIds = Object.keys(result.nodes).filter((id) => !(id in document.nodes));
 					const newId = newIds[0];
@@ -2128,7 +2213,7 @@ export const App: React.FC = () => {
 						type: 'createNode',
 						payload: {
 							id: newId,
-							parentId: document.rootId,
+							parentId,
 							node: newNode,
 						},
 					} as Command);
@@ -2148,18 +2233,10 @@ export const App: React.FC = () => {
 					}
 				}
 
-				const hit = hitTestAtPoint(worldX, worldY);
-				if (hit && hit.node.id !== displayDocument.rootId) {
-					if (hit.locked) {
-						return;
-					}
-					setActiveTool('select');
-					handleSelectionPointerDown(info);
-					return;
-				}
-
-				const tool = createFrameTool();
-				const result = tool.handleMouseDown(document, worldX, worldY, []);
+				const parentId = getInsertionParentId(worldX, worldY);
+				const localPoint = getLocalPointForParent(parentId, worldX, worldY);
+				const tool = createFrameTool(parentId);
+				const result = tool.handleMouseDown(document, localPoint.x, localPoint.y, []);
 				if (result) {
 					const newIds = Object.keys(result.nodes).filter((id) => !(id in document.nodes));
 					const newId = newIds[0];
@@ -2176,7 +2253,7 @@ export const App: React.FC = () => {
 						type: 'createNode',
 						payload: {
 							id: newId,
-							parentId: document.rootId,
+							parentId,
 							node: newNode,
 						},
 					} as Command);
@@ -2196,18 +2273,10 @@ export const App: React.FC = () => {
 					}
 				}
 
-				const hit = hitTestAtPoint(worldX, worldY);
-				if (hit && hit.node.id !== displayDocument.rootId) {
-					if (hit.locked) {
-						return;
-					}
-					setActiveTool('select');
-					handleSelectionPointerDown(info);
-					return;
-				}
-
-				const tool = createTextTool();
-				const result = tool.handleMouseDown(document, worldX, worldY, []);
+				const parentId = getInsertionParentId(worldX, worldY);
+				const localPoint = getLocalPointForParent(parentId, worldX, worldY);
+				const tool = createTextTool(parentId);
+				const result = tool.handleMouseDown(document, localPoint.x, localPoint.y, []);
 				if (result) {
 					const newIds = Object.keys(result.nodes).filter((id) => !(id in document.nodes));
 					const newId = newIds[0];
@@ -2230,7 +2299,7 @@ export const App: React.FC = () => {
 						type: 'createNode',
 						payload: {
 							id: newId,
-							parentId: document.rootId,
+							parentId,
 							node: {
 								...newNode,
 								size: measured,
@@ -2254,11 +2323,12 @@ export const App: React.FC = () => {
 			setActiveTool,
 			view,
 			measureTextSize,
-			hitTestAtPoint,
 			transformSession,
 			openContextMenuAt,
 			spaceKeyHeld,
 			panOffset,
+			getInsertionParentId,
+			getLocalPointForParent,
 		],
 	);
 

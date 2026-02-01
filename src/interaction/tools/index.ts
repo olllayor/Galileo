@@ -9,7 +9,7 @@ export interface Tool {
 	handleMouseUp?: (doc: Document, x: number, y: number, selectedIds: string[]) => Document | null;
 }
 
-export const createRectangleTool = (): Tool => ({
+export const createRectangleTool = (parentId?: string): Tool => ({
 	type: 'rectangle',
 	handleMouseDown: (doc, x, y) => {
 		const newNode: Partial<Node> & { type: Node['type'] } = {
@@ -20,11 +20,11 @@ export const createRectangleTool = (): Tool => ({
 			visible: true,
 		};
 
-		return createNode(doc, doc.rootId, newNode);
+		return createNode(doc, parentId ?? doc.rootId, newNode);
 	},
 });
 
-export const createTextTool = (): Tool => ({
+export const createTextTool = (parentId?: string): Tool => ({
 	type: 'text',
 	handleMouseDown: (doc, x, y) => {
 		const newNode: Partial<Node> & { type: Node['type'] } = {
@@ -40,11 +40,11 @@ export const createTextTool = (): Tool => ({
 			visible: true,
 		};
 
-		return createNode(doc, doc.rootId, newNode);
+		return createNode(doc, parentId ?? doc.rootId, newNode);
 	},
 });
 
-export const createFrameTool = (): Tool => ({
+export const createFrameTool = (parentId?: string): Tool => ({
 	type: 'frame',
 	handleMouseDown: (doc, x, y) => {
 		const newNode: Partial<Node> & { type: Node['type'] } = {
@@ -57,7 +57,7 @@ export const createFrameTool = (): Tool => ({
 			visible: true,
 		};
 
-		return createNode(doc, doc.rootId, newNode);
+		return createNode(doc, parentId ?? doc.rootId, newNode);
 	},
 });
 
