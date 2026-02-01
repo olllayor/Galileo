@@ -146,10 +146,12 @@ export class GeometryCache {
 				? node.children.map((childId) => doc.nodes[childId]).filter((child): child is Node => child !== undefined)
 				: [];
 			const localBounds = node.type === 'group' ? computeGroupLocalBounds(childNodes) : { x: 0, y: 0, width: node.size.width, height: node.size.height };
+			const boundsX = override?.x ?? worldX + localBounds.x;
+			const boundsY = override?.y ?? worldY + localBounds.y;
 			const width = override?.width ?? localBounds.width;
 			const height = override?.height ?? localBounds.height;
 
-			this.boundsMap[node.id] = { x: worldX, y: worldY, width, height };
+			this.boundsMap[node.id] = { x: boundsX, y: boundsY, width, height };
 
 			if (!node.children || node.children.length === 0) continue;
 
@@ -223,9 +225,11 @@ export class GeometryCache {
 				? node.children.map((childId) => doc.nodes[childId]).filter((child): child is Node => child !== undefined)
 				: [];
 			const localBounds = node.type === 'group' ? computeGroupLocalBounds(childNodes) : { x: 0, y: 0, width: node.size.width, height: node.size.height };
+			const boundsX = override?.x ?? worldX + localBounds.x;
+			const boundsY = override?.y ?? worldY + localBounds.y;
 			this.boundsMap[nodeId] = {
-				x: override?.x ?? worldX,
-				y: override?.y ?? worldY,
+				x: boundsX,
+				y: boundsY,
 				width: override?.width ?? localBounds.width,
 				height: override?.height ?? localBounds.height,
 			};

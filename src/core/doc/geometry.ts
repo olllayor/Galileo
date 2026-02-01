@@ -220,10 +220,12 @@ export const buildWorldBoundsMap = (doc: Document, overrides?: BoundsOverrideMap
 			? node.children.map((childId) => doc.nodes[childId]).filter((child): child is Node => child !== undefined)
 			: [];
 		const localBounds = getNodeLocalBounds(node, childNodes);
+		const boundsX = override?.x ?? worldX + localBounds.x;
+		const boundsY = override?.y ?? worldY + localBounds.y;
 		const width = override?.width ?? localBounds.width;
 		const height = override?.height ?? localBounds.height;
 
-		boundsMap[node.id] = { x: worldX, y: worldY, width, height };
+		boundsMap[node.id] = { x: boundsX, y: boundsY, width, height };
 
 		if (!node.children || node.children.length === 0) continue;
 
