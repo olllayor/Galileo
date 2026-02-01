@@ -9,7 +9,7 @@
 
 import type { Document, Node } from './types';
 import type { WorldBoundsMap, ParentMap, BoundsOverrideMap } from './geometry';
-import { computeAutoLayoutPositions } from './geometry';
+import { computeAutoLayoutPositions, computeGroupLocalBounds } from './geometry';
 
 export interface GeometryCacheStats {
 	totalNodes: number;
@@ -142,17 +142,16 @@ export class GeometryCache {
 			const override = overrides?.[node.id];
 			const worldX = override?.x ?? current.x;
 			const worldY = override?.y ?? current.y;
-			const width = override?.width ?? node.size.width;
-			const height = override?.height ?? node.size.height;
+			const childNodes = node.children
+				? node.children.map((childId) => doc.nodes[childId]).filter((child): child is Node => child !== undefined)
+				: [];
+			const localBounds = node.type === 'group' ? computeGroupLocalBounds(childNodes) : { x: 0, y: 0, width: node.size.width, height: node.size.height };
+			const width = override?.width ?? localBounds.width;
+			const height = override?.height ?? localBounds.height;
 
 			this.boundsMap[node.id] = { x: worldX, y: worldY, width, height };
 
 			if (!node.children || node.children.length === 0) continue;
-
-			// Get child nodes
-			const childNodes = node.children
-				.map((childId) => doc.nodes[childId])
-				.filter((child): child is Node => child !== undefined);
 
 			// Compute auto-layout positions if parent has layout
 			const layoutPositions = computeAutoLayoutPositions(node, childNodes);
@@ -220,11 +219,15 @@ export class GeometryCache {
 			}
 
 			const override = overrides?.[nodeId];
+			const childNodes = node.children
+				? node.children.map((childId) => doc.nodes[childId]).filter((child): child is Node => child !== undefined)
+				: [];
+			const localBounds = node.type === 'group' ? computeGroupLocalBounds(childNodes) : { x: 0, y: 0, width: node.size.width, height: node.size.height };
 			this.boundsMap[nodeId] = {
 				x: override?.x ?? worldX,
 				y: override?.y ?? worldY,
-				width: override?.width ?? node.size.width,
-				height: override?.height ?? node.size.height,
+				width: override?.width ?? localBounds.width,
+				height: override?.height ?? localBounds.height,
 			};
 		}
 
