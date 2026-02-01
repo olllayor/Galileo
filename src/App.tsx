@@ -13,12 +13,16 @@ import {
 	createFrameTool,
 	createTextTool,
 	hitTestNodeAtPosition,
+	hitTestNodeStackAtPosition,
 	findSelectableNode,
+	getHitStackInContainer,
+	pickHitCycle,
 	type HitKind,
 } from './interaction/tools';
 import {
 	buildParentMap,
 	buildWorldBoundsMap,
+	findParentNode,
 	getNodeWorldBounds,
 	getSelectionBounds,
 	parseDocumentText,
@@ -582,12 +586,14 @@ export const App: React.FC = () => {
 
 	const [activeTool, setActiveTool] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text'>('select');
 	const [spaceKeyHeld, setSpaceKeyHeld] = useState(false);
-	const [toolBeforeSpace, setToolBeforeSpace] = useState<'select' | 'rectangle' | 'text' | 'hand' | null>(null);
+	const [toolBeforeSpace, setToolBeforeSpace] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text' | null>(null);
 	const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
 	const [zoom, setZoom] = useState(1);
 	const [previewDocument, setPreviewDocument] = useState<Document | null>(null);
 	const [dragState, setDragState] = useState<DragState | null>(null);
 	const [transformSession, setTransformSession] = useState<TransformSession | null>(null);
+	const [containerFocusId, setContainerFocusId] = useState<string | null>(null);
+	const [hitCycle, setHitCycle] = useState<{ key: string; index: number } | null>(null);
 	const [hoverHandle, setHoverHandle] = useState<ResizeHandle | null>(null);
 	const [hoverHit, setHoverHit] = useState<HoverHit | null>(null);
 	const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
@@ -685,6 +691,15 @@ export const App: React.FC = () => {
 	const hitTestAtPoint = useCallback(
 		(worldX: number, worldY: number) =>
 			hitTestNodeAtPosition(displayDocument, worldX, worldY, zoom, {
+				hitSlopPx: HIT_SLOP_PX,
+				edgeMinPx: EDGE_MIN_PX,
+				boundsMap,
+			}),
+		[displayDocument, zoom, boundsMap],
+	);
+	const hitTestStackAtPoint = useCallback(
+		(worldX: number, worldY: number) =>
+			hitTestNodeStackAtPosition(displayDocument, worldX, worldY, zoom, {
 				hitSlopPx: HIT_SLOP_PX,
 				edgeMinPx: EDGE_MIN_PX,
 				boundsMap,
@@ -1860,7 +1875,20 @@ export const App: React.FC = () => {
 				}
 			}
 
-			const hit = hitTestAtPoint(worldX, worldY);
+			const hitStack = hitTestStackAtPoint(worldX, worldY).filter((entry) => entry.node.id !== displayDocument.rootId);
+			const hitIds = hitStack.map((entry) => entry.node.id);
+			const filteredIds = getHitStackInContainer(displayDocument, hitIds, containerFocusId);
+			const hitMap = new Map(hitStack.map((entry) => [entry.node.id, entry]));
+			const hitKey = `${Math.round(worldX)}:${Math.round(worldY)}:${filteredIds.join('|')}`;
+			const cycleIndex = info.altKey && hitCycle?.key === hitKey ? hitCycle.index + 1 : 0;
+			const nextId = info.altKey ? pickHitCycle(filteredIds, cycleIndex) : filteredIds[0] ?? null;
+			if (info.altKey) {
+				setHitCycle(nextId ? { key: hitKey, index: cycleIndex } : null);
+			} else if (hitCycle) {
+				setHitCycle(null);
+			}
+			const hit = nextId ? hitMap.get(nextId) ?? null : null;
+
 			if (hit && hit.node.id !== displayDocument.rootId) {
 				if (hit.locked) {
 					return true;
@@ -1930,6 +1958,8 @@ export const App: React.FC = () => {
 			displayDocument,
 			document,
 			parentMap,
+			containerFocusId,
+			hitCycle,
 			selectionBounds,
 			selectionIds,
 			selectNode,
@@ -1937,7 +1967,7 @@ export const App: React.FC = () => {
 			toggleSelection,
 			view,
 			boundsMap,
-			hitTestAtPoint,
+			hitTestStackAtPoint,
 		],
 	);
 
@@ -2707,6 +2737,7 @@ export const App: React.FC = () => {
 	useEffect(() => {
 		setHoverHandle(null);
 		setHoverHit(null);
+		setHitCycle(null);
 	}, [selectionIds]);
 
 	useEffect(() => {
@@ -2942,6 +2973,14 @@ export const App: React.FC = () => {
 					setHoverHit(null);
 					return;
 				}
+				if (containerFocusId) {
+					e.preventDefault();
+					const parent = findParentNode(displayDocument, containerFocusId);
+					const nextFocus = parent && parent.id !== displayDocument.rootId ? parent.id : null;
+					setContainerFocusId(nextFocus);
+					setSelection([containerFocusId]);
+					return;
+				}
 			}
 
 			if (!editable) {
@@ -2983,6 +3022,12 @@ export const App: React.FC = () => {
 
 				if (e.key === 'Enter') {
 					if (selectionIds.length !== 1) return;
+					const target = document.nodes[selectionIds[0]];
+					if (target && (target.type === 'group' || target.type === 'frame')) {
+						e.preventDefault();
+						setContainerFocusId(target.id);
+						return;
+					}
 					e.preventDefault();
 					dispatchEditorAction({ type: 'rename' });
 					return;
@@ -3097,6 +3142,8 @@ export const App: React.FC = () => {
 			window.removeEventListener('keyup', handleKeyUp, options);
 		};
 	}, [
+		displayDocument,
+		document,
 		selectionIds,
 		canUndo,
 		canRedo,
@@ -3112,6 +3159,8 @@ export const App: React.FC = () => {
 		dragState,
 		dispatchEditorAction,
 		setSelection,
+		containerFocusId,
+		setContainerFocusId,
 		spaceKeyHeld,
 		toolBeforeSpace,
 		activeTool,

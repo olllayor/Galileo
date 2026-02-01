@@ -1,5 +1,5 @@
 import type { Document, Node } from '../../core/doc/types';
-import { createNode } from '../../core/doc';
+import { createNode, findParentNode } from '../../core/doc';
 import type { WorldBoundsMap } from '../../core/doc';
 
 export interface Tool {
@@ -113,6 +113,40 @@ export const hitTestNodeAtPosition = (
 	return hitTestNodeRecursive(doc, rootNode, { x: worldX, y: worldY }, IDENTITY_TRANSFORM, context, options.boundsMap);
 };
 
+export const hitTestNodeStackAtPosition = (
+	doc: Document,
+	worldX: number,
+	worldY: number,
+	zoom: number,
+	options: HitTestOptions = {},
+): HitResult[] => {
+	if (!Number.isFinite(worldX) || !Number.isFinite(worldY)) {
+		return [];
+	}
+
+	const rootNode = doc.nodes[doc.rootId];
+	if (!rootNode) {
+		return [];
+	}
+
+	const zoomSafe = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+	const hitSlopPx =
+		typeof options.hitSlopPx === 'number' && Number.isFinite(options.hitSlopPx) ? Math.max(0, options.hitSlopPx) : 0;
+	const edgeMinPx =
+		typeof options.edgeMinPx === 'number' && Number.isFinite(options.edgeMinPx)
+			? Math.max(0, options.edgeMinPx)
+			: hitSlopPx;
+	const context: HitTestContext = {
+		zoom: zoomSafe,
+		hitSlopPx,
+		edgeMinPx,
+	};
+
+	const results: HitResult[] = [];
+	hitTestNodeRecursiveStack(doc, rootNode, { x: worldX, y: worldY }, IDENTITY_TRANSFORM, context, results, options.boundsMap);
+	return results;
+};
+
 export const findNodeAtPosition = (doc: Document, x: number, y: number, hitSlop = 0): Node | null => {
 	const hit = hitTestNodeAtPosition(doc, x, y, 1, { hitSlopPx: hitSlop });
 	return hit?.node ?? null;
@@ -162,6 +196,50 @@ const hitTestNodeRecursive = (
 		kind,
 		locked: node.locked === true,
 	};
+};
+
+const hitTestNodeRecursiveStack = (
+	doc: Document,
+	node: Node,
+	worldPoint: WorldPoint,
+	parentTransform: WorldTransform,
+	context: HitTestContext,
+	results: HitResult[],
+	boundsMap?: WorldBoundsMap,
+): void => {
+	if (node.visible === false) {
+		return;
+	}
+
+	const nodeTransform = composeTransform(parentTransform, node, boundsMap);
+
+	if (node.children && node.children.length > 0) {
+		for (let i = node.children.length - 1; i >= 0; i--) {
+			const childId = node.children[i];
+			const child = doc.nodes[childId];
+			if (child) {
+				hitTestNodeRecursiveStack(doc, child, worldPoint, nodeTransform, context, results, boundsMap);
+			}
+		}
+	}
+
+	const localPoint = toLocalPoint(worldPoint, nodeTransform);
+	if (!localPoint) {
+		return;
+	}
+
+	const bounds = boundsMap?.[node.id];
+	const sizeOverride = bounds ? { width: bounds.width, height: bounds.height } : undefined;
+	const kind = hitTestNodeShape(node, localPoint, nodeTransform, context, sizeOverride);
+	if (!kind) {
+		return;
+	}
+
+	results.push({
+		node,
+		kind,
+		locked: node.locked === true,
+	});
 };
 
 const composeTransform = (parent: WorldTransform, node: Node, boundsMap?: WorldBoundsMap): WorldTransform => {
@@ -493,6 +571,27 @@ export const findSelectableNode = (doc: Document, nodeId: string, deepSelect: bo
 	}
 
 	return nodeId;
+};
+
+export const pickHitCycle = (ids: string[], cycleIndex: number): string | null => {
+	if (!ids.length) return null;
+	const index = ((cycleIndex % ids.length) + ids.length) % ids.length;
+	return ids[index] ?? null;
+};
+
+export const getHitStackInContainer = (doc: Document, hitIds: string[], containerId: string | null): string[] => {
+	if (!containerId) return hitIds;
+	return hitIds.filter((id) => isDescendantOf(doc, id, containerId));
+};
+
+const isDescendantOf = (doc: Document, nodeId: string, ancestorId: string): boolean => {
+	let current = nodeId;
+	while (true) {
+		const parent = findParentNode(doc, current);
+		if (!parent) return false;
+		if (parent.id === ancestorId) return true;
+		current = parent.id;
+	}
 };
 
 /**
