@@ -87,6 +87,86 @@
       cursor: default;
     }
 
+    .status-inline {
+      display: none;
+    }
+
+    .quality-control {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .quality-label {
+      font-size: 11px;
+      color: #bdbdbd;
+    }
+
+    .quality-hint {
+      font-size: 11px;
+      color: #9b9b9b;
+      white-space: nowrap;
+    }
+
+    .device-hint {
+      margin-left: 6px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.4);
+      cursor: help;
+    }
+
+    .loading-toast {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      border-radius: 999px;
+      background: rgba(30, 30, 30, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+      font-size: 13px;
+      color: #f5f5f5;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      z-index: 2000;
+    }
+
+    .loading-toast.visible {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .loading-toast.error {
+      border-color: rgba(255, 99, 99, 0.5);
+      color: #ffd6d6;
+    }
+
+    .loading-spinner {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #ffffff;
+      animation: spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+
+    .loading-toast.error .loading-spinner {
+      display: none;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
     .content {
       flex: 1;
       display: grid;
@@ -304,6 +384,15 @@
         <option value="2" selected>2x</option>
         <option value="3">3x</option>
       </select>
+      <div class="quality-control">
+        <span class="quality-label">Quality</span>
+        <select id="qualitySelect">
+          <option value="default" selected>Default</option>
+          <option value="high">High</option>
+          <option value="ultra">Ultra</option>
+        </select>
+        <span id="qualityHint" class="quality-hint"></span>
+      </div>
       <div class="divider"></div>
       <button id="download">Download</button>
       <button id="insert" class="ghost">Export to Galileo</button>
@@ -351,9 +440,11 @@
           </div>
         </div>
         <div class="section">
-          <div class="label">Device</div>
+          <div class="label">Device<span class="device-hint" title="Screen fit may vary by model">?</span></div>
           <select id="deviceSelect">
-            <option value="iphone_16_free">iPhone 16 (free)</option>
+            <option value="iphone_15_pro_max">iPhone 15 Pro Max</option>
+            <option value="iphone_16_free" selected>iPhone 16</option>
+            <option value="iphone_17_air">iPhone 17 Air</option>
           </select>
           <div class="label">Position</div>
           <div class="position-row">
@@ -399,6 +490,10 @@
       </div>
     </div>
   </div>
+  <div id="loadingToast" class="loading-toast">
+    <div class="loading-spinner"></div>
+    <div id="loadingText">Loading…</div>
+  </div>
 
   <script src="./lib/three.min.js?v=2"></script>
   <script src="./lib/DRACOLoader.legacy.js?v=2"></script>
@@ -410,9 +505,14 @@
     const selectionEmpty = document.getElementById('selectionEmpty');
     const statusEl = document.getElementById('status');
     const scaleSelect = document.getElementById('scaleSelect');
+    const qualitySelect = document.getElementById('qualitySelect');
+    const qualityHint = document.getElementById('qualityHint');
+    const deviceSelect = document.getElementById('deviceSelect');
     const viewportOverlay = document.getElementById('viewportOverlay');
     const glCanvas = document.getElementById('glCanvas');
     const viewport = document.getElementById('viewport');
+    const loadingToast = document.getElementById('loadingToast');
+    const loadingText = document.getElementById('loadingText');
 
     const pending = new Map();
     const rpc = {
@@ -467,34 +567,212 @@
 
     const assetCache = new Map();
 
+    const QUALITY_CAPS = {
+      default: 4096,
+      high: 6144,
+      ultra: 8192,
+    };
+
+    const QUALITY_LABELS = {
+      default: 'Default',
+      high: 'High',
+      ultra: 'Ultra',
+    };
+
+    const MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
+    const MEMORY_LIMIT_PIXELS = 40_000_000;
+    const MEMORY_CAP_DIM = Math.floor(Math.sqrt(Math.min(MEMORY_LIMIT_PIXELS, MEMORY_LIMIT_BYTES / 4)));
+    const PREVIEW_CAP = 2048;
+
+    const PRESET_CONFIGS = {
+      iphone16: {
+        id: 'iphone16',
+        presetPath: 'presets/iphone16.json',
+        screenConfigId: 'iphone16',
+      },
+    };
+
+    const MODEL_CONFIGS = [
+      {
+        id: 'iphone_15_pro_max',
+        label: 'iPhone 15 Pro Max',
+        modelPath: 'models/iphone_15_pro_max.glb',
+        presetId: 'iphone16',
+        screenConfigId: 'iphone16',
+        screenMaterialHints: ['glass', 'black'],
+      },
+      {
+        id: 'iphone_16_free',
+        label: 'iPhone 16 (Free)',
+        modelPath: 'models/iphone_16_free.glb',
+        presetId: 'iphone16',
+        screenConfigId: 'iphone16',
+        screenMaterialHints: ['screen', 'display'],
+      },
+      {
+        id: 'iphone_17_air',
+        label: 'iPhone 17 Air',
+        modelPath: 'models/iphone_17_air.glb',
+        presetId: 'iphone16',
+        screenConfigId: 'iphone16',
+        screenMaterialHints: ['17air_screen', 'screen'],
+      },
+      {
+        id: 'iphone_17_pro',
+        label: 'iPhone 17 Pro',
+        modelPath: 'models/iphone_17_pro.glb',
+        presetId: 'iphone16',
+        screenConfigId: 'iphone16',
+        screenMaterialHints: ['display', 'screen'],
+      },
+    ];
+
+    const MODEL_CONFIG_MAP = MODEL_CONFIGS.reduce((acc, entry) => {
+      acc[entry.id] = entry;
+      return acc;
+    }, {});
+
     const state = {
       selectionSnapshot: null,
       selectionTexture: null,
       selectionImage: null,
       selectionMeta: null,
       selectionFit: 'cover',
+      selectionTargetAspect: null,
+      modelScreenAspect: null,
+      selectionToken: 0,
+      hqSnapshotInfo: null,
       output: null,
       model: null,
       screenMesh: null,
+      screenMeshTargets: [],
       renderer: null,
       scene: null,
       camera: null,
       preset: null,
       forceFastMode: null,
       envTexture: null,
+      maxTextureSize: QUALITY_CAPS.default,
+      activeModelId: 'iphone_16_free',
+      activeModelConfig: null,
+      screenConfigId: 'iphone16',
+      qualityRequested: 'default',
+      qualityTier: 'default',
+      qualityCap: QUALITY_CAPS.default,
+      qualityMaxAllowed: QUALITY_CAPS.default,
+      qualityCapped: false,
       rotationX: -0.2,
       rotationY: -0.4,
       dragging: false,
       lastX: 0,
       lastY: 0,
       deviceMatch: null,
+      loadingSelection: false,
     };
 
     const setStatus = (text) => {
-      statusEl.textContent = text || '';
+      const message = (text || '').trim();
+      const lower = message.toLowerCase();
+      if (!message) {
+        hideLoadingToast();
+        statusEl.textContent = '';
+        return;
+      }
+      if (lower.includes('loading') || lower.includes('preparing') || lower.includes('upgrading') || lower.includes('updating')) {
+        showLoadingToast(message);
+        return;
+      }
+      if (
+        lower.includes('failed') ||
+        lower.includes('error') ||
+        lower.includes('timeout') ||
+        lower.includes('not detected') ||
+        lower.includes('cancel')
+      ) {
+        showToast(message, true);
+        return;
+      }
+      hideLoadingToast();
+      statusEl.textContent = '';
+    };
+
+    const showLoadingToast = (text) => {
+      if (!loadingToast || !loadingText) return;
+      loadingText.textContent = text;
+      loadingToast.classList.remove('error');
+      loadingToast.classList.add('visible');
+    };
+
+    const showToast = (text, isError) => {
+      if (!loadingToast || !loadingText) return;
+      loadingText.textContent = text;
+      loadingToast.classList.toggle('error', Boolean(isError));
+      loadingToast.classList.add('visible');
+      window.clearTimeout(showToast._hideTimer);
+      showToast._hideTimer = window.setTimeout(() => {
+        hideLoadingToast();
+      }, isError ? 3200 : 2000);
+    };
+    showToast._hideTimer = null;
+
+    const hideLoadingToast = () => {
+      if (!loadingToast) return;
+      loadingToast.classList.remove('visible');
+      loadingToast.classList.remove('error');
     };
 
     setStatus('Ready');
+
+    const resolveQualityCap = (requested) => {
+      const maxTexture = state.maxTextureSize || QUALITY_CAPS.default;
+      const maxAllowed = Math.min(maxTexture, MEMORY_CAP_DIM);
+      let tier = requested;
+
+      if (requested === 'ultra') {
+        if (QUALITY_CAPS.ultra > maxAllowed) {
+          tier = QUALITY_CAPS.high <= maxAllowed ? 'high' : 'default';
+        }
+      } else if (requested === 'high') {
+        if (QUALITY_CAPS.high > maxAllowed) {
+          tier = 'default';
+        }
+      }
+
+      const cap = Math.min(QUALITY_CAPS[tier], maxAllowed);
+      return { requested, tier, cap, maxAllowed };
+    };
+
+    const updateQualityState = (requested = (qualitySelect && qualitySelect.value) || 'default') => {
+      if (!state.selectionMeta) {
+        state.qualityCapped = false;
+      }
+      const result = resolveQualityCap(requested);
+      state.qualityRequested = requested;
+      state.qualityTier = result.tier;
+      state.qualityCap = result.cap;
+      state.qualityMaxAllowed = result.maxAllowed;
+
+      if (qualityHint) {
+        const hintParts = [];
+        if (result.requested !== result.tier) {
+          hintParts.push(`${QUALITY_LABELS[result.requested]} unavailable → using ${QUALITY_LABELS[result.tier]}`);
+        }
+        if (result.tier !== 'default') {
+          hintParts.push('May use more memory / slower');
+        }
+        if (state.qualityCapped) {
+          hintParts.push(`Screen sharpness capped at ${state.qualityCap}px`);
+        }
+        hintParts.push('Capped by GPU max texture size');
+        qualityHint.textContent = hintParts.join(' · ');
+      }
+
+      if (result.requested !== result.tier) {
+        setStatus(`${QUALITY_LABELS[result.requested]} unavailable → using ${QUALITY_LABELS[result.tier]}`);
+      }
+    };
+
+    updateQualityState();
 
     const loadAsset = async (ref) => {
       if (!ref || !ref.scope || !ref.path) {
@@ -675,9 +953,11 @@
       return parseFastVariant(fallback) || 'tilt';
     };
 
-    const loadPreset = async () => {
-      const preset = await loadJsonAsset({ scope: 'bundle', path: 'presets/iphone16.json' });
+    const loadPreset = async (presetId = state.screenConfigId || 'iphone16') => {
+      const config = PRESET_CONFIGS[presetId] || PRESET_CONFIGS.iphone16;
+      const preset = await loadJsonAsset({ scope: 'bundle', path: config.presetPath });
       state.preset = preset;
+      state.screenConfigId = config.screenConfigId || presetId;
       if (preset?.defaultMode === 'fast' || preset?.ui?.fastModeDefault) {
         state.forceFastMode = getFallbackVariant();
       }
@@ -692,19 +972,129 @@
       return preset;
     };
 
+    const getMaterialNames = (material) => {
+      if (!material) return '';
+      const materials = Array.isArray(material) ? material : [material];
+      return materials.map((mat) => mat?.name || '').filter(Boolean).join(' ').toLowerCase();
+    };
+
+    const getScreenKeywordScore = (name, matName) => {
+      const text = `${name} ${matName}`;
+      let score = 0;
+      if (text.includes('screen')) score += 3;
+      if (text.includes('display')) score += 2.5;
+      if (text.includes('lcd')) score += 2;
+      if (text.includes('glass')) score += 1;
+      if (text.includes('front')) score += 0.5;
+      return score;
+    };
+
+    const getScreenHintScore = (name, matName) => {
+      const hints = state.activeModelConfig?.screenMaterialHints || [];
+      if (!hints.length) return 0;
+      const text = `${name} ${matName}`;
+      let score = 0;
+      hints.forEach((hint) => {
+        const needle = String(hint || '').toLowerCase().trim();
+        if (!needle) return;
+        if (text.includes(needle)) {
+          score += 6;
+        }
+      });
+      return score;
+    };
+
+    const pickScreenMeshByPlane = (root) => {
+      if (!root) return null;
+      const expectedAspect = state.preset?.three?.screen?.expectedAspect ?? 2.15;
+      const minAreaRatio = state.preset?.three?.screen?.minAreaRatio ?? 0.05;
+      const modelBox = new THREE.Box3().setFromObject(root);
+      const modelSize = new THREE.Vector3();
+      modelBox.getSize(modelSize);
+      const modelDims = [modelSize.x, modelSize.y, modelSize.z].sort((a, b) => b - a);
+      const modelFaceArea = Math.max(1e-6, modelDims[0] * modelDims[1]);
+      const minDimension = Math.max(0.05, modelDims[0] * 0.06);
+
+      let best = null;
+      let bestScore = -Infinity;
+      let bestAspectScore = 0;
+
+      root.traverse((child) => {
+        if (!child.isMesh) return;
+        const box = new THREE.Box3().setFromObject(child);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const dims = [size.x, size.y, size.z].sort((a, b) => b - a);
+        const area = dims[0] * dims[1];
+        if (!isFinite(area) || area <= 0) return;
+        if (dims[0] < minDimension || dims[1] < minDimension) return;
+        if (area / modelFaceArea < minAreaRatio) return;
+
+        const aspect = dims[0] / Math.max(1e-4, dims[1]);
+        const aspectScore = 1 / (1 + Math.abs(aspect - expectedAspect));
+        const thickness = dims[2];
+        const thicknessRatio = thickness / Math.max(1e-6, dims[0]);
+        const flatness = 1 / (1 + thicknessRatio * 50);
+        const score = area * aspectScore * flatness;
+
+        if (score > bestScore) {
+          bestScore = score;
+          best = child;
+          bestAspectScore = aspectScore;
+        }
+      });
+
+      return best ? { mesh: best, score: bestScore, aspectScore: bestAspectScore } : null;
+    };
+
     const findScreenMesh = (root) => {
-      let candidate = null;
-      const keys = ['screen', 'display', 'glass'];
+      const candidates = [];
+      const expectedAspect = state.preset?.three?.screen?.expectedAspect ?? 2.15;
+      const planeCandidate = pickScreenMeshByPlane(root);
       root.traverse((child) => {
         if (!child.isMesh) return;
         const name = (child.name || '').toLowerCase();
-        const matName = (child.material?.name || '').toLowerCase();
-        if (keys.some(key => name.includes(key) || matName.includes(key))) {
-          candidate = child;
-        }
+        const matName = getMaterialNames(child.material);
+        const keywordScore = getScreenKeywordScore(name, matName);
+        const hintScore = getScreenHintScore(name, matName);
+        const combinedScore = keywordScore + hintScore;
+        if (combinedScore <= 0) return;
+        const box = new THREE.Box3().setFromObject(child);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const dims = [size.x, size.y, size.z].sort((a, b) => b - a);
+        const area = dims[0] * dims[1];
+        const aspect = dims[0] / Math.max(1e-4, dims[1]);
+        const aspectScore = 1 / (1 + Math.abs(aspect - expectedAspect));
+        const score = combinedScore * 1000 + area * aspectScore;
+        candidates.push({ mesh: child, score });
       });
-      if (candidate) return candidate;
-      return pickScreenMeshByGeometry(root);
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => b.score - a.score);
+        if (planeCandidate?.mesh) {
+          const bestAspect = getScreenAspect(candidates[0].mesh);
+          const bestAspectScore = bestAspect
+            ? 1 / (1 + Math.abs(bestAspect - expectedAspect))
+            : 0;
+          if (planeCandidate.aspectScore > bestAspectScore + 0.15) {
+            state.screenMeshTargets = [planeCandidate.mesh];
+            return planeCandidate.mesh;
+          }
+        }
+        const bestScore = candidates[0].score;
+        const threshold = bestScore * 0.7;
+        const targets = candidates.filter((c) => c.score >= threshold).map((c) => c.mesh);
+        state.screenMeshTargets = targets;
+        return candidates[0].mesh;
+      }
+      if (planeCandidate?.mesh) {
+        state.screenMeshTargets = [planeCandidate.mesh];
+        return planeCandidate.mesh;
+      }
+      state.screenMeshTargets = [];
+      const fallback = pickScreenMeshByGeometry(root);
+      state.screenMeshTargets = fallback ? [fallback] : [];
+      return fallback;
     };
 
     const pickScreenMeshByGeometry = (root) => {
@@ -875,6 +1265,12 @@
       });
     };
 
+    const applyTextureToMeshes = (meshes, texture) => {
+      if (!meshes || !texture) return;
+      const list = Array.isArray(meshes) ? meshes : [meshes];
+      list.forEach((mesh) => applyTextureToMesh(mesh, texture));
+    };
+
     const setupScene = () => {
       const renderer = new THREE.WebGLRenderer({
         canvas: glCanvas,
@@ -903,6 +1299,8 @@
       state.renderer = renderer;
       state.scene = scene;
       state.camera = camera;
+      state.maxTextureSize = renderer.capabilities?.maxTextureSize || QUALITY_CAPS.default;
+      updateQualityState(state.qualityRequested);
     };
 
     const fitCameraToObject = (object, offset = 1.6) => {
@@ -930,21 +1328,47 @@
       return mesh;
     };
 
-    const loadModel = async () => {
+    const disposeModel = (model) => {
+      if (!model) return;
+      model.traverse((child) => {
+        if (!child.isMesh) return;
+        if (child.geometry) {
+          child.geometry.dispose();
+        }
+        if (child.material) {
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          materials.forEach((mat) => {
+            if (!mat) return;
+            if (mat.map) mat.map.dispose();
+            if (mat.emissiveMap) mat.emissiveMap.dispose();
+            if (mat.normalMap) mat.normalMap.dispose();
+            if (mat.roughnessMap) mat.roughnessMap.dispose();
+            if (mat.metalnessMap) mat.metalnessMap.dispose();
+            mat.dispose();
+          });
+        }
+      });
+    };
+
+    const loadModel = async (modelConfig = state.activeModelConfig) => {
       const loader = new GLTFLoader();
       const draco = new DRACOLoader();
       draco.setDecoderPath(new URL('./lib/draco/', window.location.href).href);
       loader.setDRACOLoader(draco);
       try {
         setStatus('Loading model...');
-        const presetModelRef = state.preset?.three?.model;
-        const fallbackModelRef = { scope: 'bundle', path: 'models/iphone_16_free.glb' };
+        state.forceFastMode = null;
+        state.modelScreenAspect = null;
+        const fallbackModelRef = { scope: 'bundle', path: modelConfig?.modelPath || 'models/iphone_16_free.glb' };
+        const modelRef = modelConfig?.modelPath
+          ? { scope: 'bundle', path: modelConfig.modelPath }
+          : state.preset?.three?.model;
         let asset;
-        if (presetModelRef) {
+        if (modelRef) {
           try {
-            asset = await loadAsset(presetModelRef);
+            asset = await loadAsset(modelRef);
           } catch (error) {
-            console.warn('Failed to load preset model, using fallback', error);
+            console.warn('Failed to load model, using fallback', error);
             asset = await loadAsset(fallbackModelRef);
           }
         } else {
@@ -958,6 +1382,14 @@
         if (!model) {
           throw new Error('GLB scene is empty');
         }
+
+        if (state.model && state.scene) {
+          state.scene.remove(state.model);
+          disposeModel(state.model);
+          state.model = null;
+          state.screenMesh = null;
+        }
+
         const box = new THREE.Box3().setFromObject(model);
         const size = new THREE.Vector3();
         box.getSize(size);
@@ -985,10 +1417,15 @@
 
         state.screenMesh = findScreenMesh(model);
         if (!state.screenMesh) {
+          state.modelScreenAspect = null;
           state.forceFastMode = parseFastVariant(state.preset?.fallback?.onNoScreen || 'fast.tilt');
           setStatus('Screen mesh not detected. Using Fast mode.');
         } else if (state.selectionTexture) {
-          applyTextureToMesh(state.screenMesh, state.selectionTexture);
+          state.modelScreenAspect = getScreenAspect(state.screenMesh);
+          const targets = state.screenMeshTargets?.length ? state.screenMeshTargets : state.screenMesh;
+          applyTextureToMeshes(targets, state.selectionTexture);
+        } else {
+          state.modelScreenAspect = getScreenAspect(state.screenMesh);
         }
 
         fitCameraToObject(model, state.preset?.three?.camera?.fit ?? 1.6);
@@ -1046,22 +1483,44 @@
       return width / height;
     };
 
-    const createTextureFromSnapshot = async (snapshot, fitMode) => {
+    const isPowerOfTwo = (value) => (value & (value - 1)) === 0 && value !== 0;
+
+    const getTargetScreenAspect = (devicePresetId) => {
+      if (devicePresetId && DEVICE_ASPECTS[devicePresetId]) {
+        return DEVICE_ASPECTS[devicePresetId];
+      }
+      if (state.preset?.three?.screen?.expectedAspect) {
+        return state.preset.three.screen.expectedAspect;
+      }
+      return getScreenAspect(state.screenMesh);
+    };
+
+    const getFitAspect = (aspect) => {
+      if (!aspect || !isFinite(aspect)) return null;
+      return aspect >= 1 ? 1 / aspect : aspect;
+    };
+
+    const createTextureFromSnapshot = async (snapshot, fitMode, targetAspect) => {
       const img = state.selectionImage || await createImageFromSnapshot(snapshot);
       let source = img;
       if (fitMode !== 'exact') {
-        const aspect = getScreenAspect(state.screenMesh);
-        if (aspect) {
-          source = createFitCanvasForAspect(img, aspect, fitMode || 'cover');
+        const aspect = targetAspect || getScreenAspect(state.screenMesh);
+        const fitAspect = getFitAspect(aspect);
+        if (fitAspect) {
+          source = createFitCanvasForAspect(img, fitAspect, fitMode || 'cover');
         }
       }
       const texture = new THREE.Texture(source);
       texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      const canMipmap = isPowerOfTwo(source.width) && isPowerOfTwo(source.height);
       // High-quality texture filtering settings
-      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.minFilter = canMipmap ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
-      texture.generateMipmaps = true;
-      texture.anisotropy = state.renderer?.capabilities?.getMaxAnisotropy?.() || 16;
+      texture.generateMipmaps = canMipmap;
+      const maxAnisotropy = state.renderer?.capabilities?.getMaxAnisotropy?.() || 1;
+      texture.anisotropy = Math.min(8, maxAnisotropy);
       texture.needsUpdate = true;
       texture.flipY = false;
       return texture;
@@ -1127,27 +1586,65 @@
 
     const createFitCanvasForAspect = (img, aspect, mode) => {
       if (!aspect || !isFinite(aspect)) return img;
-      const maxDim = Math.max(img.width, img.height);
-      let width = maxDim;
-      let height = Math.round(maxDim / aspect);
-      if (aspect < 1) {
-        width = Math.round(maxDim * aspect);
-        height = maxDim;
-      }
-      const rect = { x: 0, y: 0, w: width, h: height, padding: 0 };
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, width);
-      canvas.height = Math.max(1, height);
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return img;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
+      const imgW = img.width || 1;
+      const imgH = img.height || 1;
+      const imgAspect = imgW / imgH;
+
       if (mode === 'contain') {
-        drawImageContain(ctx, img, rect);
-      } else {
-        drawImageCover(ctx, img, rect);
+        let canvasW = imgW;
+        let canvasH = imgH;
+        if (imgAspect > aspect) {
+          canvasW = imgW;
+          canvasH = Math.round(imgW / aspect);
+        } else {
+          canvasH = imgH;
+          canvasW = Math.round(imgH * aspect);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, canvasW);
+        canvas.height = Math.max(1, canvasH);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return img;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        const dx = Math.round((canvasW - imgW) / 2);
+        const dy = Math.round((canvasH - imgH) / 2);
+        ctx.drawImage(img, dx, dy);
+        return canvas;
       }
-      return canvas;
+
+      if (mode === 'cover') {
+        let canvasW = imgW;
+        let canvasH = imgH;
+        let sx = 0;
+        let sy = 0;
+        let sW = imgW;
+        let sH = imgH;
+
+        if (imgAspect > aspect) {
+          canvasH = imgH;
+          canvasW = Math.round(imgH * aspect);
+          sW = canvasW;
+          sx = Math.round((imgW - sW) / 2);
+        } else {
+          canvasW = imgW;
+          canvasH = Math.round(imgW / aspect);
+          sH = canvasH;
+          sy = Math.round((imgH - sH) / 2);
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, canvasW);
+        canvas.height = Math.max(1, canvasH);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return img;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, sx, sy, sW, sH, 0, 0, canvasW, canvasH);
+        return canvas;
+      }
+
+      return img;
     };
 
     const estimateQuadSize = (quad) => {
@@ -1274,17 +1771,71 @@
     // Helper to check if aspect ratios match within epsilon
     const aspectsMatch = (a, b, epsilon = 0.01) => Math.abs(a - b) < epsilon;
 
+    const getOutputDimensions = () => {
+      const scale = Number(scaleSelect.value || 1);
+      const viewWidth = viewport.clientWidth;
+      const viewHeight = viewport.clientHeight;
+      const minDimension = 2048;
+      const maxDimension = state.qualityCap || QUALITY_CAPS.default;
+      const aspectRatio = viewWidth / viewHeight;
+
+      let exportWidth;
+      let exportHeight;
+      if (aspectRatio >= 1) {
+        exportWidth = Math.max(viewWidth * scale, minDimension * scale);
+        exportHeight = Math.round(exportWidth / aspectRatio);
+      } else {
+        exportHeight = Math.max(viewHeight * scale, minDimension * scale);
+        exportWidth = Math.round(exportHeight * aspectRatio);
+      }
+
+      if (exportWidth > maxDimension || exportHeight > maxDimension) {
+        const ratio = maxDimension / Math.max(exportWidth, exportHeight);
+        exportWidth = Math.round(exportWidth * ratio);
+        exportHeight = Math.round(exportHeight * ratio);
+      }
+
+      return { width: exportWidth, height: exportHeight, scale };
+    };
+
+    const getDesiredSnapshotScale = (selectionSize, capOverride) => {
+      const safeSize = selectionSize || { width: 1, height: 1 };
+      const { width: outputW, height: outputH } = getOutputDimensions();
+      const outputMaxSide = Math.max(outputW, outputH);
+      const rawDesired = Math.round(outputMaxSide * 1.1);
+      const cap = capOverride ?? state.qualityCap ?? QUALITY_CAPS.default;
+      const desiredMaxSide = Math.min(cap, rawDesired);
+      const selectionMaxSide = Math.max(safeSize.width, safeSize.height, 1);
+      const scale = desiredMaxSide / selectionMaxSide;
+      return {
+        scale: Math.max(0.1, scale),
+        capped: rawDesired > cap,
+        desiredMaxSide,
+        outputMaxSide,
+      };
+    };
+
     const loadSelection = async () => {
+      if (state.loadingSelection) return;
+      state.loadingSelection = true;
+      state.selectionToken = (state.selectionToken || 0) + 1;
+      const currentToken = state.selectionToken;
       try {
+        setStatus('Loading selection...');
         const selection = await rpc.call('selection.get');
+        if (state.selectionToken !== currentToken) return;
         if (!selection.primaryId) {
           selectionPreview.src = '';
           selectionEmpty.style.display = 'block';
           state.selectionSnapshot = null;
           state.selectionImage = null;
           state.selectionMeta = null;
+          state.selectionTargetAspect = null;
           state.selectionFit = 'cover';
           state.deviceMatch = null;
+          state.qualityCapped = false;
+          state.hqSnapshotInfo = null;
+          updateQualityState(state.qualityRequested);
           return;
         }
 
@@ -1303,7 +1854,7 @@
         } : null;
 
         // Determine best fit mode based on device preset matching
-        const targetAspect = state.preset?.three?.screen?.expectedAspect ?? 2.15;
+        const targetAspect = getTargetScreenAspect(devicePresetId) ?? 2.15;
         let fitMode = 'cover'; // Default for non-frames
         let matchQuality = null;
 
@@ -1336,20 +1887,26 @@
 
         state.selectionFit = fitMode;
         state.deviceMatch = matchQuality;
+        state.selectionTargetAspect = targetAspect;
 
-        // Use higher resolution snapshot for better 3D mockup quality
-        // Scale based on user selection in topbar (1x, 2x, 3x)
-        const exportScale = Number(scaleSelect.value || 2);
-        const snapshotScale = Math.max(exportScale, 3); // Minimum 3x for quality
+        // Use a fast preview snapshot first, then upgrade in background if needed
+        const previewCap = Math.min(state.qualityCap || QUALITY_CAPS.default, PREVIEW_CAP);
+        const hqInfo = getDesiredSnapshotScale(selectionSize, state.qualityCap);
+        const previewInfo = getDesiredSnapshotScale(selectionSize, previewCap);
+        state.qualityCapped = hqInfo.capped;
+        updateQualityState(state.qualityRequested);
 
         const snapshot = await rpc.call('export.snapshot', {
           nodeId: selection.primaryId,
-          scale: snapshotScale,
+          scale: previewInfo.scale,
+          maxDim: previewCap,
+          allowUpscale: true,
           format: 'png',
           background: 'transparent',
           includeFrameFill: true,
           clipToBounds: isFrame,
         });
+        if (state.selectionToken !== currentToken) return;
 
         state.selectionSnapshot = snapshot;
         selectionPreview.src = `data:${snapshot.mime};base64,${snapshot.dataBase64}`;
@@ -1358,35 +1915,111 @@
         state.output = null;
 
         state.selectionImage = await createImageFromSnapshot(snapshot);
-        const texture = await createTextureFromSnapshot(snapshot, state.selectionFit);
-        state.selectionTexture = texture;
+        if (state.selectionToken !== currentToken) return;
         if (!state.screenMesh && state.model) {
           state.screenMesh = findScreenMesh(state.model);
+        }
+        if (state.screenMesh) {
+          state.modelScreenAspect = getScreenAspect(state.screenMesh) || state.modelScreenAspect;
         }
         if (!state.screenMesh) {
           setStatus('Screen mesh not detected. Try a different device model.');
           return;
         }
-        applyTextureToMesh(state.screenMesh, texture);
+        const renderAspect = state.modelScreenAspect || targetAspect;
+        const texture = await createTextureFromSnapshot(snapshot, state.selectionFit, renderAspect);
+        state.selectionTexture = texture;
+        const targets = state.screenMeshTargets?.length ? state.screenMeshTargets : state.screenMesh;
+        applyTextureToMeshes(targets, texture);
 
         // Update status with match quality indicator
+        let baseStatus = '';
         if (matchQuality === 'perfect') {
-          setStatus('✅ Perfect fit! Device frame matches mockup.');
+          baseStatus = '✅ Perfect fit! Device frame matches mockup.';
         } else if (matchQuality === 'aspect-match') {
-          setStatus('✅ Selection loaded. Aspect ratio matches.');
+          baseStatus = '✅ Selection loaded. Aspect ratio matches.';
         } else if (matchQuality === 'compatible') {
-          setStatus('Selection loaded. Using contain mode for different device.');
+          baseStatus = 'Selection loaded. Using contain mode for different device.';
         } else if (isFrame) {
-          setStatus('Selection loaded.');
+          baseStatus = 'Selection loaded.';
         } else {
-          setStatus('Selection loaded. Tip: use a Device Frame for best results.');
+          baseStatus = 'Selection loaded. Tip: use a Device Frame for best results.';
         }
+        setStatus(baseStatus);
+
+        const shouldUpgrade =
+          (state.qualityCap || QUALITY_CAPS.default) > previewCap && hqInfo.scale > previewInfo.scale * 1.05;
+        state.hqSnapshotInfo = shouldUpgrade
+          ? {
+            nodeId: selection.primaryId,
+            scale: hqInfo.scale,
+            maxDim: state.qualityCap,
+            isFrame,
+            renderAspect,
+            baseStatus,
+            token: currentToken,
+          }
+          : null;
       } catch (error) {
         setStatus(error.message);
+      } finally {
+        state.loadingSelection = false;
+      }
+    };
+
+    const ensureHighQualitySnapshot = async () => {
+      const info = state.hqSnapshotInfo;
+      if (!info) return;
+      if (state.selectionToken !== info.token) {
+        state.hqSnapshotInfo = null;
+        return;
+      }
+      try {
+        setStatus('Preparing high quality texture...');
+        const hqSnapshot = await rpc.call('export.snapshot', {
+          nodeId: info.nodeId,
+          scale: info.scale,
+          maxDim: info.maxDim,
+          allowUpscale: true,
+          format: 'png',
+          background: 'transparent',
+          includeFrameFill: true,
+          clipToBounds: info.isFrame,
+        });
+        if (state.selectionToken !== info.token) {
+          state.hqSnapshotInfo = null;
+          return;
+        }
+        state.selectionSnapshot = hqSnapshot;
+        selectionPreview.src = `data:${hqSnapshot.mime};base64,${hqSnapshot.dataBase64}`;
+        state.output = null;
+        state.selectionImage = await createImageFromSnapshot(hqSnapshot);
+        if (state.selectionToken !== info.token) {
+          state.hqSnapshotInfo = null;
+          return;
+        }
+        const hqTexture = await createTextureFromSnapshot(hqSnapshot, state.selectionFit, info.renderAspect);
+        state.selectionTexture = hqTexture;
+        if (state.screenMesh) {
+          const targets = state.screenMeshTargets?.length ? state.screenMeshTargets : state.screenMesh;
+          applyTextureToMeshes(targets, hqTexture);
+        }
+        if (info.baseStatus) {
+          setStatus(info.baseStatus);
+        }
+      } catch (error) {
+        if (state.selectionToken === info.token) {
+          setStatus(error.message);
+        }
+      } finally {
+        state.hqSnapshotInfo = null;
       }
     };
 
     const generateOutput = async () => {
+      if (state.hqSnapshotInfo) {
+        await ensureHighQualitySnapshot();
+      }
       if (state.forceFastMode) {
         return renderFastOutput(state.forceFastMode);
       }
@@ -1395,33 +2028,9 @@
       }
       if (!state.renderer) return null;
 
-      const scale = Number(scaleSelect.value || 1);
       const viewWidth = viewport.clientWidth;
       const viewHeight = viewport.clientHeight;
-
-      // Calculate high-quality export resolution
-      // Base resolution on viewport but with a minimum quality floor
-      const minDimension = 2048; // Minimum export dimension for quality
-      const aspectRatio = viewWidth / viewHeight;
-
-      let exportWidth, exportHeight;
-      if (aspectRatio >= 1) {
-        // Landscape or square
-        exportWidth = Math.max(viewWidth * scale, minDimension * scale);
-        exportHeight = Math.round(exportWidth / aspectRatio);
-      } else {
-        // Portrait
-        exportHeight = Math.max(viewHeight * scale, minDimension * scale);
-        exportWidth = Math.round(exportHeight * aspectRatio);
-      }
-
-      // Cap at reasonable max to prevent memory issues (4K max per dimension)
-      const maxDimension = 4096;
-      if (exportWidth > maxDimension || exportHeight > maxDimension) {
-        const ratio = maxDimension / Math.max(exportWidth, exportHeight);
-        exportWidth = Math.round(exportWidth * ratio);
-        exportHeight = Math.round(exportHeight * ratio);
-      }
+      const { width: exportWidth, height: exportHeight } = getOutputDimensions();
 
       // Temporarily disable pixel ratio for export (we're already scaling)
       const originalPixelRatio = state.renderer.getPixelRatio();
@@ -1604,9 +2213,13 @@
       if (state.selectionSnapshot && state.screenMesh) {
         try {
           state.selectionImage = state.selectionImage || await createImageFromSnapshot(state.selectionSnapshot);
-          const texture = await createTextureFromSnapshot(state.selectionSnapshot, mode);
+          const targetAspect = state.selectionTargetAspect || getTargetScreenAspect(state.selectionMeta?.devicePresetId);
+          const renderAspect =
+            state.modelScreenAspect || getScreenAspect(state.screenMesh) || targetAspect;
+          const texture = await createTextureFromSnapshot(state.selectionSnapshot, mode, renderAspect);
           state.selectionTexture = texture;
-          applyTextureToMesh(state.screenMesh, texture);
+          const targets = state.screenMeshTargets?.length ? state.screenMeshTargets : state.screenMesh;
+          applyTextureToMeshes(targets, texture);
           state.output = null; // Invalidate cached output
           setStatus(`Fit mode: ${mode}`);
         } catch (error) {
@@ -1622,6 +2235,32 @@
       });
     });
 
+    const refreshSelectionForQuality = async () => {
+      state.output = null;
+      if (!state.selectionMeta) return;
+      setStatus('Updating selection for quality...');
+      await loadSelection();
+      updateFitModeUI();
+    };
+
+    const applyModelSelection = async (modelId) => {
+      const config = MODEL_CONFIG_MAP[modelId] || MODEL_CONFIG_MAP.iphone_16_free || MODEL_CONFIGS[0];
+      if (!config) return;
+      state.activeModelId = config.id;
+      state.activeModelConfig = config;
+      if (deviceSelect && deviceSelect.value !== config.id) {
+        deviceSelect.value = config.id;
+      }
+      if (config.screenConfigId !== state.screenConfigId || !state.preset) {
+        await loadPreset(config.screenConfigId);
+      }
+      await loadModel(config);
+      updateCamera();
+      if (state.selectionMeta) {
+        await refreshSelectionForQuality();
+      }
+    };
+
     document.getElementById('loadSelection').addEventListener('click', async () => {
       await loadSelection();
       updateFitModeUI();
@@ -1630,6 +2269,20 @@
       await loadSelection();
       updateFitModeUI();
     });
+    scaleSelect.addEventListener('change', async () => {
+      await refreshSelectionForQuality();
+    });
+    if (qualitySelect) {
+      qualitySelect.addEventListener('change', async () => {
+        updateQualityState(qualitySelect.value);
+        await refreshSelectionForQuality();
+      });
+    }
+    if (deviceSelect) {
+      deviceSelect.addEventListener('change', async () => {
+        await applyModelSelection(deviceSelect.value);
+      });
+    }
     document.getElementById('download').addEventListener('click', handleDownload);
     document.getElementById('insert').addEventListener('click', handleInsert);
 
@@ -1639,13 +2292,16 @@
 
     const init = async () => {
       setupScene();
+      const initialModelId = (deviceSelect && deviceSelect.value) || state.activeModelId;
+      state.activeModelId = initialModelId;
+      state.activeModelConfig = MODEL_CONFIG_MAP[initialModelId] || MODEL_CONFIG_MAP.iphone_16_free || MODEL_CONFIGS[0];
       try {
-        await loadPreset();
+        await loadPreset(state.activeModelConfig?.screenConfigId || 'iphone16');
       } catch (error) {
         console.error('Failed to load preset', error);
         setStatus('Failed to load preset. Using defaults.');
       }
-      await loadModel();
+      await loadModel(state.activeModelConfig);
       updateCamera();
       animate();
     };

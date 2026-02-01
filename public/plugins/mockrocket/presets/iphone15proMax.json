@@ -1,0 +1,18 @@
+{
+  "id": "iphone15proMax",
+  "name": "iPhone 15 Pro Max",
+  "mode": "3d",
+  "defaultMode": "3d",
+  "ui": { "fastModeDefault": false, "disableFast": true },
+  "three": {
+    "model": { "scope": "bundle", "path": "models/iphone_15_pro_max.glb" },
+    "env": { "scope": "shared", "path": "v1/env/studio.hdr" },
+    "screen": {
+      "strategy": "auto",
+      "expectedAspect": 2.15,
+      "minAreaRatio": 0.08,
+      "materialHints": ["black"]
+    },
+    "camera": { "fov": 45, "orbit": { "x": -0.35, "y": -0.5 }, "fit": 1.6 }
+  }
+}

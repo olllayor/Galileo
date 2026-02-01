@@ -1,0 +1,18 @@
+{
+  "id": "iphone17air",
+  "name": "iPhone 17 Air",
+  "mode": "3d",
+  "defaultMode": "3d",
+  "ui": { "fastModeDefault": false, "disableFast": true },
+  "three": {
+    "model": { "scope": "bundle", "path": "models/iphone_17_air.glb" },
+    "env": { "scope": "shared", "path": "v1/env/studio.hdr" },
+    "screen": {
+      "strategy": "auto",
+      "expectedAspect": 2.15,
+      "minAreaRatio": 0.08,
+      "materialHints": ["17air_screen"]
+    },
+    "camera": { "fov": 45, "orbit": { "x": -0.35, "y": -0.5 }, "fit": 1.6 }
+  }
+}

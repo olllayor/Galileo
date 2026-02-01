@@ -10,6 +10,10 @@ export type SnapshotOptions = {
 	background?: 'transparent' | 'solid';
 	includeFrameFill?: boolean;
 	clipToBounds?: boolean;
+	/** Max output dimension (pixels). Applied after scaling. */
+	maxDim?: number;
+	/** Allow scaling above 1x (upscale). Default false. */
+	allowUpscale?: boolean;
 	/** Use native Rust encoder (faster) or browser canvas (fallback) */
 	useNativeEncoder?: boolean;
 	/** WebP quality 0-100 (only for webp format) */
@@ -23,10 +27,12 @@ export type SnapshotResult = {
 	height: number;
 	/** Encoding time in milliseconds (for benchmarking) */
 	encodeTimeMs?: number;
-};
-
-const clamp = (value: number, min: number, max: number): number => {
-	return Math.min(max, Math.max(min, value));
+	/** Debug info for scale/clamp diagnostics */
+	requestedScale?: number;
+	usedScale?: number;
+	pixelW?: number;
+	pixelH?: number;
+	clampedBy?: string[];
 };
 
 const preloadImages = async (sources: string[]): Promise<void> => {
@@ -120,11 +126,27 @@ export const exportNodeSnapshot = async (
 		throw new Error('Node not found');
 	}
 
-	const scale = clamp(options.scale ?? 1, 1, 4);
+	const requestedScale = Math.max(options.scale ?? 1, 0.1);
+	let scale = requestedScale;
+	const clampedBy: string[] = [];
+	const allowUpscale = options.allowUpscale ?? false;
+	if (!allowUpscale && scale > 1) {
+		scale = 1;
+		clampedBy.push('allowUpscale');
+	}
+	const maxDim = Math.max(1, Math.floor(options.maxDim ?? 4096));
 	const format = options.format ?? 'png';
 	const useNativeEncoder = options.useNativeEncoder ?? true; // Default to Rust encoder
-	const width = Math.max(1, Math.round(node.size.width * scale));
-	const height = Math.max(1, Math.round(node.size.height * scale));
+	let width = Math.max(1, Math.round(node.size.width * scale));
+	let height = Math.max(1, Math.round(node.size.height * scale));
+
+	if (Math.max(width, height) > maxDim) {
+		const ratio = maxDim / Math.max(width, height);
+		scale *= ratio;
+		width = Math.max(1, Math.round(node.size.width * scale));
+		height = Math.max(1, Math.round(node.size.height * scale));
+		clampedBy.push('maxDim');
+	}
 
 	const canvas = window.document.createElement('canvas');
 	canvas.width = width;
@@ -180,5 +202,10 @@ export const exportNodeSnapshot = async (
 		width,
 		height,
 		encodeTimeMs,
+		requestedScale,
+		usedScale: scale,
+		pixelW: width,
+		pixelH: height,
+		clampedBy: clampedBy.length > 0 ? clampedBy : undefined,
 	};
 };
