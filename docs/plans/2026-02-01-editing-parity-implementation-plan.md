@@ -10,6 +10,18 @@
 
 ---
 
+## Scope Status (2026-02-01)
+
+- File + structure basics (multi-page files, pages/assets tabs): Not started
+- Containers & selection parity (frame tool + frame behaviors distinct from groups): Partial
+- Vector toolset (pen, vector edit mode, vector networks, node editing): Not started
+- Shape combining (boolean ops): Not started
+- Layout & responsiveness (constraints + layout guides + deeper auto-layout): Partial (basic auto-layout only)
+- Design system core (components/instances/variants + overrides): Not started
+- Styles system (shared color/text/effect/layout-guide styles): Not started
+
+---
+
 ### Task 1: Enforce group auto-bounds + frame explicit size in geometry
 
 **Files:**
