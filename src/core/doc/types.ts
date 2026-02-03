@@ -50,9 +50,53 @@ export const layoutSchema = z.object({
 		left: z.number(),
 	}),
 	alignment: z.enum(['start', 'center', 'end']),
+	crossAlignment: z.enum(['start', 'center', 'end', 'stretch']).optional(),
 });
 
 export type Layout = z.infer<typeof layoutSchema>;
+
+export const layoutSizingSchema = z.object({
+	horizontal: z.enum(['fixed', 'hug', 'fill']),
+	vertical: z.enum(['fixed', 'hug', 'fill']),
+});
+
+export type LayoutSizing = z.infer<typeof layoutSizingSchema>;
+
+export const constraintAxisXSchema = z.enum(['left', 'right', 'left-right', 'center']);
+export const constraintAxisYSchema = z.enum(['top', 'bottom', 'top-bottom', 'center']);
+export const constraintsSchema = z.object({
+	horizontal: constraintAxisXSchema,
+	vertical: constraintAxisYSchema,
+});
+
+export type ConstraintAxisX = z.infer<typeof constraintAxisXSchema>;
+export type ConstraintAxisY = z.infer<typeof constraintAxisYSchema>;
+export type Constraints = z.infer<typeof constraintsSchema>;
+
+export const layoutGuideTypeSchema = z.enum(['grid', 'columns', 'rows']);
+export const layoutGuideGridSchema = z.object({
+	size: z.number().positive(),
+});
+export const layoutGuideColumnsSchema = z.object({
+	count: z.number().int().min(1),
+	gutter: z.number().min(0),
+	margin: z.number().min(0),
+});
+export const layoutGuideRowsSchema = z.object({
+	count: z.number().int().min(1),
+	gutter: z.number().min(0),
+	margin: z.number().min(0),
+});
+export const layoutGuideSchema = z.object({
+	type: layoutGuideTypeSchema,
+	visible: z.boolean().optional(),
+	grid: layoutGuideGridSchema.optional(),
+	columns: layoutGuideColumnsSchema.optional(),
+	rows: layoutGuideRowsSchema.optional(),
+});
+
+export type LayoutGuideType = z.infer<typeof layoutGuideTypeSchema>;
+export type LayoutGuide = z.infer<typeof layoutGuideSchema>;
 
 export const nodeSchema = z.object({
 	id: z.string(),
@@ -110,6 +154,9 @@ export const nodeSchema = z.object({
 	visible: z.boolean().optional(),
 	aspectRatioLocked: z.boolean().optional(),
 	clipContent: z.boolean().optional(),
+	constraints: constraintsSchema.optional(),
+	layoutGuides: layoutGuideSchema.optional(),
+	layoutSizing: layoutSizingSchema.optional(),
 });
 
 export type Node = z.infer<typeof nodeSchema>;

@@ -22,16 +22,21 @@ import {
 import {
 	buildParentMap,
 	buildWorldBoundsMap,
+	buildLayoutGuideTargets,
+	computeConstrainedBounds,
+	computeLayoutGuideLines,
 	findParentNode,
 	getNodeWorldBounds,
 	getSelectionBounds,
 	parseDocumentText,
+	resolveConstraints,
 	serializeDocument,
 	type BoundsOverrideMap,
+	type Bounds,
 	type WorldBoundsMap,
 } from './core/doc';
 import { generateId } from './core/doc/id';
-import type { Document, Node } from './core/doc/types';
+import type { Constraints, Document, Node } from './core/doc/types';
 import type { Command } from './core/commands/types';
 import type { CanvasPointerInfo, CanvasWheelInfo } from './hooks/useCanvas';
 import { getHandleCursor, hitTestHandle } from './interaction/handles';
@@ -69,6 +74,7 @@ const AUTOSAVE_KEY = 'galileo.autosave.v1';
 const AUTOSAVE_DELAY_MS = 1500;
 const ZOOM_SENSITIVITY = 0.0035;
 const TEXT_PADDING = 4;
+const CLIPBOARD_PREFIX = 'GALILEO_CLIPBOARD_V1:';
 type DragState =
 	| {
 			mode: 'pan';
@@ -94,6 +100,7 @@ type DragState =
 			initialPosition: { x: number; y: number };
 			initialSize: { width: number; height: number };
 			lockAspectRatio: boolean;
+			constraintSnapshot?: FrameConstraintSnapshot | null;
 	  }
 	| {
 			mode: 'marquee';
@@ -108,6 +115,12 @@ type HoverHit = {
 	kind: HitKind;
 	locked: boolean;
 	edgeCursor?: string;
+};
+
+type FrameConstraintSnapshot = {
+	frameId: string;
+	frameSize: { width: number; height: number };
+	children: Record<string, { bounds: Bounds; constraints: Constraints }>;
 };
 
 type EditorAction =
@@ -130,6 +143,15 @@ type TransformSession = {
 	startPointerWorld: { x: number; y: number };
 	startBoundsMap?: WorldBoundsMap;
 	modifiers: { shiftKey: boolean; altKey: boolean };
+};
+
+type ClipboardPayload = {
+	version: 1;
+	rootIds: string[];
+	nodes: Record<string, Node>;
+	bounds: Bounds;
+	rootWorldPositions: Record<string, { x: number; y: number }>;
+	parentId: string | null;
 };
 
 const applyPositionUpdates = (doc: Document, updates: Record<string, { x: number; y: number }>): Document => {
@@ -303,6 +325,79 @@ const computeResizeBounds = (
 
 	return { x, y, width, height };
 };
+
+const buildFrameConstraintSnapshot = (
+	doc: Document,
+	frameId: string,
+	boundsMap: WorldBoundsMap,
+): FrameConstraintSnapshot | null => {
+	const frame = doc.nodes[frameId];
+	if (!frame || frame.type !== 'frame') return null;
+	if (!frame.children || frame.children.length === 0) return null;
+	if (frame.layout) return null;
+
+	const frameBounds = boundsMap[frameId];
+	if (!frameBounds) return null;
+
+	const children: FrameConstraintSnapshot['children'] = {};
+	for (const childId of frame.children) {
+		const child = doc.nodes[childId];
+		const childBounds = boundsMap[childId];
+		if (!child || !childBounds) continue;
+		children[childId] = {
+			bounds: {
+				x: childBounds.x - frameBounds.x,
+				y: childBounds.y - frameBounds.y,
+				width: childBounds.width,
+				height: childBounds.height,
+			},
+			constraints: resolveConstraints(child.constraints),
+		};
+	}
+
+	if (Object.keys(children).length === 0) return null;
+
+	return {
+		frameId,
+		frameSize: { width: frameBounds.width, height: frameBounds.height },
+		children,
+	};
+};
+
+const computeFrameConstraintUpdates = (
+	snapshot: FrameConstraintSnapshot,
+	nextSize: { width: number; height: number },
+): Record<string, { position: { x: number; y: number }; size: { width: number; height: number } }> => {
+	const updates: Record<string, { position: { x: number; y: number }; size: { width: number; height: number } }> = {};
+	for (const [childId, child] of Object.entries(snapshot.children)) {
+		const nextBounds = computeConstrainedBounds(child.bounds, child.constraints, snapshot.frameSize, nextSize);
+		updates[childId] = {
+			position: { x: nextBounds.x, y: nextBounds.y },
+			size: { width: nextBounds.width, height: nextBounds.height },
+		};
+	}
+	return updates;
+};
+
+const parseClipboardPayload = (text: string | null): ClipboardPayload | null => {
+	if (!text) return null;
+	if (!text.startsWith(CLIPBOARD_PREFIX)) return null;
+	const raw = text.slice(CLIPBOARD_PREFIX.length);
+	try {
+		const parsed = JSON.parse(raw) as ClipboardPayload;
+		if (!parsed || parsed.version !== 1) return null;
+		if (!Array.isArray(parsed.rootIds) || typeof parsed.nodes !== 'object') return null;
+		return parsed;
+	} catch (error) {
+		console.warn('Failed to parse clipboard payload', error);
+		return null;
+	}
+};
+
+const mergeSnapTargets = (a: SnapTargets, b: SnapTargets): SnapTargets => ({
+	x: [...a.x, ...b.x],
+	y: [...a.y, ...b.y],
+});
 
 const rectFromPoints = (
 	a: { x: number; y: number },
@@ -640,6 +735,8 @@ export const App: React.FC = () => {
 	const pluginIframeRef = useRef<HTMLIFrameElement | null>(null);
 	const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
+	const clipboardRef = useRef<ClipboardPayload | null>(null);
+	const clipboardPasteCountRef = useRef(0);
 	const canvasSize = { width: 1280, height: 800 };
 	const isDev = import.meta.env?.DEV ?? false;
 
@@ -672,6 +769,14 @@ export const App: React.FC = () => {
 		() => getSelectionBounds(displayDocument, selectionIds, boundsMap),
 		[displayDocument, selectionIds, boundsMap],
 	);
+	const layoutGuideState = useMemo(() => {
+		if (selectionIds.length !== 1) return { lines: [], bounds: null as Bounds | null };
+		const node = displayDocument.nodes[selectionIds[0]];
+		if (!node || node.type !== 'frame' || !node.layoutGuides) return { lines: [], bounds: null };
+		const bounds = boundsMap[node.id];
+		if (!bounds) return { lines: [], bounds: null };
+		return { lines: computeLayoutGuideLines(node, bounds), bounds };
+	}, [selectionIds, displayDocument, boundsMap]);
 	const pluginMap = useMemo(() => {
 		return new Map(plugins.map((plugin) => [plugin.manifest.id, plugin]));
 	}, [plugins]);
@@ -808,6 +913,20 @@ export const App: React.FC = () => {
 			return { x: worldX - parentBounds.x, y: worldY - parentBounds.y };
 		},
 		[boundsMap, document.rootId],
+	);
+
+	const getLayoutGuideTargetsForParent = useCallback(
+		(parentId: string | null): SnapTargets => {
+			if (!parentId) return { x: [], y: [] };
+			const parent = document.nodes[parentId];
+			if (!parent || parent.type !== 'frame' || !parent.layoutGuides) {
+				return { x: [], y: [] };
+			}
+			const parentBounds = boundsMap[parentId];
+			if (!parentBounds) return { x: [], y: [] };
+			return buildLayoutGuideTargets(parent, parentBounds);
+		},
+		[document.nodes, boundsMap],
 	);
 	const getEdgeCursorForNode = useCallback(
 		(nodeId: string, worldX: number, worldY: number): string => {
@@ -1052,6 +1171,171 @@ export const App: React.FC = () => {
 			y: 40,
 		};
 	}, [displayDocument, boundsMap, selectionIds]);
+
+	const copySelectionToClipboard = useCallback(() => {
+		if (selectionIds.length === 0) return;
+
+		const isDescendantOf = (nodeId: string, potentialAncestorId: string): boolean => {
+			let current = documentParentMap[nodeId];
+			while (current) {
+				if (current === potentialAncestorId) return true;
+				current = documentParentMap[current] || null;
+			}
+			return false;
+		};
+
+		const topLevelIds = selectionIds.filter((id) => {
+			return !selectionIds.some((otherId) => otherId !== id && isDescendantOf(id, otherId));
+		});
+		if (topLevelIds.length === 0) return;
+
+		const parentIds = new Set(topLevelIds.map((id) => documentParentMap[id] ?? null));
+		const parentId = parentIds.size === 1 ? Array.from(parentIds)[0] : null;
+
+		const docBoundsMap = buildWorldBoundsMap(document);
+		const bounds = getSelectionBounds(document, topLevelIds, docBoundsMap);
+		if (!bounds) return;
+
+		const nodes: Record<string, Node> = {};
+		const rootWorldPositions: ClipboardPayload['rootWorldPositions'] = {};
+
+		const collect = (nodeId: string) => {
+			const node = document.nodes[nodeId];
+			if (!node) return;
+			nodes[nodeId] = node;
+			if (node.children) {
+				for (const childId of node.children) {
+					collect(childId);
+				}
+			}
+		};
+
+		for (const id of topLevelIds) {
+			const rootBounds = docBoundsMap[id];
+			if (rootBounds) {
+				rootWorldPositions[id] = { x: rootBounds.x, y: rootBounds.y };
+			}
+			collect(id);
+		}
+
+		const payload: ClipboardPayload = {
+			version: 1,
+			rootIds: topLevelIds,
+			nodes,
+			bounds,
+			rootWorldPositions,
+			parentId,
+		};
+
+		clipboardRef.current = payload;
+		clipboardPasteCountRef.current = 0;
+
+		const textPayload = `${CLIPBOARD_PREFIX}${JSON.stringify(payload)}`;
+		if (navigator.clipboard?.writeText) {
+			void navigator.clipboard.writeText(textPayload).catch(() => {
+				// Ignore clipboard permission errors; internal clipboard still works.
+			});
+		}
+	}, [selectionIds, documentParentMap, document]);
+
+	const pasteClipboardPayload = useCallback(
+		(payload: ClipboardPayload) => {
+			if (!payload.rootIds.length) return;
+
+			const targetParentId =
+				payload.parentId && document.nodes[payload.parentId] ? payload.parentId : document.rootId;
+			const docBoundsMap = buildWorldBoundsMap(document);
+			const parentBounds = docBoundsMap[targetParentId];
+			const parentWorld = {
+				x: parentBounds?.x ?? 0,
+				y: parentBounds?.y ?? 0,
+			};
+
+			const pasteOffset = (clipboardPasteCountRef.current + 1) * 24;
+			const anchor = getDefaultInsertPosition();
+			const deltaWorld =
+				payload.parentId && payload.parentId === targetParentId
+					? { x: pasteOffset, y: pasteOffset }
+					: {
+							x: anchor.x - payload.bounds.x + pasteOffset,
+							y: anchor.y - payload.bounds.y + pasteOffset,
+						};
+
+			const idMap = new Map<string, string>();
+			const commands: Command[] = [];
+			const newRootIds: string[] = [];
+			const parent = document.nodes[targetParentId];
+			const baseIndex = parent?.children?.length ?? 0;
+
+			const ensureId = (oldId: string) => {
+				const existing = idMap.get(oldId);
+				if (existing) return existing;
+				const nextId = generateId();
+				idMap.set(oldId, nextId);
+				return nextId;
+			};
+
+			const cloneNode = (oldId: string, parentId: string, isRoot: boolean, index?: number) => {
+				const node = payload.nodes[oldId];
+				if (!node) return;
+				const newId = ensureId(oldId);
+				const { id: _id, children, ...rest } = node;
+				const baseWorld = payload.rootWorldPositions[oldId] || { x: node.position.x, y: node.position.y };
+				const position = isRoot
+					? {
+							x: baseWorld.x + deltaWorld.x - parentWorld.x,
+							y: baseWorld.y + deltaWorld.y - parentWorld.y,
+						}
+					: { ...node.position };
+				commands.push({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Paste node',
+					type: 'createNode',
+					payload: {
+						id: newId,
+						parentId,
+						index,
+						node: {
+							...(rest as Omit<Node, 'id' | 'children'>),
+							position,
+							size: { ...node.size },
+						},
+					},
+				} as Command);
+				if (isRoot) {
+					newRootIds.push(newId);
+				}
+				if (children && children.length > 0) {
+					for (const childId of children) {
+						cloneNode(childId, newId, false);
+					}
+				}
+			};
+
+			payload.rootIds.forEach((rootId, index) => cloneNode(rootId, targetParentId, true, baseIndex + index));
+
+			if (commands.length === 0) return;
+			if (commands.length === 1) {
+				executeCommand(commands[0]);
+			} else {
+				executeCommand({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Paste nodes',
+					type: 'batch',
+					payload: { commands },
+				} as Command);
+			}
+			if (newRootIds.length > 0) {
+				setSelection(newRootIds);
+			}
+			clipboardPasteCountRef.current += 1;
+		},
+		[document, executeCommand, getDefaultInsertPosition, setSelection],
+	);
 
 	const runPlugin = useCallback((plugin: PluginRegistration) => {
 		setActivePlugin(plugin);
@@ -1961,6 +2245,8 @@ export const App: React.FC = () => {
 						const node = document.nodes[nodeId];
 						const startBounds = getNodeWorldBounds(displayDocument, nodeId, boundsMap);
 						if (node && startBounds) {
+							const constraintSnapshot =
+								node.type === 'frame' ? buildFrameConstraintSnapshot(document, nodeId, boundsMap) : null;
 							setDragState({
 								mode: 'resize',
 								startWorld: { x: worldX, y: worldY },
@@ -1971,6 +2257,7 @@ export const App: React.FC = () => {
 								initialPosition: { ...node.position },
 								initialSize: { ...node.size },
 								lockAspectRatio: Boolean(node.aspectRatioLocked || info.shiftKey),
+								constraintSnapshot,
 							});
 							setPreviewDocument(document);
 							return true;
@@ -2076,7 +2363,10 @@ export const App: React.FC = () => {
 				const startBounds = getSelectionBounds(displayDocument, nextSelection, boundsMap);
 				const snapTargets =
 					nextSelection.length === 1
-						? buildSiblingSnapTargets(document, nodeId, parentMap, boundsMap)
+						? mergeSnapTargets(
+								buildSiblingSnapTargets(document, nodeId, parentMap, boundsMap),
+								getLayoutGuideTargetsForParent(parentMap[nodeId] ?? null),
+							)
 						: { x: [], y: [] };
 
 				setDragState({
@@ -2113,6 +2403,7 @@ export const App: React.FC = () => {
 			displayDocument,
 			document,
 			parentMap,
+			getLayoutGuideTargetsForParent,
 			containerFocusId,
 			hitCycle,
 			selectionBounds,
@@ -2453,7 +2744,10 @@ export const App: React.FC = () => {
 					1,
 					dragState.lockAspectRatio,
 				);
-				const snapTargets = buildSiblingSnapTargets(dragState.baseDoc, dragState.nodeId, parentMap, boundsMap);
+				const snapTargets = mergeSnapTargets(
+					buildSiblingSnapTargets(dragState.baseDoc, dragState.nodeId, parentMap, boundsMap),
+					getLayoutGuideTargetsForParent(parentMap[dragState.nodeId] ?? null),
+				);
 				const snap = snapDisabled
 					? { bounds: rawBounds, guides: [] }
 					: applyResizeSnapping(dragState.startBounds, rawBounds, snapTargets, zoom);
@@ -2463,7 +2757,14 @@ export const App: React.FC = () => {
 					y: dragState.initialPosition.y + (nextBounds.y - dragState.startBounds.y),
 				};
 				const nextSize = { width: nextBounds.width, height: nextBounds.height };
-				setPreviewDocument(applyBoundsUpdate(dragState.baseDoc, dragState.nodeId, nextPosition, nextSize));
+				let nextDoc = applyBoundsUpdate(dragState.baseDoc, dragState.nodeId, nextPosition, nextSize);
+				if (dragState.constraintSnapshot) {
+					const childUpdates = computeFrameConstraintUpdates(dragState.constraintSnapshot, nextSize);
+					if (Object.keys(childUpdates).length > 0) {
+						nextDoc = applyBoundsUpdates(nextDoc, childUpdates);
+					}
+				}
+				setPreviewDocument(nextDoc);
 				setSnapGuides(snap.guides);
 				return;
 			}
@@ -2510,6 +2811,7 @@ export const App: React.FC = () => {
 			displayDocument,
 			boundsMap,
 			parentMap,
+			getLayoutGuideTargetsForParent,
 			setSelection,
 			hitTestAtPoint,
 			getEdgeCursorForNode,
@@ -2678,7 +2980,10 @@ export const App: React.FC = () => {
 					1,
 					dragState.lockAspectRatio,
 				);
-				const snapTargets = buildSiblingSnapTargets(dragState.baseDoc, dragState.nodeId, parentMap, boundsMap);
+				const snapTargets = mergeSnapTargets(
+					buildSiblingSnapTargets(dragState.baseDoc, dragState.nodeId, parentMap, boundsMap),
+					getLayoutGuideTargetsForParent(parentMap[dragState.nodeId] ?? null),
+				);
 				const snap = snapDisabled
 					? { bounds: rawBounds, guides: [] }
 					: applyResizeSnapping(dragState.startBounds, rawBounds, snapTargets, zoom);
@@ -2693,8 +2998,9 @@ export const App: React.FC = () => {
 				const sizeChanged =
 					nextSize.width !== dragState.initialSize.width || nextSize.height !== dragState.initialSize.height;
 
+				const subCommands: Command[] = [];
 				if (positionChanged || sizeChanged) {
-					executeCommand({
+					subCommands.push({
 						id: generateId(),
 						timestamp: Date.now(),
 						source: 'user',
@@ -2709,6 +3015,47 @@ export const App: React.FC = () => {
 						},
 					});
 				}
+
+				if (dragState.constraintSnapshot) {
+					const childUpdates = computeFrameConstraintUpdates(dragState.constraintSnapshot, nextSize);
+					for (const [childId, update] of Object.entries(childUpdates)) {
+						const child = dragState.baseDoc.nodes[childId];
+						if (!child) continue;
+						const changed =
+							Math.abs(update.position.x - child.position.x) > 0.01 ||
+							Math.abs(update.position.y - child.position.y) > 0.01 ||
+							Math.abs(update.size.width - child.size.width) > 0.01 ||
+							Math.abs(update.size.height - child.size.height) > 0.01;
+						if (!changed) continue;
+						subCommands.push({
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Apply constraints',
+							type: 'setProps',
+							payload: {
+								id: childId,
+								props: {
+									position: update.position,
+									size: update.size,
+								},
+							},
+						});
+					}
+				}
+
+				if (subCommands.length === 1) {
+					executeCommand(subCommands[0]);
+				} else if (subCommands.length > 1) {
+					executeCommand({
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'user',
+						description: 'Resize with constraints',
+						type: 'batch',
+						payload: { commands: subCommands },
+					} as Command);
+				}
 			}
 
 			setPreviewDocument(null);
@@ -2717,7 +3064,17 @@ export const App: React.FC = () => {
 			setHoverHandle(null);
 			setHoverHit(null);
 		},
-		[dragState, transformSession, snapDisabled, zoom, executeCommand, parentMap, boundsMap, documentParentMap],
+		[
+			dragState,
+			transformSession,
+			snapDisabled,
+			zoom,
+			executeCommand,
+			parentMap,
+			boundsMap,
+			documentParentMap,
+			getLayoutGuideTargetsForParent,
+		],
 	);
 
 	const handleCanvasWheel = useCallback((info: CanvasWheelInfo) => {
@@ -2766,6 +3123,63 @@ export const App: React.FC = () => {
 				}
 			}
 
+			const sizeUpdate = (nextUpdates as Partial<Node>).size;
+			if (
+				current?.type === 'frame' &&
+				sizeUpdate &&
+				typeof sizeUpdate.width === 'number' &&
+				typeof sizeUpdate.height === 'number' &&
+				!current.layout
+			) {
+				const snapshot = buildFrameConstraintSnapshot(document, id, boundsMap);
+				if (snapshot) {
+					const childUpdates = computeFrameConstraintUpdates(snapshot, sizeUpdate);
+					const subCommands: Command[] = [
+						{
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Update frame',
+							type: 'setProps',
+							payload: { id, props: nextUpdates },
+						},
+					];
+
+					for (const [childId, update] of Object.entries(childUpdates)) {
+						const child = document.nodes[childId];
+						if (!child) continue;
+						const changed =
+							Math.abs(update.position.x - child.position.x) > 0.01 ||
+							Math.abs(update.position.y - child.position.y) > 0.01 ||
+							Math.abs(update.size.width - child.size.width) > 0.01 ||
+							Math.abs(update.size.height - child.size.height) > 0.01;
+						if (!changed) continue;
+						subCommands.push({
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Apply constraints',
+							type: 'setProps',
+							payload: { id: childId, props: { position: update.position, size: update.size } },
+						});
+					}
+
+					if (subCommands.length === 1) {
+						executeCommand(subCommands[0]);
+					} else {
+						executeCommand({
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Update frame with constraints',
+							type: 'batch',
+							payload: { commands: subCommands },
+						} as Command);
+					}
+					return;
+				}
+			}
+
 			executeCommand({
 				id: generateId(),
 				timestamp: Date.now(),
@@ -2778,7 +3192,7 @@ export const App: React.FC = () => {
 				},
 			});
 		},
-		[document.nodes, executeCommand, measureTextSize],
+		[document.nodes, document, boundsMap, executeCommand, measureTextSize],
 	);
 
 	const handleRenameNode = useCallback(
@@ -3009,6 +3423,15 @@ export const App: React.FC = () => {
 			if (!clipboardData) return;
 			if (isEditableTarget(event.target)) return;
 
+			const customText =
+				clipboardData.getData('application/x-galileo') || clipboardData.getData('text/plain');
+			const payload = parseClipboardPayload(customText);
+			if (payload) {
+				event.preventDefault();
+				pasteClipboardPayload(payload);
+				return;
+			}
+
 			const files = Array.from(clipboardData.files || []);
 			const imageFiles = files.filter((file) => file.type.startsWith('image/') || isLikelyImageName(file.name));
 
@@ -3079,12 +3502,21 @@ export const App: React.FC = () => {
 						console.error('Paste image error:', error);
 					}
 				})();
+				return;
+			}
+
+			if (clipboardRef.current) {
+				const text = clipboardData.getData('text/plain');
+				if (!text) {
+					event.preventDefault();
+					pasteClipboardPayload(clipboardRef.current);
+				}
 			}
 		};
 
 		window.addEventListener('paste', handlePaste);
 		return () => window.removeEventListener('paste', handlePaste);
-	}, [insertImageNode]);
+	}, [insertImageNode, pasteClipboardPayload]);
 
 	useEffect(() => {
 		const handleDragOver = (event: DragEvent) => {
@@ -3096,13 +3528,30 @@ export const App: React.FC = () => {
 			event.preventDefault();
 			event.stopPropagation();
 
-			const files = event.dataTransfer?.files;
-			if (!files || files.length === 0) return;
+			const dataTransfer = event.dataTransfer;
+			if (!dataTransfer) return;
+
+			const rect = canvasWrapperRef.current?.getBoundingClientRect();
+			const screenX = rect ? event.clientX - rect.left : event.clientX;
+			const screenY = rect ? event.clientY - rect.top : event.clientY;
+			const safeZoom = zoom === 0 ? 1 : zoom;
+			const worldX = (screenX - panOffset.x) / safeZoom;
+			const worldY = (screenY - panOffset.y) / safeZoom;
+			const basePosition = { x: worldX, y: worldY };
+
+			const files = Array.from(dataTransfer.files || []);
+			const itemFiles = Array.from(dataTransfer.items || [])
+				.filter((item) => item.kind === 'file')
+				.map((item) => item.getAsFile())
+				.filter((file): file is File => Boolean(file));
+
+			const allFiles = files.length > 0 ? files : itemFiles;
 
 			void (async () => {
 				try {
-					for (let i = 0; i < files.length; i += 1) {
-						const file = files[i];
+					if (allFiles.length > 0) {
+						for (let i = 0; i < allFiles.length; i += 1) {
+							const file = allFiles[i];
 						if (!file.type.startsWith('image/')) continue;
 
 						const dataUrl = await readFileAsDataUrl(file);
@@ -3111,7 +3560,35 @@ export const App: React.FC = () => {
 							mime: file.type || getMimeType(file.name),
 							name: file.name,
 							index: i,
+							position: {
+								x: basePosition.x + i * 24,
+								y: basePosition.y + i * 24,
+							},
 						});
+					}
+						return;
+					}
+
+					const paths = extractFilePaths(dataTransfer);
+					if (paths.length > 0) {
+						for (let i = 0; i < paths.length; i += 1) {
+							const path = paths[i];
+							if (!isLikelyImageName(path)) continue;
+							const base64 = await invoke<string>('load_binary', { path });
+							const mime = getMimeType(path);
+							const name = path.split(/[/\\\\]/).pop();
+							await insertImageNode({
+								dataBase64: base64,
+								mime,
+								name,
+								originalPath: path,
+								index: i,
+								position: {
+									x: basePosition.x + i * 24,
+									y: basePosition.y + i * 24,
+								},
+							});
+						}
 					}
 				} catch (error) {
 					console.error('Drop image error:', error);
@@ -3125,7 +3602,7 @@ export const App: React.FC = () => {
 			window.removeEventListener('dragover', handleDragOver);
 			window.removeEventListener('drop', handleDrop);
 		};
-	}, [insertImageNode]);
+	}, [insertImageNode, panOffset.x, panOffset.y, zoom]);
 
 	useEffect(() => {
 		const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -3224,6 +3701,12 @@ export const App: React.FC = () => {
 				if (isCmd && key === 'a') {
 					e.preventDefault();
 					setSelection(getSelectableNodeIds(document));
+					return;
+				}
+				if (isCmd && key === 'c') {
+					if (!hasSelection) return;
+					e.preventDefault();
+					copySelectionToClipboard();
 					return;
 				}
 				if (isCmd && key === 'd') {
@@ -3389,6 +3872,7 @@ export const App: React.FC = () => {
 		handleSave,
 		handleLoad,
 		handleImportImage,
+		copySelectionToClipboard,
 		transformSession,
 		contextMenu,
 		activePlugin,
@@ -3476,6 +3960,8 @@ export const App: React.FC = () => {
 						showHandles={selectionIds.length > 0}
 						hoverHandle={hoverHandle}
 						snapGuides={snapGuides}
+						layoutGuides={layoutGuideState.lines}
+						layoutGuideBounds={layoutGuideState.bounds}
 						marqueeRect={marqueeRect}
 						cursor={cursor}
 						onMouseLeave={() => {

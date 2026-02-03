@@ -52,40 +52,27 @@ const getNodeLocalBounds = (node: Node, children: Node[]): Bounds => {
 export const computeAutoLayoutPositions = (
 	parent: Node,
 	children: Node[],
-): Record<string, { x: number; y: number }> => {
-	const positions: Record<string, { x: number; y: number }> = {};
+): Record<string, { x: number; y: number; width: number; height: number }> => {
+	const positions: Record<string, { x: number; y: number; width: number; height: number }> = {};
 	const layout = parent.layout;
 
 	if (!layout || layout.type !== 'auto') {
-		// No auto-layout, use stored positions
+		// No auto-layout, use stored positions/sizes
 		for (const child of children) {
-			positions[child.id] = { x: child.position.x, y: child.position.y };
+			positions[child.id] = {
+				x: child.position.x,
+				y: child.position.y,
+				width: child.size.width,
+				height: child.size.height,
+			};
 		}
 		return positions;
 	}
 
 	const { direction, gap, padding, alignment } = layout;
+	const crossAlignment = layout.crossAlignment ?? 'center';
 	const isRow = direction === 'row';
 
-	// Calculate total content size for alignment
-	let totalMainSize = 0;
-	let maxCrossSize = 0;
-
-	for (const child of children) {
-		if (child.visible === false) continue;
-		const mainSize = isRow ? child.size.width : child.size.height;
-		const crossSize = isRow ? child.size.height : child.size.width;
-		totalMainSize += mainSize;
-		maxCrossSize = Math.max(maxCrossSize, crossSize);
-	}
-
-	// Add gaps between visible children
-	const visibleChildren = children.filter((c) => c.visible !== false);
-	if (visibleChildren.length > 1) {
-		totalMainSize += gap * (visibleChildren.length - 1);
-	}
-
-	// Available space
 	const availableMainSize = isRow
 		? parent.size.width - padding.left - padding.right
 		: parent.size.height - padding.top - padding.bottom;
@@ -93,47 +80,98 @@ export const computeAutoLayoutPositions = (
 		? parent.size.height - padding.top - padding.bottom
 		: parent.size.width - padding.left - padding.right;
 
-	// Starting position based on alignment
-	let mainOffset: number;
-	if (alignment === 'center') {
-		mainOffset = (isRow ? padding.left : padding.top) + (availableMainSize - totalMainSize) / 2;
-	} else if (alignment === 'end') {
-		mainOffset = (isRow ? padding.left : padding.top) + (availableMainSize - totalMainSize);
-	} else {
-		// 'start' is default
-		mainOffset = isRow ? padding.left : padding.top;
+	const visibleChildren = children.filter((c) => c.visible !== false);
+
+	const resolvedSizes = visibleChildren.map((child) => {
+		const sizing = child.layoutSizing ?? { horizontal: 'fixed', vertical: 'fixed' };
+		const mainSizing = isRow ? sizing.horizontal : sizing.vertical;
+		const crossSizing = isRow ? sizing.vertical : sizing.horizontal;
+		const mainSize = isRow ? child.size.width : child.size.height;
+		const crossSize = isRow ? child.size.height : child.size.width;
+		return { child, mainSizing, crossSizing, mainSize, crossSize };
+	});
+
+	const nonFillMain = resolvedSizes.filter((entry) => entry.mainSizing !== 'fill');
+	const fillMain = resolvedSizes.filter((entry) => entry.mainSizing === 'fill');
+	let totalMainSize = nonFillMain.reduce((acc, entry) => acc + entry.mainSize, 0);
+	if (visibleChildren.length > 1) {
+		totalMainSize += gap * (visibleChildren.length - 1);
 	}
 
-	// Ensure mainOffset is at least the padding
+	const remaining = Math.max(0, availableMainSize - totalMainSize);
+	const fillSize = fillMain.length > 0 ? remaining / fillMain.length : 0;
+
+	const finalMainSizes = new Map<string, number>();
+	for (const entry of resolvedSizes) {
+		if (entry.mainSizing === 'fill') {
+			finalMainSizes.set(entry.child.id, Math.max(1, fillSize));
+		} else {
+			finalMainSizes.set(entry.child.id, entry.mainSize);
+		}
+	}
+
+	const totalFinalMain =
+		Array.from(finalMainSizes.values()).reduce((acc, value) => acc + value, 0) +
+		(visibleChildren.length > 1 ? gap * (visibleChildren.length - 1) : 0);
+
+	let mainOffset: number;
+	if (alignment === 'center') {
+		mainOffset = (isRow ? padding.left : padding.top) + (availableMainSize - totalFinalMain) / 2;
+	} else if (alignment === 'end') {
+		mainOffset = (isRow ? padding.left : padding.top) + (availableMainSize - totalFinalMain);
+	} else {
+		mainOffset = isRow ? padding.left : padding.top;
+	}
 	mainOffset = Math.max(mainOffset, isRow ? padding.left : padding.top);
 
-	// Position each child
 	for (const child of children) {
 		if (child.visible === false) {
-			// Hidden children keep their stored position
-			positions[child.id] = { x: child.position.x, y: child.position.y };
+			positions[child.id] = {
+				x: child.position.x,
+				y: child.position.y,
+				width: child.size.width,
+				height: child.size.height,
+			};
 			continue;
 		}
 
-		const childMainSize = isRow ? child.size.width : child.size.height;
-		const childCrossSize = isRow ? child.size.height : child.size.width;
+		const sizing = child.layoutSizing ?? { horizontal: 'fixed', vertical: 'fixed' };
+		const mainSize = finalMainSizes.get(child.id) ?? (isRow ? child.size.width : child.size.height);
+		let crossSize = isRow ? child.size.height : child.size.width;
+		const crossSizing = isRow ? sizing.vertical : sizing.horizontal;
+		const shouldStretch = crossAlignment === 'stretch' && crossSizing !== 'fixed';
+		if (crossSizing === 'fill' || shouldStretch) {
+			crossSize = Math.max(1, availableCrossSize);
+		}
 
-		// Cross-axis centering (perpendicular to main direction)
-		const crossOffset = (isRow ? padding.top : padding.left) + (availableCrossSize - childCrossSize) / 2;
+		let crossOffset = 0;
+		if (crossAlignment === 'start') {
+			crossOffset = isRow ? padding.top : padding.left;
+		} else if (crossAlignment === 'end') {
+			crossOffset = (isRow ? padding.top : padding.left) + (availableCrossSize - crossSize);
+		} else if (crossAlignment === 'stretch') {
+			crossOffset = isRow ? padding.top : padding.left;
+		} else {
+			crossOffset = (isRow ? padding.top : padding.left) + (availableCrossSize - crossSize) / 2;
+		}
 
 		if (isRow) {
 			positions[child.id] = {
 				x: mainOffset,
 				y: Math.max(padding.top, crossOffset),
+				width: mainSize,
+				height: crossSize,
 			};
 		} else {
 			positions[child.id] = {
 				x: Math.max(padding.left, crossOffset),
 				y: mainOffset,
+				width: crossSize,
+				height: mainSize,
 			};
 		}
 
-		mainOffset += childMainSize + gap;
+		mainOffset += mainSize + gap;
 	}
 
 	return positions;
@@ -197,6 +235,7 @@ export const buildWorldPositionMap = (doc: Document): WorldPositionMap => {
 
 export const buildWorldBoundsMap = (doc: Document, overrides?: BoundsOverrideMap): WorldBoundsMap => {
 	const boundsMap: WorldBoundsMap = {};
+	const layoutOverrides: BoundsOverrideMap = {};
 	const root = doc.nodes[doc.rootId];
 	if (!root) {
 		return boundsMap;
@@ -213,7 +252,8 @@ export const buildWorldBoundsMap = (doc: Document, overrides?: BoundsOverrideMap
 		const node = doc.nodes[current.id];
 		if (!node) continue;
 
-		const override = overrides?.[node.id];
+		const layoutOverride = layoutOverrides[node.id];
+		const override = layoutOverride ? { ...layoutOverride, ...(overrides?.[node.id] ?? {}) } : overrides?.[node.id];
 		const worldX = override?.x ?? current.x;
 		const worldY = override?.y ?? current.y;
 		const childNodes = node.children
@@ -236,6 +276,12 @@ export const buildWorldBoundsMap = (doc: Document, overrides?: BoundsOverrideMap
 			const layoutPos = layoutPositions[child.id];
 			const childLocalX = layoutPos?.x ?? child.position.x;
 			const childLocalY = layoutPos?.y ?? child.position.y;
+			if (layoutPos) {
+				layoutOverrides[child.id] = {
+					width: layoutPos.width,
+					height: layoutPos.height,
+				};
+			}
 
 			stack.push({
 				id: child.id,

@@ -117,6 +117,7 @@ export class GeometryCache {
 		this.boundsMap = {};
 		this.parentMap = {};
 		this.dirtyNodes.clear();
+		const layoutOverrides: BoundsOverrideMap = {};
 
 		const root = doc.nodes[doc.rootId];
 		if (!root) return;
@@ -139,7 +140,8 @@ export class GeometryCache {
 
 			this.stats.totalNodes++;
 
-			const override = overrides?.[node.id];
+			const layoutOverride = layoutOverrides[node.id];
+			const override = layoutOverride ? { ...layoutOverride, ...(overrides?.[node.id] ?? {}) } : overrides?.[node.id];
 			const worldX = override?.x ?? current.x;
 			const worldY = override?.y ?? current.y;
 			const childNodes = node.children
@@ -163,6 +165,12 @@ export class GeometryCache {
 				const layoutPos = layoutPositions[child.id];
 				const childLocalX = layoutPos?.x ?? child.position.x;
 				const childLocalY = layoutPos?.y ?? child.position.y;
+				if (layoutPos) {
+					layoutOverrides[child.id] = {
+						width: layoutPos.width,
+						height: layoutPos.height,
+					};
+				}
 
 				stack.push({
 					id: child.id,
@@ -199,6 +207,7 @@ export class GeometryCache {
 			let worldX: number;
 			let worldY: number;
 
+			let layoutSizeOverride: { width: number; height: number } | null = null;
 			if (parentId && parentBounds) {
 				const parent = doc.nodes[parentId];
 				if (parent) {
@@ -207,6 +216,9 @@ export class GeometryCache {
 						.filter((n): n is Node => n !== undefined);
 					const layoutPositions = computeAutoLayoutPositions(parent, childNodes);
 					const layoutPos = layoutPositions[nodeId];
+					if (layoutPos) {
+						layoutSizeOverride = { width: layoutPos.width, height: layoutPos.height };
+					}
 					const localX = layoutPos?.x ?? node.position.x;
 					const localY = layoutPos?.y ?? node.position.y;
 					worldX = parentBounds.x + localX;
@@ -220,7 +232,7 @@ export class GeometryCache {
 				worldY = node.position.y;
 			}
 
-			const override = overrides?.[nodeId];
+			const override = layoutSizeOverride ? { ...layoutSizeOverride, ...(overrides?.[nodeId] ?? {}) } : overrides?.[nodeId];
 			const childNodes = node.children
 				? node.children.map((childId) => doc.nodes[childId]).filter((child): child is Node => child !== undefined)
 				: [];

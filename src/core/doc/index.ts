@@ -5,6 +5,8 @@ export * from './geometry-cache';
 export * from './spatial-index';
 export * from './performance';
 export * from './serialization';
+export * from './constraints';
+export * from './layout-guides';
 
 export const createNode = (
 	doc: Document,

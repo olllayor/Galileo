@@ -19,6 +19,8 @@ interface CanvasProps {
 	showHandles?: boolean;
 	hoverHandle?: ResizeHandle | null;
 	snapGuides?: SnapGuide[];
+	layoutGuides?: SnapGuide[];
+	layoutGuideBounds?: Bounds | null;
 	marqueeRect?: { x: number; y: number; width: number; height: number } | null;
 	cursor?: string;
 	onMouseLeave?: () => void;
@@ -40,6 +42,8 @@ export const Canvas: React.FC<CanvasProps> = ({
 	showHandles = true,
 	hoverHandle,
 	snapGuides = [],
+	layoutGuides = [],
+	layoutGuideBounds = null,
 	marqueeRect,
 	cursor,
 	onMouseLeave,
@@ -194,6 +198,33 @@ export const Canvas: React.FC<CanvasProps> = ({
 							height: guide.orientation === 'horizontal' ? '1px' : height,
 							backgroundColor: '#ff5a5a',
 							opacity: 0.8,
+							pointerEvents: 'none',
+						}}
+					/>
+				))}
+
+				{layoutGuides.map((guide, index) => (
+					<div
+						key={`layout-${guide.orientation}-${guide.value}-${index}`}
+						style={{
+							position: 'absolute',
+							left:
+								guide.orientation === 'vertical'
+									? guide.value * view.zoom + view.pan.x
+									: (layoutGuideBounds?.x ?? 0) * view.zoom + view.pan.x,
+							top:
+								guide.orientation === 'horizontal'
+									? guide.value * view.zoom + view.pan.y
+									: (layoutGuideBounds?.y ?? 0) * view.zoom + view.pan.y,
+							width:
+								guide.orientation === 'vertical'
+									? '1px'
+									: (layoutGuideBounds?.width ?? width) * view.zoom,
+							height:
+								guide.orientation === 'horizontal'
+									? '1px'
+									: (layoutGuideBounds?.height ?? height) * view.zoom,
+							backgroundColor: 'rgba(0, 153, 255, 0.35)',
 							pointerEvents: 'none',
 						}}
 					/>

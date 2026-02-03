@@ -10,7 +10,17 @@ import {
 	AlignBottom,
 	ArrowClockwise,
 } from 'akar-icons';
-import type { Document, Layout, Node } from '../core/doc/types';
+import type {
+	ConstraintAxisX,
+	ConstraintAxisY,
+	Constraints,
+	Document,
+	Layout,
+	LayoutGuideType,
+	LayoutSizing,
+	Node,
+} from '../core/doc/types';
+import { createDefaultLayoutGuides } from '../core/doc';
 import { findParentNode } from '../core/doc';
 import { colors, spacing, typography, radii, transitions, panels } from './design-system';
 
@@ -29,6 +39,7 @@ const defaultLayout: Layout = {
 	gap: 8,
 	padding: { top: 8, right: 8, bottom: 8, left: 8 },
 	alignment: 'start',
+	crossAlignment: 'center',
 };
 
 const clamp = (value: number, min: number, max: number): number => {
@@ -201,6 +212,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	}
 
 	const parentNode = findParentNode(document, selectedNode.id);
+	const supportsConstraints =
+		parentNode?.type === 'frame' && parentNode.id !== document.rootId && !parentNode.layout;
+	const currentConstraints: Constraints = selectedNode.constraints ?? { horizontal: 'left', vertical: 'top' };
 
 	const handleInputChange = (field: keyof Node, value: unknown) => {
 		onUpdateNode(selectedNode.id, { [field]: value });
@@ -296,6 +310,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	const effectiveOpacity = safeNumber(selectedNode.opacity, 1);
 	const rotationValue = safeNumber(selectedNode.rotation, 0);
 	const layout = selectedNode.layout;
+	const parentLayout = parentNode?.layout;
+	const layoutSizing: LayoutSizing = selectedNode.layoutSizing ?? { horizontal: 'fixed', vertical: 'fixed' };
+	const layoutGuides = selectedNode.layoutGuides;
+	const hasLayoutGuides = Boolean(layoutGuides);
+	const layoutGuideType = layoutGuides?.type ?? 'grid';
 
 	return (
 		<div
@@ -519,6 +538,93 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						/>
 					</div>
 				</div>
+
+				{supportsConstraints && (
+					<div style={{ marginBottom: spacing.lg }}>
+						<h4
+							style={{
+								margin: `0 0 ${spacing.sm} 0`,
+								fontSize: typography.fontSize.sm,
+								color: colors.text.secondary,
+								fontWeight: typography.fontWeight.medium,
+							}}
+						>
+							Constraints
+						</h4>
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm }}>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Horizontal
+								</label>
+								<select
+									value={currentConstraints.horizontal}
+									onChange={(e) =>
+										handleInputChange('constraints', {
+											...currentConstraints,
+											horizontal: e.target.value as ConstraintAxisX,
+										})
+									}
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								>
+									<option value="left">Left</option>
+									<option value="right">Right</option>
+									<option value="left-right">Left &amp; Right</option>
+									<option value="center">Center</option>
+								</select>
+							</div>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Vertical
+								</label>
+								<select
+									value={currentConstraints.vertical}
+									onChange={(e) =>
+										handleInputChange('constraints', {
+											...currentConstraints,
+											vertical: e.target.value as ConstraintAxisY,
+										})
+									}
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								>
+									<option value="top">Top</option>
+									<option value="bottom">Bottom</option>
+									<option value="top-bottom">Top &amp; Bottom</option>
+									<option value="center">Center</option>
+								</select>
+							</div>
+						</div>
+					</div>
+				)}
 				<div style={{ marginBottom: spacing.sm }}>
 					<label
 						style={{
@@ -763,7 +869,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									marginBottom: '4px',
 								}}
 							>
-								Alignment
+								Main axis align
 							</label>
 							<select
 								value={layout.alignment}
@@ -781,6 +887,38 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								<option value="start">Start</option>
 								<option value="center">Center</option>
 								<option value="end">End</option>
+							</select>
+						</div>
+						<div>
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								Cross axis align
+							</label>
+							<select
+								value={layout.crossAlignment ?? 'center'}
+								onChange={(e) =>
+									handleLayoutChange({ crossAlignment: e.target.value as Layout['crossAlignment'] })
+								}
+								style={{
+									width: '100%',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
+								}}
+							>
+								<option value="start">Start</option>
+								<option value="center">Center</option>
+								<option value="end">End</option>
+								<option value="stretch">Stretch</option>
 							</select>
 						</div>
 
@@ -858,6 +996,406 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								/>
 							</div>
 						</div>
+					</div>
+				)}
+
+				{parentLayout && (
+					<div style={{ marginTop: spacing.lg }}>
+						<h4
+							style={{
+								margin: `0 0 ${spacing.sm} 0`,
+								fontSize: typography.fontSize.sm,
+								color: colors.text.secondary,
+								fontWeight: typography.fontWeight.medium,
+							}}
+						>
+							Resizing
+						</h4>
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm }}>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Horizontal
+								</label>
+								<select
+									value={layoutSizing.horizontal}
+									onChange={(e) =>
+										handleInputChange('layoutSizing', {
+											...layoutSizing,
+											horizontal: e.target.value as LayoutSizing['horizontal'],
+										})
+									}
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								>
+									<option value="fixed">Fixed</option>
+									<option value="hug">Hug</option>
+									<option value="fill">Fill</option>
+								</select>
+							</div>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Vertical
+								</label>
+								<select
+									value={layoutSizing.vertical}
+									onChange={(e) =>
+										handleInputChange('layoutSizing', {
+											...layoutSizing,
+											vertical: e.target.value as LayoutSizing['vertical'],
+										})
+									}
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								>
+									<option value="fixed">Fixed</option>
+									<option value="hug">Hug</option>
+									<option value="fill">Fill</option>
+								</select>
+							</div>
+						</div>
+					</div>
+				)}
+
+				{selectedNode.type === 'frame' && (
+					<div style={{ marginTop: spacing.lg }}>
+						<h4
+							style={{
+								margin: `0 0 ${spacing.sm} 0`,
+								fontSize: typography.fontSize.sm,
+								color: colors.text.secondary,
+								fontWeight: typography.fontWeight.medium,
+							}}
+						>
+							Layout guides
+						</h4>
+						<div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm }}>
+							<label
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									gap: spacing.xs,
+									fontSize: typography.fontSize.xs,
+									color: colors.text.secondary,
+								}}
+							>
+								<input
+									type="checkbox"
+									checked={hasLayoutGuides}
+									onChange={(e) =>
+										handleInputChange(
+											'layoutGuides',
+											e.target.checked ? createDefaultLayoutGuides(layoutGuideType as LayoutGuideType) : undefined,
+										)
+									}
+								/>
+								Show guides
+							</label>
+							<select
+								value={layoutGuideType}
+								disabled={!hasLayoutGuides}
+								onChange={(e) =>
+									handleInputChange(
+										'layoutGuides',
+										createDefaultLayoutGuides(e.target.value as LayoutGuideType),
+									)
+								}
+								style={{
+									flex: 1,
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
+								}}
+							>
+								<option value="grid">Grid</option>
+								<option value="columns">Columns</option>
+								<option value="rows">Rows</option>
+							</select>
+						</div>
+
+						{hasLayoutGuides && layoutGuides?.type === 'grid' && (
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Size
+								</label>
+								<input
+									type="number"
+									value={safeRound(layoutGuides.grid?.size ?? 8)}
+									onChange={(e) =>
+										handleInputChange('layoutGuides', {
+											...layoutGuides,
+											grid: { size: Number(e.target.value) },
+										})
+									}
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+						)}
+
+						{hasLayoutGuides && layoutGuides?.type === 'columns' && (
+							<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm }}>
+								<div>
+									<label
+										style={{
+											display: 'block',
+											fontSize: typography.fontSize.xs,
+											color: colors.text.tertiary,
+											marginBottom: '4px',
+										}}
+									>
+										Count
+									</label>
+									<input
+										type="number"
+										value={safeRound(layoutGuides.columns?.count ?? 12)}
+										onChange={(e) =>
+											handleInputChange('layoutGuides', {
+												...layoutGuides,
+												columns: {
+													count: Number(e.target.value),
+													gutter: layoutGuides.columns?.gutter ?? 16,
+													margin: layoutGuides.columns?.margin ?? 16,
+												},
+											})
+										}
+										style={{
+											width: '100%',
+											padding: spacing.xs,
+											border: `1px solid ${colors.border.default}`,
+											borderRadius: radii.sm,
+											fontSize: typography.fontSize.md,
+											backgroundColor: colors.bg.tertiary,
+											color: colors.text.primary,
+										}}
+									/>
+								</div>
+								<div>
+									<label
+										style={{
+											display: 'block',
+											fontSize: typography.fontSize.xs,
+											color: colors.text.tertiary,
+											marginBottom: '4px',
+										}}
+									>
+										Gutter
+									</label>
+									<input
+										type="number"
+										value={safeRound(layoutGuides.columns?.gutter ?? 16)}
+										onChange={(e) =>
+											handleInputChange('layoutGuides', {
+												...layoutGuides,
+												columns: {
+													count: layoutGuides.columns?.count ?? 12,
+													gutter: Number(e.target.value),
+													margin: layoutGuides.columns?.margin ?? 16,
+												},
+											})
+										}
+										style={{
+											width: '100%',
+											padding: spacing.xs,
+											border: `1px solid ${colors.border.default}`,
+											borderRadius: radii.sm,
+											fontSize: typography.fontSize.md,
+											backgroundColor: colors.bg.tertiary,
+											color: colors.text.primary,
+										}}
+									/>
+								</div>
+								<div>
+									<label
+										style={{
+											display: 'block',
+											fontSize: typography.fontSize.xs,
+											color: colors.text.tertiary,
+											marginBottom: '4px',
+										}}
+									>
+										Margin
+									</label>
+									<input
+										type="number"
+										value={safeRound(layoutGuides.columns?.margin ?? 16)}
+										onChange={(e) =>
+											handleInputChange('layoutGuides', {
+												...layoutGuides,
+												columns: {
+													count: layoutGuides.columns?.count ?? 12,
+													gutter: layoutGuides.columns?.gutter ?? 16,
+													margin: Number(e.target.value),
+												},
+											})
+										}
+										style={{
+											width: '100%',
+											padding: spacing.xs,
+											border: `1px solid ${colors.border.default}`,
+											borderRadius: radii.sm,
+											fontSize: typography.fontSize.md,
+											backgroundColor: colors.bg.tertiary,
+											color: colors.text.primary,
+										}}
+									/>
+								</div>
+							</div>
+						)}
+
+						{hasLayoutGuides && layoutGuides?.type === 'rows' && (
+							<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm }}>
+								<div>
+									<label
+										style={{
+											display: 'block',
+											fontSize: typography.fontSize.xs,
+											color: colors.text.tertiary,
+											marginBottom: '4px',
+										}}
+									>
+										Count
+									</label>
+									<input
+										type="number"
+										value={safeRound(layoutGuides.rows?.count ?? 8)}
+										onChange={(e) =>
+											handleInputChange('layoutGuides', {
+												...layoutGuides,
+												rows: {
+													count: Number(e.target.value),
+													gutter: layoutGuides.rows?.gutter ?? 16,
+													margin: layoutGuides.rows?.margin ?? 16,
+												},
+											})
+										}
+										style={{
+											width: '100%',
+											padding: spacing.xs,
+											border: `1px solid ${colors.border.default}`,
+											borderRadius: radii.sm,
+											fontSize: typography.fontSize.md,
+											backgroundColor: colors.bg.tertiary,
+											color: colors.text.primary,
+										}}
+									/>
+								</div>
+								<div>
+									<label
+										style={{
+											display: 'block',
+											fontSize: typography.fontSize.xs,
+											color: colors.text.tertiary,
+											marginBottom: '4px',
+										}}
+									>
+										Gutter
+									</label>
+									<input
+										type="number"
+										value={safeRound(layoutGuides.rows?.gutter ?? 16)}
+										onChange={(e) =>
+											handleInputChange('layoutGuides', {
+												...layoutGuides,
+												rows: {
+													count: layoutGuides.rows?.count ?? 8,
+													gutter: Number(e.target.value),
+													margin: layoutGuides.rows?.margin ?? 16,
+												},
+											})
+										}
+										style={{
+											width: '100%',
+											padding: spacing.xs,
+											border: `1px solid ${colors.border.default}`,
+											borderRadius: radii.sm,
+											fontSize: typography.fontSize.md,
+											backgroundColor: colors.bg.tertiary,
+											color: colors.text.primary,
+										}}
+									/>
+								</div>
+								<div>
+									<label
+										style={{
+											display: 'block',
+											fontSize: typography.fontSize.xs,
+											color: colors.text.tertiary,
+											marginBottom: '4px',
+										}}
+									>
+										Margin
+									</label>
+									<input
+										type="number"
+										value={safeRound(layoutGuides.rows?.margin ?? 16)}
+										onChange={(e) =>
+											handleInputChange('layoutGuides', {
+												...layoutGuides,
+												rows: {
+													count: layoutGuides.rows?.count ?? 8,
+													gutter: layoutGuides.rows?.gutter ?? 16,
+													margin: Number(e.target.value),
+												},
+											})
+										}
+										style={{
+											width: '100%',
+											padding: spacing.xs,
+											border: `1px solid ${colors.border.default}`,
+											borderRadius: radii.sm,
+											fontSize: typography.fontSize.md,
+											backgroundColor: colors.bg.tertiary,
+											color: colors.text.primary,
+										}}
+									/>
+								</div>
+							</div>
+						)}
 					</div>
 				)}
 			</div>
