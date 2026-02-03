@@ -55,5 +55,6 @@ export type SelectionGetResult = {
 		// Device preset metadata for mockup integration
 		devicePresetId?: string;
 		isFrame?: boolean;
+		imageMeta?: import('../core/doc/types').ImageMeta3dIcon;
 	}>;
 };

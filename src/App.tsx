@@ -36,7 +36,7 @@ import {
 	type WorldBoundsMap,
 } from './core/doc';
 import { generateId } from './core/doc/id';
-import type { Constraints, Document, Node } from './core/doc/types';
+import type { Constraints, Document, ImageMeta3dIcon, Node } from './core/doc/types';
 import type { Command } from './core/commands/types';
 import type { CanvasPointerInfo, CanvasWheelInfo } from './hooks/useCanvas';
 import { getHandleCursor, hitTestHandle } from './interaction/handles';
@@ -46,6 +46,7 @@ import type { SnapGuide, SnapTargets } from './interaction/snapping';
 import { applyNormalizedEdges, computeNormalizedEdges, type NormalizedEdges } from './interaction/transform-session';
 import { exportNodeSnapshot } from './render/export';
 import { builtinPlugins } from './plugins/builtin';
+import { getIconVariants, renderIcon, searchIcons } from './plugins/icons/registry';
 import {
 	type PluginManifest,
 	type PluginRegistration,
@@ -724,6 +725,8 @@ export const App: React.FC = () => {
 	const [recentPluginIds, setRecentPluginIds] = useState<string[]>(loadRecentPluginIds());
 	const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
 	const [activePlugin, setActivePlugin] = useState<PluginRegistration | null>(null);
+	const [toastMessage, setToastMessage] = useState<string | null>(null);
+	const toastTimerRef = useRef<number | null>(null);
 	const [leftPanelCollapsed, setLeftPanelCollapsed] = useState<boolean>(() => {
 		const stored = localStorage.getItem('galileo.ui.leftPanelCollapsed');
 		return stored === 'true';
@@ -1012,6 +1015,7 @@ export const App: React.FC = () => {
 			height,
 			name,
 			originalPath,
+			meta,
 			index = 0,
 			position,
 			maxDimension = 800,
@@ -1023,6 +1027,7 @@ export const App: React.FC = () => {
 			height?: number;
 			name?: string;
 			originalPath?: string;
+			meta?: ImageMeta3dIcon;
 			index?: number;
 			position?: { x: number; y: number };
 			maxDimension?: number;
@@ -1098,11 +1103,13 @@ export const App: React.FC = () => {
 						mime: resolvedMime,
 						originalPath,
 						assetId,
+						meta,
 					}
 				: {
 						src: resolvedSrc,
 						mime: resolvedMime,
 						originalPath,
+						meta,
 					};
 
 			commands.push({
@@ -1341,6 +1348,16 @@ export const App: React.FC = () => {
 		setActivePlugin(plugin);
 		setRecentPluginIds(recordRecentPlugin(plugin));
 	}, []);
+
+	const handleOpenPlugin = useCallback(
+		(pluginId: string) => {
+			const plugin = pluginMap.get(pluginId);
+			if (plugin) {
+				runPlugin(plugin);
+			}
+		},
+		[pluginMap, runPlugin],
+	);
 
 	const handleLoadDevPlugin = useCallback(async () => {
 		try {
@@ -1930,6 +1947,22 @@ export const App: React.FC = () => {
 						};
 					}
 
+					case 'host.toast': {
+						const params = (request.params || {}) as { message?: string };
+						if (!params.message) {
+							return fail('invalid_params', 'message is required');
+						}
+						setToastMessage(params.message);
+						if (toastTimerRef.current) {
+							window.clearTimeout(toastTimerRef.current);
+						}
+						toastTimerRef.current = window.setTimeout(() => {
+							setToastMessage(null);
+							toastTimerRef.current = null;
+						}, 2400);
+						return { rpc: 1, id: request.id, ok: true, result: { shown: true } };
+					}
+
 					case 'selection.get': {
 						if (!hasPermission(plugin.manifest, 'selection:read')) {
 							return fail('permission_denied', 'selection:read is required');
@@ -1946,6 +1979,7 @@ export const App: React.FC = () => {
 								// Include device preset metadata for mockup integration
 								devicePresetId: node.devicePresetId,
 								isFrame: node.type === 'frame',
+								imageMeta: node.type === 'image' ? node.image?.meta : undefined,
 							}));
 
 						const result: SelectionGetResult = {
@@ -1953,6 +1987,45 @@ export const App: React.FC = () => {
 							primaryId: ids.length > 0 ? ids[0] : null,
 							nodes,
 						};
+						return { rpc: 1, id: request.id, ok: true, result };
+					}
+
+					case 'icons.search': {
+						const params = (request.params || {}) as { query?: string; provider?: string };
+						const results = await searchIcons(params.query, params.provider);
+						return { rpc: 1, id: request.id, ok: true, result: results };
+					}
+
+					case 'icons.getVariants': {
+						const params = (request.params || {}) as { iconId?: string; provider?: string };
+						if (!params.iconId) {
+							return fail('invalid_params', 'iconId is required');
+						}
+						const results = await getIconVariants(params.iconId, params.provider);
+						return { rpc: 1, id: request.id, ok: true, result: results };
+					}
+
+					case 'icons.render': {
+						const params = (request.params || {}) as {
+							provider?: string;
+							iconId?: string;
+							style?: string;
+							angle?: string;
+							size?: number;
+						};
+						if (!params.iconId) {
+							return fail('invalid_params', 'iconId is required');
+						}
+						if (!params.style || !params.angle || !params.size) {
+							return fail('invalid_params', 'style, angle, and size are required');
+						}
+						const result = await renderIcon({
+							provider: params.provider ?? '3dicons',
+							iconId: params.iconId,
+							style: params.style,
+							angle: params.angle,
+							size: params.size,
+						});
 						return { rpc: 1, id: request.id, ok: true, result };
 					}
 
@@ -1998,6 +2071,7 @@ export const App: React.FC = () => {
 							height: number;
 							position?: { x: number; y: number };
 							name?: string;
+							meta?: ImageMeta3dIcon;
 						};
 						if (!params.dataBase64 || !params.mime) {
 							return fail('invalid_params', 'dataBase64 and mime are required');
@@ -2009,10 +2083,99 @@ export const App: React.FC = () => {
 							width: params.width,
 							height: params.height,
 							name: params.name || plugin.manifest.name,
+							meta: params.meta,
 							position: insertPosition,
 							maxDimension: 1200,
 						});
 						return { rpc: 1, id: request.id, ok: true, result: { newNodeId } };
+					}
+
+					case 'document.updateImage': {
+						if (!hasPermission(plugin.manifest, 'document:write')) {
+							return fail('permission_denied', 'document:write is required');
+						}
+						const params = (request.params || {}) as {
+							nodeId?: string;
+							dataBase64?: string;
+							mime?: string;
+							width?: number;
+							height?: number;
+							name?: string;
+							meta?: ImageMeta3dIcon;
+							resize?: boolean;
+						};
+						if (!params.nodeId) {
+							return fail('invalid_params', 'nodeId is required');
+						}
+						if (!params.dataBase64 || !params.mime || !params.width || !params.height) {
+							return fail('invalid_params', 'dataBase64, mime, width, and height are required');
+						}
+
+						const node = document.nodes[params.nodeId];
+						if (!node || node.type !== 'image') {
+							return fail('invalid_params', 'Target node must be an image');
+						}
+
+						const assetId = generateId();
+						const commands: Command[] = [
+							{
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Create image asset',
+								type: 'createAsset',
+								payload: {
+									id: assetId,
+									asset: {
+										type: 'image',
+										mime: params.mime,
+										dataBase64: params.dataBase64,
+										width: params.width,
+										height: params.height,
+									},
+								},
+							} as Command,
+						];
+
+						const imageProps = {
+							mime: params.mime,
+							assetId,
+							originalPath: node.image?.originalPath,
+							meta: params.meta ?? node.image?.meta,
+						};
+
+						const props: Partial<Node> = {
+							image: imageProps,
+						};
+						if (params.name) {
+							props.name = params.name;
+						}
+						if (params.resize) {
+							props.size = { width: params.width, height: params.height };
+						}
+
+						commands.push({
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Update image',
+							type: 'setProps',
+							payload: {
+								id: params.nodeId,
+								props,
+							},
+						});
+
+						executeCommand({
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Update image asset',
+							type: 'batch',
+							payload: { commands },
+						} as Command);
+
+						return { rpc: 1, id: request.id, ok: true, result: { nodeId: params.nodeId } };
 					}
 
 					case 'fs.saveFile': {
@@ -2183,7 +2346,7 @@ export const App: React.FC = () => {
 				return fail('internal_error', error instanceof Error ? error.message : 'Unknown error');
 			}
 		},
-		[document, getDefaultInsertPosition, insertImageNode, isDev, selectionIds],
+		[document, executeCommand, getDefaultInsertPosition, insertImageNode, isDev, selectionIds],
 	);
 
 	useEffect(() => {
@@ -3991,6 +4154,7 @@ export const App: React.FC = () => {
 					collapsed={rightPanelCollapsed}
 					onToggleCollapsed={toggleRightPanel}
 					onUpdateNode={handleUpdateNode}
+					onOpenPlugin={handleOpenPlugin}
 					zoom={zoom}
 				/>
 			</div>
@@ -4016,6 +4180,45 @@ export const App: React.FC = () => {
 					onRemove={handleRemovePlugin}
 					showDev={isDev}
 				/>
+			)}
+
+			{toastMessage && (
+				<div
+					style={{
+						position: 'fixed',
+						left: '50%',
+						top: 20,
+						transform: 'translateX(-50%)',
+						backgroundColor: '#2f2f2f',
+						color: '#ffffff',
+						borderRadius: 16,
+						border: '1px solid rgba(255,255,255,0.08)',
+						boxShadow: '0 18px 30px rgba(0,0,0,0.5)',
+						padding: '12px 18px',
+						display: 'flex',
+						alignItems: 'center',
+						gap: 12,
+						zIndex: 1400,
+						fontSize: 14,
+					}}
+				>
+					<div
+						style={{
+							width: 28,
+							height: 28,
+							borderRadius: 8,
+							backgroundColor: '#ffffff',
+							color: '#ff5f5f',
+							fontWeight: 800,
+							display: 'grid',
+							placeItems: 'center',
+							fontSize: 12,
+						}}
+					>
+						3D
+					</div>
+					<div>{toastMessage}</div>
+				</div>
 			)}
 		</div>
 	);

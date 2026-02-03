@@ -3,6 +3,18 @@ import type { PluginRegistration } from './types';
 export const builtinPlugins: PluginRegistration[] = [
   {
     manifest: {
+      id: 'com.galileo.3dicons',
+      name: '3D Icons',
+      version: '0.1.0',
+      entry: 'index.html',
+      permissions: ['selection:read', 'document:write'],
+      ui: { width: 320, height: 640 },
+    },
+    entryUrl: '/plugins/3dicons/index.html?v=1',
+    source: 'builtin',
+  },
+  {
+    manifest: {
       id: 'com.galileo.mockrocket',
       name: 'MockRocket - 3D Mockups',
       version: '0.1.0',

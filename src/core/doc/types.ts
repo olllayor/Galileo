@@ -39,6 +39,24 @@ export const sizeSchema = z.object({
 
 export type Size = z.infer<typeof sizeSchema>;
 
+export const imageMeta3dIconSchema = z
+	.object({
+		kind: z.literal('3d-icon'),
+		provider: z.string(),
+		iconId: z.string(),
+		style: z.string(),
+		color: z.string().optional(),
+		angle: z.string(),
+		size: z.number(),
+		providerVersion: z.string(),
+		renderVersion: z.string(),
+	})
+	.passthrough();
+
+export const imageMetaSchema = z.union([imageMeta3dIconSchema]).optional();
+
+export type ImageMeta3dIcon = z.infer<typeof imageMeta3dIconSchema>;
+
 export const layoutSchema = z.object({
 	type: z.literal('auto'),
 	direction: z.enum(['row', 'column']),
@@ -126,6 +144,7 @@ export const nodeSchema = z.object({
 			mime: z.string().optional(),
 			originalPath: z.string().optional(),
 			assetId: z.string().optional(),
+			meta: imageMetaSchema.optional(),
 		})
 		.optional(),
 

@@ -151,14 +151,13 @@ export const PluginModal: React.FC<PluginModalProps> = ({ plugin, iframeRef, onC
 			style={{
 				position: 'fixed',
 				inset: 0,
-				backgroundColor: 'rgba(0, 0, 0, 0.35)',
+				backgroundColor: 'transparent',
 				zIndex: 1200,
+				pointerEvents: 'none',
 			}}
-			onClick={onClose}
 		>
 			<div
 				ref={modalRef}
-				onClick={(event) => event.stopPropagation()}
 				style={{
 					position: 'absolute',
 					left: position.x,
@@ -172,6 +171,7 @@ export const PluginModal: React.FC<PluginModalProps> = ({ plugin, iframeRef, onC
 					display: 'flex',
 					flexDirection: 'column',
 					transition: isDragging ? 'none' : 'box-shadow 0.2s ease',
+					pointerEvents: 'auto',
 				}}
 			>
 				{/* Draggable header */}

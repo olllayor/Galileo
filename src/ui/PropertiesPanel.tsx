@@ -30,6 +30,7 @@ interface PropertiesPanelProps {
 	collapsed?: boolean;
 	onToggleCollapsed?: () => void;
 	onUpdateNode: (id: string, updates: Partial<Node>) => void;
+	onOpenPlugin?: (pluginId: string) => void;
 	zoom?: number;
 }
 
@@ -60,6 +61,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	collapsed = false,
 	onToggleCollapsed,
 	onUpdateNode,
+	onOpenPlugin,
 	zoom = 1,
 }) => {
 	// Collapsed rail mode
@@ -215,6 +217,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	const supportsConstraints =
 		parentNode?.type === 'frame' && parentNode.id !== document.rootId && !parentNode.layout;
 	const currentConstraints: Constraints = selectedNode.constraints ?? { horizontal: 'left', vertical: 'top' };
+	const imageMeta = selectedNode.type === 'image' ? selectedNode.image?.meta : undefined;
+	const is3dIcon = imageMeta?.kind === '3d-icon';
 
 	const handleInputChange = (field: keyof Node, value: unknown) => {
 		onUpdateNode(selectedNode.id, { [field]: value });
@@ -380,6 +384,54 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					</svg>
 				</button>
 			</div>
+
+			{is3dIcon && imageMeta && (
+				<div style={{ marginBottom: spacing.lg }}>
+					<h4
+						style={{
+							margin: `0 0 ${spacing.sm} 0`,
+							fontSize: typography.fontSize.sm,
+							color: colors.text.secondary,
+							fontWeight: typography.fontWeight.medium,
+						}}
+					>
+						3D Icon
+					</h4>
+					<div
+						style={{
+							display: 'grid',
+							gridTemplateColumns: '1fr 1fr',
+							gap: spacing.sm,
+							fontSize: typography.fontSize.sm,
+							color: colors.text.secondary,
+							marginBottom: spacing.sm,
+						}}
+					>
+						<div>Provider: {imageMeta.provider}</div>
+						<div>Style: {imageMeta.style}</div>
+						<div>Angle: {imageMeta.angle}</div>
+						<div>Size: {Math.round(imageMeta.size)}px</div>
+					</div>
+					<button
+						type="button"
+						onClick={() => onOpenPlugin?.('com.galileo.3dicons')}
+						style={{
+							width: '100%',
+							padding: `${spacing.xs} ${spacing.sm}`,
+							backgroundColor: colors.accent.primary,
+							color: colors.text.primary,
+							border: 'none',
+							borderRadius: radii.sm,
+							cursor: 'pointer',
+							fontSize: typography.fontSize.sm,
+							fontWeight: typography.fontWeight.medium,
+							transition: `background-color ${transitions.fast}`,
+						}}
+					>
+						Edit 3D Icon
+					</button>
+				</div>
+			)}
 
 			<div style={{ marginBottom: spacing.lg }}>
 				<h4
