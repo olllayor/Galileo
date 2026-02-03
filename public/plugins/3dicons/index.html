@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3dicons</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #1f1f1f;
+      --panel: #2a2a2a;
+      --panel-2: #2f2f2f;
+      --panel-3: #3a3a3a;
+      --text: #f2f2f2;
+      --muted: #a6a6a6;
+      --border: #3f3f3f;
+      --accent: #f2c25b;
+      --danger: #ff6b6b;
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+      font-family: "Sora", "Space Grotesk", "DM Sans", system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background: transparent;
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .window {
+      height: 100vh;
+      background: var(--bg);
+      border-radius: 12px;
+      border: 1px solid #2b2b2b;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .titlebar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      background: #2b2b2b;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .logo {
+      width: 20px;
+      height: 20px;
+      border-radius: 5px;
+      background: #fff;
+      display: grid;
+      place-items: center;
+      color: #ff5f5f;
+      font-weight: 800;
+      font-size: 10px;
+    }
+
+    .close {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #2f2f2f;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1;
+      display: grid;
+      place-items: center;
+      opacity: 0.85;
+      user-select: none;
+    }
+
+    .search {
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--border);
+      background: #2b2b2b;
+    }
+
+    .search input {
+      width: 100%;
+      padding: 6px 8px 6px 28px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #2d2d2d;
+      color: var(--text);
+      font-size: 12px;
+      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="%23a6a6a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>');
+      background-repeat: no-repeat;
+      background-position: 8px 50%;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      background: #2b2b2b;
+      border-bottom: 1px solid var(--border);
+      gap: 8px;
+    }
+
+    .chips {
+      display: flex;
+      gap: 6px;
+    }
+
+    .chip {
+      width: 22px;
+      height: 22px;
+      border-radius: 11px;
+      border: 1px solid transparent;
+      cursor: pointer;
+    }
+
+    .chip.active {
+      border-color: #ffffff66;
+      box-shadow: 0 0 0 2px #00000044 inset;
+    }
+
+    .chip.multi {
+      background: conic-gradient(from 180deg, #5cc8ff 0 25%, #ffd24d 0 50%, #ff8f8f 0 75%, #7ed957 0 100%);
+    }
+
+    .chip.sunset {
+      background: linear-gradient(135deg, #ffcc4d, #ff7b39);
+    }
+
+    .chip.white {
+      background: #f7f7f7;
+    }
+
+    .chip.dark {
+      background: #3a3a3a;
+    }
+
+    .shape-group {
+      display: flex;
+      gap: 6px;
+    }
+
+    .shape {
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      display: grid;
+      place-items: center;
+      background: #333;
+      cursor: pointer;
+    }
+
+    .shape svg {
+      width: 14px;
+      height: 14px;
+      stroke: #d6d6d6;
+      fill: none;
+      stroke-width: 2;
+    }
+
+    .shape.active {
+      outline: 2px solid #ffffff33;
+      background: #3b3b3b;
+    }
+
+    .loading-bar {
+      height: 2px;
+      width: 100%;
+      background: transparent;
+      overflow: hidden;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .loading-bar::after {
+      content: "";
+      display: block;
+      height: 100%;
+      width: 40%;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      animation: loading 1s linear infinite;
+    }
+
+    .loading-active .loading-bar {
+      opacity: 1;
+    }
+
+    .grid {
+      flex: 1;
+      padding: 6px 8px 8px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      background: #2b2b2b;
+      overflow: auto;
+    }
+
+    .card {
+      background: #3a3a3a;
+      border-radius: 8px;
+      padding: 8px;
+      display: grid;
+      place-items: center;
+      min-height: 70px;
+      border: 1px solid #424242;
+      cursor: pointer;
+      transition: transform 0.12s ease, border 0.12s ease;
+    }
+
+    .card.active {
+      border-color: #ffffff55;
+      transform: translateY(-1px);
+    }
+
+    .card img {
+      width: 52px;
+      height: 52px;
+      object-fit: contain;
+    }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      background: #2b2b2b;
+      border-top: 1px solid var(--border);
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    @keyframes loading {
+      from {
+        transform: translateX(-100%);
+      }
+
+      to {
+        transform: translateX(260%);
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="window" id="window">
+    <div class="titlebar">
+      <div class="brand">
+        <div class="logo">3D</div>
+        <div>3dicons</div>
+      </div>
+      <div class="close">×</div>
+    </div>
+    <div class="search">
+      <input id="searchInput" placeholder="Search 3dicons from 1400+ variants..." />
+    </div>
+    <div class="toolbar">
+      <div class="chips" id="styleChips">
+        <button class="chip multi active" data-style="color" title="Color"></button>
+        <button class="chip sunset" data-style="clay" title="Clay"></button>
+        <button class="chip white" data-style="premium" title="Premium"></button>
+        <button class="chip dark" data-style="gradient" title="Gradient"></button>
+      </div>
+      <div class="shape-group" id="angleChips">
+        <button class="shape" data-angle="front" title="Front">
+          <svg viewBox="0 0 24 24">
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+          </svg>
+        </button>
+        <button class="shape active" data-angle="dynamic" title="Dynamic">
+          <svg viewBox="0 0 24 24">
+            <rect x="5" y="5" width="14" height="14" rx="2" transform="rotate(12 12 12)" />
+          </svg>
+        </button>
+        <button class="shape" data-angle="cube" title="Cube">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 3l8 4v10l-8 4-8-4V7z" />
+            <path d="M12 3v14" />
+            <path d="M4 7l8 4 8-4" />
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="loading-bar" id="loadingBar"></div>
+
+    <div class="grid" id="iconGrid"></div>
+
+  </div>
+
+  <script>
+    const iconGrid = document.getElementById('iconGrid');
+    const searchInput = document.getElementById('searchInput');
+    const windowEl = document.getElementById('window');
+    const styleChips = document.getElementById('styleChips');
+    const angleChips = document.getElementById('angleChips');
+
+    const pending = new Map();
+    const rpc = {
+      call(method, params) {
+        const id = (crypto.randomUUID && crypto.randomUUID()) || `rpc_${Date.now()}_${Math.random()}`;
+        const payload = { rpc: 1, id, method, params };
+        window.parent.postMessage(payload, '*');
+        return new Promise((resolve, reject) => {
+          pending.set(id, { resolve, reject });
+          setTimeout(() => {
+            if (pending.has(id)) {
+              pending.delete(id);
+              reject(new Error('RPC timeout'));
+            }
+          }, 10000);
+        });
+      },
+    };
+
+    window.addEventListener('message', (event) => {
+      const data = event.data;
+      if (!data || data.rpc !== 1 || !data.id) return;
+      const entry = pending.get(data.id);
+      if (!entry) return;
+      pending.delete(data.id);
+      if (data.ok) {
+        entry.resolve(data.result);
+      } else {
+        entry.reject(new Error(data.error?.message || 'RPC error'));
+      }
+    });
+
+    const state = {
+      icons: [],
+      selectedIcon: null,
+      variants: [],
+      style: 'color',
+      angle: 'dynamic',
+      size: 400,
+      selection: null,
+      editTargetId: null,
+      transparent: true,
+    };
+
+    const setLoading = (active) => {
+      windowEl.classList.toggle('loading-active', active);
+    };
+
+    const renderGrid = () => {
+      iconGrid.innerHTML = '';
+      state.icons.forEach((icon) => {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'card' + (state.selectedIcon?.id === icon.id ? ' active' : '');
+        card.innerHTML = `<img src="${icon.previewUrl}" alt="${icon.name}" />`;
+        card.addEventListener('click', () => selectIcon(icon));
+        iconGrid.appendChild(card);
+      });
+    };
+
+    const selectIcon = async (icon) => {
+      state.selectedIcon = icon;
+      setLoading(true);
+      try {
+        const variants = await rpc.call('icons.getVariants', { iconId: icon.id, provider: icon.provider });
+        state.variants = variants || [];
+        const styles = Array.from(new Set(state.variants.map((variant) => variant.style)));
+        const angles = Array.from(new Set(state.variants.map((variant) => variant.angle)));
+        if (styles.length > 0 && !styles.includes(state.style)) state.style = styles[0];
+        if (angles.length > 0 && !angles.includes(state.angle)) state.angle = angles[0];
+        updateActiveChips();
+      } catch (_error) {
+        // Silent in compact UI; loading bar indicates progress.
+      } finally {
+        setLoading(false);
+      }
+      renderGrid();
+    };
+
+    const loadIcons = async (query = '') => {
+      setLoading(true);
+      try {
+        const results = await rpc.call('icons.search', { query, provider: '3dicons' });
+        state.icons = results || [];
+        renderGrid();
+        if (!state.selectedIcon && state.icons.length > 0) {
+          selectIcon(state.icons[0]);
+        }
+      } catch (_error) {
+        // Silent in compact UI
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const loadSelection = async () => {
+      try {
+        const selection = await rpc.call('selection.get');
+        state.selection = selection;
+        const primary = selection?.nodes?.find((node) => node.id === selection.primaryId) || selection?.nodes?.[0];
+        const meta = primary?.imageMeta;
+        if (meta && meta.kind === '3d-icon') {
+          state.editTargetId = primary.id;
+          state.style = meta.style || state.style;
+          state.angle = meta.angle || state.angle;
+          state.size = meta.size || state.size;
+
+          const existing = state.icons.find((icon) => icon.id === meta.iconId);
+          if (existing) {
+            selectIcon(existing);
+          } else {
+            const placeholder = {
+              id: meta.iconId,
+              name: meta.iconId,
+              provider: meta.provider || '3dicons',
+              previewUrl: '',
+            };
+            state.icons.unshift(placeholder);
+            selectIcon(placeholder);
+          }
+        } else {
+          state.editTargetId = null;
+        }
+      } catch (_error) {
+        // Silent in compact UI
+      }
+    };
+
+    const buildMeta = (renderResult) => {
+      return {
+        kind: '3d-icon',
+        provider: '3dicons',
+        iconId: state.selectedIcon.id,
+        style: state.style,
+        angle: state.angle,
+        size: state.size,
+        providerVersion: renderResult.providerVersion,
+        renderVersion: renderResult.renderVersion,
+      };
+    };
+
+    const makeImageFromDataUrl = (dataUrl) => {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Failed to load render'));
+        img.src = dataUrl;
+      });
+    };
+
+    const removeWhiteBackground = async (renderResult) => {
+      const dataUrl = `data:${renderResult.mime};base64,${renderResult.dataBase64}`;
+      const img = await makeImageFromDataUrl(dataUrl);
+      const canvas = document.createElement('canvas');
+      canvas.width = renderResult.width;
+      canvas.height = renderResult.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        return renderResult;
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
+        if (a === 0) continue;
+        if (r >= 245 && g >= 245 && b >= 245) {
+          data[i + 3] = 0;
+        }
+      }
+      ctx.putImageData(imageData, 0, 0);
+      const pngDataUrl = canvas.toDataURL('image/png');
+      return {
+        ...renderResult,
+        mime: 'image/png',
+        dataBase64: pngDataUrl.split(',')[1],
+      };
+    };
+
+    const prepareRenderOutput = async (renderResult) => {
+      if (!state.transparent) return renderResult;
+      return removeWhiteBackground(renderResult);
+    };
+
+    const applyIcon = async () => {
+      if (!state.selectedIcon) return;
+      const targetId = state.editTargetId || state.selection?.primaryId;
+      const shouldUpdate = Boolean(targetId);
+      setLoading(true);
+      try {
+        const renderResult = await rpc.call('icons.render', {
+          provider: '3dicons',
+          iconId: state.selectedIcon.id,
+          style: state.style,
+          angle: state.angle,
+          size: state.size,
+        });
+        const output = await prepareRenderOutput(renderResult);
+        if (shouldUpdate) {
+          await rpc.call('document.updateImage', {
+            nodeId: targetId,
+            dataBase64: output.dataBase64,
+            mime: output.mime,
+            width: output.width,
+            height: output.height,
+            name: state.selectedIcon.name,
+            meta: buildMeta(renderResult),
+            resize: false,
+          });
+        } else {
+          await rpc.call('document.insertImage', {
+            dataBase64: output.dataBase64,
+            mime: output.mime,
+            width: output.width,
+            height: output.height,
+            name: state.selectedIcon.name,
+            meta: buildMeta(renderResult),
+          });
+        }
+      } catch (_error) {
+        // Silent in compact UI
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const updateActiveChips = () => {
+      styleChips.querySelectorAll('.chip').forEach((chip) => {
+        chip.classList.toggle('active', chip.dataset.style === state.style);
+      });
+      angleChips.querySelectorAll('.shape').forEach((chip) => {
+        chip.classList.toggle('active', chip.dataset.angle === state.angle);
+      });
+    };
+
+    styleChips.addEventListener('click', (event) => {
+      const target = event.target.closest('.chip');
+      if (!target) return;
+      state.style = target.dataset.style;
+      updateActiveChips();
+      applyIcon();
+    });
+
+    angleChips.addEventListener('click', (event) => {
+      const target = event.target.closest('.shape');
+      if (!target) return;
+      const nextAngle = target.dataset.angle;
+      if (nextAngle === 'cube') return;
+      state.angle = nextAngle;
+      updateActiveChips();
+      applyIcon();
+    });
+
+    searchInput.addEventListener('input', () => {
+      const value = searchInput.value;
+      loadIcons(value);
+    });
+
+    iconGrid.addEventListener('click', (event) => {
+      const card = event.target.closest('.card');
+      if (!card) return;
+      applyIcon();
+    });
+
+    loadIcons();
+    loadSelection();
+  </script>
+</body>
+
+</html>
