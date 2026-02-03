@@ -1,6 +1,7 @@
 import type { Icon, IconProvider, IconRenderParams, IconRenderResult, IconVariant } from '../types';
 
 const BASE_URL = 'https://bvconuycpdvgzbvbkijl.supabase.co/storage/v1/object/public';
+const MANIFEST_URL = '/plugins/3dicons/manifest.json';
 const DEFAULT_ANGLE = 'dynamic';
 const DEFAULT_STYLE = 'color';
 const PREVIEW_SIZE = 200;
@@ -46,6 +47,52 @@ const createIcon = (entry: { id: string; name: string }): Icon => {
 	};
 };
 
+const normalizeManifestEntry = (entry: unknown): { id: string; name: string } | null => {
+	if (!entry || typeof entry !== 'object') return null;
+	const record = entry as Record<string, unknown>;
+	const id = typeof record.id === 'string' ? record.id : null;
+	if (!id) return null;
+	const name = typeof record.name === 'string' ? record.name : titleFromId(id);
+	return { id, name };
+};
+
+const titleFromId = (iconId: string): string => {
+	const parts = iconId.split('-');
+	if (parts.length <= 1) return iconId;
+	const [maybeHash, ...rest] = parts;
+	const isHash = /^[0-9a-f]{6}$/i.test(maybeHash);
+	const slug = (isHash ? rest : parts).join('-');
+	return slug
+		.split('-')
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(' ');
+};
+
+let manifestPromise: Promise<Icon[]> | null = null;
+
+const loadManifest = async (): Promise<Icon[]> => {
+	if (manifestPromise) return manifestPromise;
+	manifestPromise = (async () => {
+		try {
+			const response = await fetch(MANIFEST_URL, { cache: 'force-cache' });
+			if (!response.ok) throw new Error(`Manifest fetch failed (${response.status})`);
+			const data = await response.json();
+			if (!Array.isArray(data)) throw new Error('Manifest is not an array');
+			const normalized = data
+				.map((entry) => normalizeManifestEntry(entry))
+				.filter((entry): entry is { id: string; name: string } => Boolean(entry));
+			if (normalized.length === 0) {
+				return FALLBACK_ICONS.map(createIcon);
+			}
+			return normalized.map(createIcon);
+		} catch {
+			return FALLBACK_ICONS.map(createIcon);
+		}
+	})();
+	return manifestPromise;
+};
+
 const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
 	const bytes = new Uint8Array(buffer);
 	const chunk = 0x8000;
@@ -57,12 +104,11 @@ const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
 };
 
 export const create3dIconsProvider = (): IconProvider => {
-	const catalog = FALLBACK_ICONS.map(createIcon);
-
 	return {
 		id: '3dicons',
 		name: '3dicons',
 		async search(query?: string): Promise<Icon[]> {
+			const catalog = await loadManifest();
 			if (!query) return catalog;
 			const normalized = query.trim().toLowerCase();
 			if (!normalized) return catalog;

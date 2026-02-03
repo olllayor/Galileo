@@ -725,6 +725,8 @@ export const App: React.FC = () => {
 	const [recentPluginIds, setRecentPluginIds] = useState<string[]>(loadRecentPluginIds());
 	const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
 	const [activePlugin, setActivePlugin] = useState<PluginRegistration | null>(null);
+	const [toastMessage, setToastMessage] = useState<string | null>(null);
+	const toastTimerRef = useRef<number | null>(null);
 	const [leftPanelCollapsed, setLeftPanelCollapsed] = useState<boolean>(() => {
 		const stored = localStorage.getItem('galileo.ui.leftPanelCollapsed');
 		return stored === 'true';
@@ -1943,6 +1945,22 @@ export const App: React.FC = () => {
 								appVersion: '0.1.0',
 							},
 						};
+					}
+
+					case 'host.toast': {
+						const params = (request.params || {}) as { message?: string };
+						if (!params.message) {
+							return fail('invalid_params', 'message is required');
+						}
+						setToastMessage(params.message);
+						if (toastTimerRef.current) {
+							window.clearTimeout(toastTimerRef.current);
+						}
+						toastTimerRef.current = window.setTimeout(() => {
+							setToastMessage(null);
+							toastTimerRef.current = null;
+						}, 2400);
+						return { rpc: 1, id: request.id, ok: true, result: { shown: true } };
 					}
 
 					case 'selection.get': {
@@ -4162,6 +4180,45 @@ export const App: React.FC = () => {
 					onRemove={handleRemovePlugin}
 					showDev={isDev}
 				/>
+			)}
+
+			{toastMessage && (
+				<div
+					style={{
+						position: 'fixed',
+						left: '50%',
+						top: 20,
+						transform: 'translateX(-50%)',
+						backgroundColor: '#2f2f2f',
+						color: '#ffffff',
+						borderRadius: 16,
+						border: '1px solid rgba(255,255,255,0.08)',
+						boxShadow: '0 18px 30px rgba(0,0,0,0.5)',
+						padding: '12px 18px',
+						display: 'flex',
+						alignItems: 'center',
+						gap: 12,
+						zIndex: 1400,
+						fontSize: 14,
+					}}
+				>
+					<div
+						style={{
+							width: 28,
+							height: 28,
+							borderRadius: 8,
+							backgroundColor: '#ffffff',
+							color: '#ff5f5f',
+							fontWeight: 800,
+							display: 'grid',
+							placeItems: 'center',
+							fontSize: 12,
+						}}
+					>
+						3D
+					</div>
+					<div>{toastMessage}</div>
+				</div>
 			)}
 		</div>
 	);

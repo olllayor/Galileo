@@ -34,6 +34,7 @@
     }
 
     .window {
+      position: relative;
       height: 100vh;
       background: var(--bg);
       border-radius: 12px;
@@ -180,6 +181,7 @@
       background: #3b3b3b;
     }
 
+
     .loading-bar {
       height: 2px;
       width: 100%;
@@ -210,6 +212,7 @@
       gap: 6px;
       background: #2b2b2b;
       overflow: auto;
+      position: relative;
     }
 
     .card {
@@ -233,6 +236,19 @@
       width: 52px;
       height: 52px;
       object-fit: contain;
+    }
+
+    .empty-state {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+      padding: 20px;
+      pointer-events: none;
     }
 
     .footer {
@@ -272,23 +288,23 @@
     </div>
     <div class="toolbar">
       <div class="chips" id="styleChips">
-        <button class="chip multi active" data-style="color" title="Color"></button>
-        <button class="chip sunset" data-style="clay" title="Clay"></button>
-        <button class="chip white" data-style="premium" title="Premium"></button>
-        <button class="chip dark" data-style="gradient" title="Gradient"></button>
+        <button type="button" class="chip multi active" data-style="color" title="Color"></button>
+        <button type="button" class="chip sunset" data-style="clay" title="Clay"></button>
+        <button type="button" class="chip white" data-style="premium" title="Premium"></button>
+        <button type="button" class="chip dark" data-style="gradient" title="Gradient"></button>
       </div>
       <div class="shape-group" id="angleChips">
-        <button class="shape" data-angle="front" title="Front">
+        <button type="button" class="shape" data-angle="front" title="Front">
           <svg viewBox="0 0 24 24">
             <rect x="4" y="4" width="16" height="16" rx="2" />
           </svg>
         </button>
-        <button class="shape active" data-angle="dynamic" title="Dynamic">
+        <button type="button" class="shape active" data-angle="dynamic" title="Dynamic">
           <svg viewBox="0 0 24 24">
             <rect x="5" y="5" width="14" height="14" rx="2" transform="rotate(12 12 12)" />
           </svg>
         </button>
-        <button class="shape" data-angle="cube" title="Cube">
+        <button type="button" class="shape" data-angle="cube" title="Cube">
           <svg viewBox="0 0 24 24">
             <path d="M12 3l8 4v10l-8 4-8-4V7z" />
             <path d="M12 3v14" />
@@ -299,12 +315,15 @@
     </div>
     <div class="loading-bar" id="loadingBar"></div>
 
-    <div class="grid" id="iconGrid"></div>
+    <div class="grid" id="iconGrid">
+      <div class="empty-state" id="emptyState" style="display: none;">No icons found</div>
+    </div>
 
   </div>
 
   <script>
     const iconGrid = document.getElementById('iconGrid');
+    const emptyState = document.getElementById('emptyState');
     const searchInput = document.getElementById('searchInput');
     const windowEl = document.getElementById('window');
     const styleChips = document.getElementById('styleChips');
@@ -357,15 +376,64 @@
       windowEl.classList.toggle('loading-active', active);
     };
 
+    const applyTransparentPreview = (img) => {
+      if (!img || img.dataset.cleaned === '1') return;
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const width = img.naturalWidth || 0;
+      const height = img.naturalHeight || 0;
+      if (!width || !height) return;
+      canvas.width = width;
+      canvas.height = height;
+      try {
+        ctx.drawImage(img, 0, 0, width, height);
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const a = data[i + 3];
+          if (a === 0) continue;
+          if (r >= 245 && g >= 245 && b >= 245) {
+            data[i + 3] = 0;
+          }
+        }
+        ctx.putImageData(imageData, 0, 0);
+        img.dataset.cleaned = '1';
+        img.src = canvas.toDataURL('image/png');
+      } catch (_error) {
+        // CORS or canvas errors; keep original preview.
+      }
+    };
+
     const renderGrid = () => {
-      iconGrid.innerHTML = '';
+      iconGrid.querySelectorAll('.card').forEach((card) => card.remove());
+      if (emptyState) {
+        emptyState.style.display = state.icons.length === 0 ? 'flex' : 'none';
+      }
       state.icons.forEach((icon) => {
         const card = document.createElement('button');
         card.type = 'button';
         card.className = 'card' + (state.selectedIcon?.id === icon.id ? ' active' : '');
-        card.innerHTML = `<img src="${icon.previewUrl}" alt="${icon.name}" />`;
-        card.addEventListener('click', () => selectIcon(icon));
+        card.dataset.id = icon.id;
+        const img = document.createElement('img');
+        img.alt = icon.name || icon.id;
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.crossOrigin = 'anonymous';
+        img.addEventListener('load', () => applyTransparentPreview(img));
+        img.src = icon.previewUrl;
+        card.appendChild(img);
         iconGrid.appendChild(card);
+      });
+    };
+
+    const setActiveCard = () => {
+      const selectedId = state.selectedIcon?.id;
+      iconGrid.querySelectorAll('.card').forEach((card) => {
+        card.classList.toggle('active', card.dataset.id === selectedId);
       });
     };
 
@@ -385,7 +453,7 @@
       } finally {
         setLoading(false);
       }
-      renderGrid();
+      setActiveCard();
     };
 
     const loadIcons = async (query = '') => {
@@ -396,6 +464,8 @@
         renderGrid();
         if (!state.selectedIcon && state.icons.length > 0) {
           selectIcon(state.icons[0]);
+        } else {
+          setActiveCard();
         }
       } catch (_error) {
         // Silent in compact UI
@@ -496,6 +566,14 @@
       return removeWhiteBackground(renderResult);
     };
 
+    const showToast = async (message) => {
+      try {
+        await rpc.call('host.toast', { message });
+      } catch (_error) {
+        // Ignore toast errors
+      }
+    };
+
     const applyIcon = async () => {
       if (!state.selectedIcon) return;
       const targetId = state.editTargetId || state.selection?.primaryId;
@@ -521,6 +599,7 @@
             meta: buildMeta(renderResult),
             resize: false,
           });
+          showToast(`3dicons/${state.selectedIcon.id}-${state.angle}-${state.style} updated`);
         } else {
           await rpc.call('document.insertImage', {
             dataBase64: output.dataBase64,
@@ -530,6 +609,7 @@
             name: state.selectedIcon.name,
             meta: buildMeta(renderResult),
           });
+          showToast(`3dicons/${state.selectedIcon.id}-${state.angle}-${state.style} added`);
         }
       } catch (_error) {
         // Silent in compact UI
@@ -552,7 +632,6 @@
       if (!target) return;
       state.style = target.dataset.style;
       updateActiveChips();
-      applyIcon();
     });
 
     angleChips.addEventListener('click', (event) => {
@@ -562,7 +641,6 @@
       if (nextAngle === 'cube') return;
       state.angle = nextAngle;
       updateActiveChips();
-      applyIcon();
     });
 
     searchInput.addEventListener('input', () => {
@@ -573,6 +651,17 @@
     iconGrid.addEventListener('click', (event) => {
       const card = event.target.closest('.card');
       if (!card) return;
+      const icon = state.icons.find((entry) => entry.id === card.dataset.id);
+      if (!icon) return;
+      selectIcon(icon);
+    });
+
+    iconGrid.addEventListener('dblclick', (event) => {
+      const card = event.target.closest('.card');
+      if (!card) return;
+      const icon = state.icons.find((entry) => entry.id === card.dataset.id);
+      if (!icon) return;
+      state.selectedIcon = icon;
       applyIcon();
     });
 

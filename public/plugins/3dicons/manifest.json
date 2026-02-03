@@ -1,0 +1,654 @@
+[
+  {
+    "id": "1c6625-3d",
+    "name": "3d"
+  },
+  {
+    "id": "b801dc-3d-coin",
+    "name": "3d Coin"
+  },
+  {
+    "id": "a0f7a1-at",
+    "name": "At"
+  },
+  {
+    "id": "6f449f-axe",
+    "name": "Axe"
+  },
+  {
+    "id": "14180b-back",
+    "name": "Back"
+  },
+  {
+    "id": "8c4e01-backward",
+    "name": "Backward"
+  },
+  {
+    "id": "f71a3e-bag",
+    "name": "Bag"
+  },
+  {
+    "id": "7db5bc-ball",
+    "name": "Ball"
+  },
+  {
+    "id": "4ffad0-bat",
+    "name": "Bat"
+  },
+  {
+    "id": "8510e2-battery",
+    "name": "Battery"
+  },
+  {
+    "id": "b5916f-bell",
+    "name": "Bell"
+  },
+  {
+    "id": "ef4a90-bell",
+    "name": "Bell"
+  },
+  {
+    "id": "283ce1-blender",
+    "name": "Blender"
+  },
+  {
+    "id": "1dec68-bone",
+    "name": "Bone"
+  },
+  {
+    "id": "8c0c80-bookmark",
+    "name": "Bookmark"
+  },
+  {
+    "id": "3d77e2-bookmark-fav",
+    "name": "Bookmark Fav"
+  },
+  {
+    "id": "a14880-boy",
+    "name": "Boy"
+  },
+  {
+    "id": "368c50-broom",
+    "name": "Broom"
+  },
+  {
+    "id": "62a0b1-brush",
+    "name": "Brush"
+  },
+  {
+    "id": "ecf873-bucket",
+    "name": "Bucket"
+  },
+  {
+    "id": "ddbd61-bulb",
+    "name": "Bulb"
+  },
+  {
+    "id": "dd7474-calculator",
+    "name": "Calculator"
+  },
+  {
+    "id": "f32794-calendar",
+    "name": "Calendar"
+  },
+  {
+    "id": "781f28-calendar",
+    "name": "Calendar"
+  },
+  {
+    "id": "0ef25b-calender",
+    "name": "Calender"
+  },
+  {
+    "id": "d4ee0e-call-end",
+    "name": "Call End"
+  },
+  {
+    "id": "883904-call-in",
+    "name": "Call In"
+  },
+  {
+    "id": "e4ef20-call-missed",
+    "name": "Call Missed"
+  },
+  {
+    "id": "1b19dc-call-only",
+    "name": "Call Only"
+  },
+  {
+    "id": "87c2c5-call-out",
+    "name": "Call Out"
+  },
+  {
+    "id": "c90331-call-ringing",
+    "name": "Call Ringing"
+  },
+  {
+    "id": "5656e5-camera",
+    "name": "Camera"
+  },
+  {
+    "id": "deb9ff-can",
+    "name": "Can"
+  },
+  {
+    "id": "6e6a21-candle",
+    "name": "Candle"
+  },
+  {
+    "id": "9ebc41-candle",
+    "name": "Candle"
+  },
+  {
+    "id": "ab9721-candy",
+    "name": "Candy"
+  },
+  {
+    "id": "e216db-candy",
+    "name": "Candy"
+  },
+  {
+    "id": "40545a-candy",
+    "name": "Candy"
+  },
+  {
+    "id": "e32138-cap",
+    "name": "Cap"
+  },
+  {
+    "id": "544d0d-cauldron",
+    "name": "Cauldron"
+  },
+  {
+    "id": "4a4275-chart",
+    "name": "Chart"
+  },
+  {
+    "id": "6afbc7-chat",
+    "name": "Chat"
+  },
+  {
+    "id": "eec43d-chat-bubble",
+    "name": "Chat Bubble"
+  },
+  {
+    "id": "f0f795-chat-text",
+    "name": "Chat Text"
+  },
+  {
+    "id": "616eaf-chess",
+    "name": "Chess"
+  },
+  {
+    "id": "0fa56a-circle",
+    "name": "Circle"
+  },
+  {
+    "id": "8ef1fa-clock",
+    "name": "Clock"
+  },
+  {
+    "id": "791ffc-coffine-box",
+    "name": "Coffine Box"
+  },
+  {
+    "id": "82db59-color-palette",
+    "name": "Color Palette"
+  },
+  {
+    "id": "5f20be-computer",
+    "name": "Computer"
+  },
+  {
+    "id": "d3d0c8-copy",
+    "name": "Copy"
+  },
+  {
+    "id": "11463e-credit-card",
+    "name": "Credit Card"
+  },
+  {
+    "id": "634b4b-crown",
+    "name": "Crown"
+  },
+  {
+    "id": "4f52f8-cube",
+    "name": "Cube"
+  },
+  {
+    "id": "7fb19c-cup",
+    "name": "Cup"
+  },
+  {
+    "id": "421bcd-dollar",
+    "name": "Dollar"
+  },
+  {
+    "id": "16c368-eth",
+    "name": "Eth"
+  },
+  {
+    "id": "d40073-euro",
+    "name": "Euro"
+  },
+  {
+    "id": "a0330a-explorer",
+    "name": "Explorer"
+  },
+  {
+    "id": "520d02-eyedropper",
+    "name": "Eyedropper"
+  },
+  {
+    "id": "bf610e-figma",
+    "name": "Figma"
+  },
+  {
+    "id": "ac021e-file",
+    "name": "File"
+  },
+  {
+    "id": "135b84-file-fav",
+    "name": "File Fav"
+  },
+  {
+    "id": "7bbb2b-file-new",
+    "name": "File New"
+  },
+  {
+    "id": "65d841-file-text",
+    "name": "File Text"
+  },
+  {
+    "id": "6bfe8c-fire",
+    "name": "Fire"
+  },
+  {
+    "id": "e9828b-flag",
+    "name": "Flag"
+  },
+  {
+    "id": "637858-flash",
+    "name": "Flash"
+  },
+  {
+    "id": "176980-folder",
+    "name": "Folder"
+  },
+  {
+    "id": "b7c633-folder-fav",
+    "name": "Folder Fav"
+  },
+  {
+    "id": "34bc6f-folder-new",
+    "name": "Folder New"
+  },
+  {
+    "id": "923d52-forward",
+    "name": "Forward"
+  },
+  {
+    "id": "da9711-frankenstein",
+    "name": "Frankenstein"
+  },
+  {
+    "id": "231450-ghost",
+    "name": "Ghost"
+  },
+  {
+    "id": "3f0398-gift",
+    "name": "Gift"
+  },
+  {
+    "id": "269bcd-gift-box",
+    "name": "Gift Box"
+  },
+  {
+    "id": "d004fd-gingerbread",
+    "name": "Gingerbread"
+  },
+  {
+    "id": "2dfe27-girl",
+    "name": "Girl"
+  },
+  {
+    "id": "f1cab8-glass",
+    "name": "Glass"
+  },
+  {
+    "id": "3ddcf2-gloves",
+    "name": "Gloves"
+  },
+  {
+    "id": "49f115-gravestone",
+    "name": "Gravestone"
+  },
+  {
+    "id": "10c35a-gym",
+    "name": "Gym"
+  },
+  {
+    "id": "908239-hash",
+    "name": "Hash"
+  },
+  {
+    "id": "b81ead-headphone",
+    "name": "Headphone"
+  },
+  {
+    "id": "1acc3d-heart",
+    "name": "Heart"
+  },
+  {
+    "id": "778c78-key",
+    "name": "Key"
+  },
+  {
+    "id": "56180e-lab",
+    "name": "Lab"
+  },
+  {
+    "id": "2c84d9-leaf",
+    "name": "Leaf"
+  },
+  {
+    "id": "2d9fa2-link",
+    "name": "Link"
+  },
+  {
+    "id": "8bbd16-location",
+    "name": "Location"
+  },
+  {
+    "id": "457612-lock",
+    "name": "Lock"
+  },
+  {
+    "id": "e67951-locker",
+    "name": "Locker"
+  },
+  {
+    "id": "5cc402-magic-trick",
+    "name": "Magic Trick"
+  },
+  {
+    "id": "8924a0-mail",
+    "name": "Mail"
+  },
+  {
+    "id": "1858b9-map-pin",
+    "name": "Map Pin"
+  },
+  {
+    "id": "39121b-medal",
+    "name": "Medal"
+  },
+  {
+    "id": "313578-megaphone",
+    "name": "Megaphone"
+  },
+  {
+    "id": "fddbbc-mic",
+    "name": "Mic"
+  },
+  {
+    "id": "fdb416-minecraft",
+    "name": "Minecraft"
+  },
+  {
+    "id": "1fded0-mobile",
+    "name": "Mobile"
+  },
+  {
+    "id": "634add-money",
+    "name": "Money"
+  },
+  {
+    "id": "36f0c6-money-bag",
+    "name": "Money Bag"
+  },
+  {
+    "id": "a63030-moon",
+    "name": "Moon"
+  },
+  {
+    "id": "331e9c-music",
+    "name": "Music"
+  },
+  {
+    "id": "cdb20a-next",
+    "name": "Next"
+  },
+  {
+    "id": "628100-notebook",
+    "name": "Notebook"
+  },
+  {
+    "id": "196608-notify-heart",
+    "name": "Notify Heart"
+  },
+  {
+    "id": "c2395b-painting-brush",
+    "name": "Painting Brush"
+  },
+  {
+    "id": "fcbbf1-painting-kit",
+    "name": "Painting Kit"
+  },
+  {
+    "id": "fd6d80-pause",
+    "name": "Pause"
+  },
+  {
+    "id": "66b0f8-pencil",
+    "name": "Pencil"
+  },
+  {
+    "id": "19312f-picture",
+    "name": "Picture"
+  },
+  {
+    "id": "ae1a5e-pin",
+    "name": "Pin"
+  },
+  {
+    "id": "866e45-play",
+    "name": "Play"
+  },
+  {
+    "id": "33bdc6-plus",
+    "name": "Plus"
+  },
+  {
+    "id": "af03f3-potion",
+    "name": "Potion"
+  },
+  {
+    "id": "1358b6-pound",
+    "name": "Pound"
+  },
+  {
+    "id": "b2ebdd-pumpkin",
+    "name": "Pumpkin"
+  },
+  {
+    "id": "a68576-puzzle",
+    "name": "Puzzle"
+  },
+  {
+    "id": "dd3311-reindeer",
+    "name": "Reindeer"
+  },
+  {
+    "id": "b0b258-ribbon",
+    "name": "Ribbon"
+  },
+  {
+    "id": "744cc0-rocket",
+    "name": "Rocket"
+  },
+  {
+    "id": "fc0a5a-roll-brush",
+    "name": "Roll Brush"
+  },
+  {
+    "id": "879a83-rupee",
+    "name": "Rupee"
+  },
+  {
+    "id": "f8ba36-santa",
+    "name": "Santa"
+  },
+  {
+    "id": "e94351-scissor",
+    "name": "Scissor"
+  },
+  {
+    "id": "7e47be-setting",
+    "name": "Setting"
+  },
+  {
+    "id": "b91186-shield",
+    "name": "Shield"
+  },
+  {
+    "id": "aca067-shocks",
+    "name": "Shocks"
+  },
+  {
+    "id": "bf7492-skull",
+    "name": "Skull"
+  },
+  {
+    "id": "979095-skull-candle",
+    "name": "Skull Candle"
+  },
+  {
+    "id": "e7eb9d-sleigh",
+    "name": "Sleigh"
+  },
+  {
+    "id": "5fc3fc-snowflake",
+    "name": "Snowflake"
+  },
+  {
+    "id": "4e9c51-snowman",
+    "name": "Snowman"
+  },
+  {
+    "id": "8034f3-sphere",
+    "name": "Sphere"
+  },
+  {
+    "id": "a3b4b6-spider",
+    "name": "Spider"
+  },
+  {
+    "id": "3d005d-star",
+    "name": "Star"
+  },
+  {
+    "id": "17125d-star",
+    "name": "Star"
+  },
+  {
+    "id": "801da3-sun",
+    "name": "Sun"
+  },
+  {
+    "id": "abab3a-takeway-cup",
+    "name": "Takeway Cup"
+  },
+  {
+    "id": "49b6f4-target",
+    "name": "Target"
+  },
+  {
+    "id": "845bf0-tea-cup",
+    "name": "Tea Cup"
+  },
+  {
+    "id": "f33986-text",
+    "name": "Text"
+  },
+  {
+    "id": "d891e3-thumb-down",
+    "name": "Thumb Down"
+  },
+  {
+    "id": "4e7918-thumb-up",
+    "name": "Thumb Up"
+  },
+  {
+    "id": "1b714e-tick",
+    "name": "Tick"
+  },
+  {
+    "id": "6d3198-toggle",
+    "name": "Toggle"
+  },
+  {
+    "id": "ff5be0-tools",
+    "name": "Tools"
+  },
+  {
+    "id": "add2ea-trash-can",
+    "name": "Trash Can"
+  },
+  {
+    "id": "fa6099-travel",
+    "name": "Travel"
+  },
+  {
+    "id": "49654f-trophy",
+    "name": "Trophy"
+  },
+  {
+    "id": "3f82a3-umbrella",
+    "name": "Umbrella"
+  },
+  {
+    "id": "b3351c-vamp",
+    "name": "Vamp"
+  },
+  {
+    "id": "b1dccf-video-cam",
+    "name": "Video Cam"
+  },
+  {
+    "id": "7d956f-wallet",
+    "name": "Wallet"
+  },
+  {
+    "id": "16f789-wifi",
+    "name": "Wifi"
+  },
+  {
+    "id": "ca95d1-witch-hat",
+    "name": "Witch Hat"
+  },
+  {
+    "id": "8d7202-wreath",
+    "name": "Wreath"
+  },
+  {
+    "id": "11b186-xmas-tree",
+    "name": "Xmas Tree"
+  },
+  {
+    "id": "5fdffa-yuan",
+    "name": "Yuan"
+  },
+  {
+    "id": "835a74-zombie",
+    "name": "Zombie"
+  },
+  {
+    "id": "135592-zombie-hand",
+    "name": "Zombie Hand"
+  },
+  {
+    "id": "b4a0af-zoom",
+    "name": "Zoom"
+  }
+]
