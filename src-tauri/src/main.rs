@@ -20,6 +20,26 @@ pub struct LoadDocumentArgs {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RenameDocumentArgs {
+    pub old_path: String,
+    pub new_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteDocumentArgs {
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateDocumentArgs {
+    pub src: String,
+    pub dest: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SaveBinaryArgs {
     pub path: String,
     pub data_base64: String,
@@ -59,6 +79,28 @@ fn save_document(args: SaveDocumentArgs) -> Result<(), String> {
 #[tauri::command]
 fn load_document(args: LoadDocumentArgs) -> Result<String, String> {
     fs::read_to_string(&args.path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn rename_document(args: RenameDocumentArgs) -> Result<(), String> {
+    fs::rename(&args.old_path, &args.new_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_document(args: DeleteDocumentArgs) -> Result<(), String> {
+    fs::remove_file(&args.path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn duplicate_document(args: DuplicateDocumentArgs) -> Result<(), String> {
+    fs::copy(&args.src, &args.dest)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn path_exists(path: String) -> Result<bool, String> {
+    Ok(fs::metadata(path).is_ok())
 }
 
 #[tauri::command]
@@ -205,6 +247,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             save_document,
             load_document,
+            rename_document,
+            delete_document,
+            duplicate_document,
+            path_exists,
             show_save_dialog,
             show_open_dialog,
             show_open_folder,

@@ -39,6 +39,21 @@ export const sizeSchema = z.object({
 
 export type Size = z.infer<typeof sizeSchema>;
 
+export const vectorPointSchema = z.object({
+	x: z.number(),
+	y: z.number(),
+});
+
+export const vectorDataSchema = z
+	.object({
+		points: vectorPointSchema.array(),
+		closed: z.boolean().optional(),
+	})
+	.passthrough();
+
+export type VectorPoint = z.infer<typeof vectorPointSchema>;
+export type VectorData = z.infer<typeof vectorDataSchema>;
+
 export const imageMeta3dIconSchema = z
 	.object({
 		kind: z.literal('3d-icon'),
@@ -53,7 +68,7 @@ export const imageMeta3dIconSchema = z
 	})
 	.passthrough();
 
-export const imageMetaSchema = z.union([imageMeta3dIconSchema]).optional();
+export const imageMetaSchema = imageMeta3dIconSchema.optional();
 
 export type ImageMeta3dIcon = z.infer<typeof imageMeta3dIconSchema>;
 
@@ -162,6 +177,7 @@ export const nodeSchema = z.object({
 
 	pathData: z.string().optional(),
 	d: z.string().optional(),
+	vector: vectorDataSchema.optional(),
 
 	componentId: z.string().optional(),
 	variant: z.record(z.any()).optional(),

@@ -7,6 +7,10 @@ import { ContextMenu, type ContextMenuItem } from './ui/ContextMenu';
 import { PluginModal } from './ui/PluginModal';
 import { PluginManagerModal } from './ui/PluginManagerModal';
 import { LayersPanel } from './ui/LayersPanel';
+import { ProjectsScreen } from './ui/ProjectsScreen';
+import { ProjectHandle } from './ui/ProjectHandle';
+import { ProjectTabs } from './ui/ProjectTabs';
+import { CommandPalette, type CommandPaletteItem } from './ui/CommandPalette';
 import { useDocument } from './hooks/useDocument';
 import {
 	createRectangleTool,
@@ -36,8 +40,27 @@ import {
 	type WorldBoundsMap,
 } from './core/doc';
 import { generateId } from './core/doc/id';
+import { createDocument } from './core/doc/types';
 import type { Constraints, Document, ImageMeta3dIcon, Node } from './core/doc/types';
 import type { Command } from './core/commands/types';
+import {
+	createProjectMeta,
+	deriveProjectNameFromPath,
+	getLastOpenProjectId,
+	getProjectById,
+	getProjectByPath,
+	loadProjects,
+	loadProjectsSearch,
+	removeProjectById,
+	saveProjects,
+	saveProjectsSearch,
+	setLastOpenProjectId,
+	toggleProjectPin,
+	updateProjectById,
+	upsertProject,
+	type ProjectMeta,
+	type ProjectVersion,
+} from './core/projects/registry';
 import type { CanvasPointerInfo, CanvasWheelInfo } from './hooks/useCanvas';
 import { getHandleCursor, hitTestHandle } from './interaction/handles';
 import type { ResizeHandle } from './interaction/handles';
@@ -693,6 +716,13 @@ export const App: React.FC = () => {
 		isDirty,
 	} = useDocument();
 
+	const [appView, setAppView] = useState<'projects' | 'editor'>('projects');
+	const [projects, setProjects] = useState<ProjectMeta[]>(() => loadProjects());
+	const [projectsSearch, setProjectsSearch] = useState(() => loadProjectsSearch());
+	const [activeProjectId, setActiveProjectId] = useState<string | null>(() => getLastOpenProjectId());
+	const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+	const [missingPaths, setMissingPaths] = useState<Record<string, boolean>>({});
+
 	const [activeTool, setActiveTool] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text'>('select');
 	const [spaceKeyHeld, setSpaceKeyHeld] = useState(false);
 	const [toolBeforeSpace, setToolBeforeSpace] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text' | null>(null);
@@ -742,6 +772,55 @@ export const App: React.FC = () => {
 	const clipboardPasteCountRef = useRef(0);
 	const canvasSize = { width: 1280, height: 800 };
 	const isDev = import.meta.env?.DEV ?? false;
+
+	const updateProjects = useCallback((updater: (prev: ProjectMeta[]) => ProjectMeta[]) => {
+		setProjects((prev) => {
+			const next = updater(prev);
+			saveProjects(next);
+			return next;
+		});
+	}, []);
+
+	const ensureGalileoExtension = useCallback((value: string) => {
+		const trimmed = value.trim();
+		if (!trimmed) return trimmed;
+		const lower = trimmed.toLowerCase();
+		if (lower.endsWith('.galileo')) return trimmed;
+		if (/\\.[a-z0-9]+$/i.test(trimmed)) {
+			return trimmed.replace(/\\.[a-z0-9]+$/i, '.galileo');
+		}
+		return `${trimmed}.galileo`;
+	}, []);
+
+	const buildRenamedPath = useCallback((path: string, nextName: string) => {
+		const separator = path.includes('\\\\') ? '\\\\' : '/';
+		const parts = path.split(/[/\\\\]/);
+		parts.pop();
+		const base = parts.join(separator);
+		const fileName = ensureGalileoExtension(nextName);
+		return base ? `${base}${separator}${fileName}` : fileName;
+	}, [ensureGalileoExtension]);
+
+	const registerProjectOpened = useCallback(
+		(path: string) => {
+			let resolved = createProjectMeta(path);
+			updateProjects((prev) => {
+				const existing = getProjectByPath(prev, path);
+				const nextProject = existing ? { ...existing, lastOpenedAt: Date.now() } : resolved;
+				resolved = nextProject;
+				return upsertProject(prev, nextProject);
+			});
+			setActiveProjectId(resolved.id);
+			setLastOpenProjectId(resolved.id);
+			return resolved;
+		},
+		[updateProjects],
+	);
+
+	const handleProjectsSearchChange = useCallback((value: string) => {
+		setProjectsSearch(value);
+		saveProjectsSearch(value);
+	}, []);
 
 	const displayDocument = previewDocument ?? document;
 	const selectedNode = selectedIds.length === 1 ? displayDocument.nodes[selectedIds[0]] : null;
@@ -794,6 +873,18 @@ export const App: React.FC = () => {
 		const parts = currentPath.split(/[/\\\\]/);
 		return parts[parts.length - 1] || 'Untitled';
 	}, [currentPath]);
+	const currentProject = useMemo(() => {
+		if (activeProjectId) {
+			return getProjectById(projects, activeProjectId) || (currentPath ? getProjectByPath(projects, currentPath) : null);
+		}
+		if (currentPath) return getProjectByPath(projects, currentPath);
+		return null;
+	}, [activeProjectId, projects, currentPath]);
+	const projectName = currentProject?.name ?? (currentPath ? deriveProjectNameFromPath(currentPath) : 'Untitled');
+	const projectWorkspace = currentProject?.workspaceName ?? 'Local';
+	const projectEnv = currentProject?.env ?? 'local';
+	const projectVersion: ProjectVersion = isDirty ? 'draft' : 'live';
+	const projectBreadcrumb = `${projectWorkspace} / ${projectName} / ${fileName}`;
 	const hoverBounds = useMemo(() => {
 		const hoverId = hoverHit?.id;
 		if (!hoverId || selectionIds.includes(hoverId)) return null;
@@ -1005,6 +1096,35 @@ export const App: React.FC = () => {
 			setRecentPluginIds(seeded);
 		}
 	}, [recentPluginIds.length]);
+
+	useEffect(() => {
+		let cancelled = false;
+		if (projects.length === 0) {
+			setMissingPaths({});
+			return;
+		}
+
+		const checkPaths = async () => {
+			const entries = await Promise.all(
+				projects.map(async (project) => {
+					try {
+						const exists = await invoke<boolean>('path_exists', { path: project.path });
+						return [project.path, !exists] as const;
+					} catch {
+						return [project.path, false] as const;
+					}
+				}),
+			);
+			if (!cancelled) {
+				setMissingPaths(Object.fromEntries(entries));
+			}
+		};
+
+		void checkPaths();
+		return () => {
+			cancelled = true;
+		};
+	}, [projects]);
 
 	const insertImageNode = useCallback(
 		async ({
@@ -3404,6 +3524,207 @@ export const App: React.FC = () => {
 		[executeCommand],
 	);
 
+	const confirmDiscard = useCallback(
+		(actionLabel: string) => {
+			if (!isDirty) return true;
+			return window.confirm(`You have unsaved changes. Discard them and ${actionLabel}?`);
+		},
+		[isDirty],
+	);
+
+	const applyLoadedDocument = useCallback(
+		(doc: Document, path: string | null) => {
+			replaceDocument(doc);
+			setCurrentPath(path);
+			markSaved();
+			setPanOffset({ x: 0, y: 0 });
+			setZoom(1);
+			setPreviewDocument(null);
+			setDragState(null);
+			setSnapGuides([]);
+			setHoverHandle(null);
+			setHoverHit(null);
+			localStorage.removeItem(AUTOSAVE_KEY);
+		},
+		[replaceDocument, markSaved],
+	);
+
+	const loadDocumentFromPath = useCallback(
+		async (path: string): Promise<boolean> => {
+			try {
+				const content = await invoke<string>('load_document', { args: { path } });
+				const result = parseDocumentText(content);
+				if (!result.ok) {
+					const details = result.details?.join('\n');
+					alert(`Failed to load document: ${result.error}${details ? `\n${details}` : ''}`);
+					return false;
+				}
+				applyLoadedDocument(result.doc, path);
+				if (result.warnings.length > 0) {
+					console.warn('Document warnings:', result.warnings);
+				}
+				return true;
+			} catch (error) {
+				console.error('Load error:', error);
+				alert('Failed to load document');
+				return false;
+			}
+		},
+		[applyLoadedDocument],
+	);
+
+	const openProjectPath = useCallback(
+		async (path: string) => {
+			if (!confirmDiscard('open another file')) return false;
+			const ok = await loadDocumentFromPath(path);
+			if (!ok) return false;
+			registerProjectOpened(path);
+			setAppView('editor');
+			return true;
+		},
+		[confirmDiscard, loadDocumentFromPath, registerProjectOpened],
+	);
+
+	const handleCreateProject = useCallback(async () => {
+		if (!confirmDiscard('create a new project')) return;
+		const pickedPath = await invoke<string>('show_save_dialog');
+		if (!pickedPath) {
+			return;
+		}
+		const path = ensureGalileoExtension(pickedPath);
+		try {
+			const doc = createDocument();
+			await invoke('save_document', {
+				args: { path, content: serializeDocument(doc) },
+			});
+			applyLoadedDocument(doc, path);
+			registerProjectOpened(path);
+			setAppView('editor');
+		} catch (error) {
+			console.error('Create project error:', error);
+			alert('Failed to create project');
+		}
+	}, [applyLoadedDocument, confirmDiscard, ensureGalileoExtension, registerProjectOpened]);
+
+	const handleOpenFile = useCallback(async () => {
+		const path = await invoke<string>('show_open_dialog');
+		if (path) {
+			await openProjectPath(path);
+		}
+	}, [openProjectPath]);
+
+	const handleOpenProject = useCallback(
+		async (project: ProjectMeta) => {
+			await openProjectPath(project.path);
+		},
+		[openProjectPath],
+	);
+
+	const handleRenameProject = useCallback(
+		async (project: ProjectMeta, nextName: string) => {
+			const trimmed = nextName.trim();
+			if (!trimmed) {
+				throw new Error('Project name cannot be empty');
+			}
+			const nextPath = buildRenamedPath(project.path, trimmed);
+			if (nextPath === project.path) {
+				return;
+			}
+			try {
+				await invoke('rename_document', { args: { oldPath: project.path, newPath: nextPath } });
+				updateProjects((prev) =>
+					updateProjectById(prev, project.id, {
+						name: deriveProjectNameFromPath(nextPath),
+						path: nextPath,
+					}),
+				);
+				if (currentPath === project.path) {
+					setCurrentPath(nextPath);
+				}
+			} catch (error) {
+				console.error('Rename error:', error);
+				throw new Error('Rename failed. Check permissions or name conflicts.');
+			}
+		},
+		[buildRenamedPath, currentPath, updateProjects],
+	);
+
+	const handleDuplicateProject = useCallback(
+		async (project: ProjectMeta) => {
+			const pickedPath = await invoke<string>('show_save_dialog');
+			if (!pickedPath) return;
+			const dest = ensureGalileoExtension(pickedPath);
+			try {
+				await invoke('duplicate_document', { args: { src: project.path, dest } });
+				await openProjectPath(dest);
+			} catch (error) {
+				console.error('Duplicate error:', error);
+				alert('Failed to duplicate project');
+			}
+		},
+		[ensureGalileoExtension, openProjectPath],
+	);
+
+	const handleDeleteProject = useCallback(
+		async (project: ProjectMeta) => {
+			const confirmed = window.confirm(`Delete \"${project.name}\"? This cannot be undone.`);
+			if (!confirmed) return;
+			try {
+				await invoke('delete_document', { args: { path: project.path } });
+				updateProjects((prev) => removeProjectById(prev, project.id));
+				if (currentPath === project.path) {
+					applyLoadedDocument(createDocument(), null);
+					setActiveProjectId(null);
+					setAppView('projects');
+				}
+			} catch (error) {
+				console.error('Delete error:', error);
+				alert('Failed to delete project');
+			}
+		},
+		[applyLoadedDocument, currentPath, updateProjects],
+	);
+
+	const handleRemoveMissingProject = useCallback(
+		(project: ProjectMeta) => {
+			updateProjects((prev) => removeProjectById(prev, project.id));
+			if (project.id === activeProjectId) {
+				setActiveProjectId(null);
+			}
+		},
+		[activeProjectId, updateProjects],
+	);
+
+	const handleTogglePinProject = useCallback(
+		(project: ProjectMeta) => {
+			updateProjects((prev) => toggleProjectPin(prev, project.id));
+		},
+		[updateProjects],
+	);
+
+	const handleBackToProjects = useCallback(() => {
+		if (!confirmDiscard('return to Projects')) return;
+		setContextMenu(null);
+		setActivePlugin(null);
+		setPluginManagerOpen(false);
+		setAppView('projects');
+	}, [confirmDiscard]);
+
+	const handleRenameCurrentProject = useCallback(
+		(nextName: string) => {
+			if (!currentProject) return;
+			void handleRenameProject(currentProject, nextName).catch((error) => {
+				alert(error instanceof Error ? error.message : 'Rename failed');
+			});
+		},
+		[currentProject, handleRenameProject],
+	);
+
+	const handleDuplicateCurrentProject = useCallback(() => {
+		if (!currentProject) return;
+		void handleDuplicateProject(currentProject);
+	}, [currentProject, handleDuplicateProject]);
+
 	const handleSave = useCallback(async () => {
 		try {
 			let path = currentPath;
@@ -3413,14 +3734,15 @@ export const App: React.FC = () => {
 				if (!pickedPath) {
 					return;
 				}
-				path = pickedPath;
+				path = ensureGalileoExtension(pickedPath);
 			}
 
 			await invoke('save_document', {
 				args: { path, content: serializeDocument(document) },
 			});
 			if (pickedPath) {
-				setCurrentPath(pickedPath);
+				setCurrentPath(path);
+				registerProjectOpened(path);
 			}
 			markSaved();
 			localStorage.removeItem(AUTOSAVE_KEY);
@@ -3429,7 +3751,7 @@ export const App: React.FC = () => {
 			console.error('Save error:', error);
 			alert('Failed to save document');
 		}
-	}, [document, currentPath, markSaved]);
+	}, [document, currentPath, ensureGalileoExtension, markSaved, registerProjectOpened]);
 
 	const handleImportImage = useCallback(async () => {
 		try {
@@ -3494,44 +3816,8 @@ export const App: React.FC = () => {
 	);
 
 	const handleLoad = useCallback(async () => {
-		try {
-			if (isDirty) {
-				const proceed = window.confirm('You have unsaved changes. Discard them and load another file?');
-				if (!proceed) {
-					return;
-				}
-			}
-
-			const path = await invoke<string>('show_open_dialog');
-			if (path) {
-				const content = await invoke<string>('load_document', { args: { path } });
-				const result = parseDocumentText(content);
-				if (!result.ok) {
-					const details = result.details?.join('\n');
-					alert(`Failed to load document: ${result.error}${details ? `\n${details}` : ''}`);
-					return;
-				}
-
-				replaceDocument(result.doc);
-				setCurrentPath(path);
-				markSaved();
-				setPanOffset({ x: 0, y: 0 });
-				setZoom(1);
-				setPreviewDocument(null);
-				setDragState(null);
-				setSnapGuides([]);
-				setHoverHandle(null);
-				setHoverHit(null);
-				localStorage.removeItem(AUTOSAVE_KEY);
-				if (result.warnings.length > 0) {
-					console.warn('Document warnings:', result.warnings);
-				}
-			}
-		} catch (error) {
-			console.error('Load error:', error);
-			alert('Failed to load document');
-		}
-	}, [isDirty, replaceDocument, markSaved]);
+		await handleOpenFile();
+	}, [handleOpenFile]);
 
 	useEffect(() => {
 		const updateSnapState = (e: KeyboardEvent) => {
@@ -3581,6 +3867,7 @@ export const App: React.FC = () => {
 	}, [document, currentPath, isDirty]);
 
 	useEffect(() => {
+		if (appView !== 'editor') return;
 		const handlePaste = (event: ClipboardEvent) => {
 			const clipboardData = event.clipboardData;
 			if (!clipboardData) return;
@@ -3679,9 +3966,10 @@ export const App: React.FC = () => {
 
 		window.addEventListener('paste', handlePaste);
 		return () => window.removeEventListener('paste', handlePaste);
-	}, [insertImageNode, pasteClipboardPayload]);
+	}, [appView, insertImageNode, pasteClipboardPayload]);
 
 	useEffect(() => {
+		if (appView !== 'editor') return;
 		const handleDragOver = (event: DragEvent) => {
 			event.preventDefault();
 			event.stopPropagation();
@@ -3765,7 +4053,7 @@ export const App: React.FC = () => {
 			window.removeEventListener('dragover', handleDragOver);
 			window.removeEventListener('drop', handleDrop);
 		};
-	}, [insertImageNode, panOffset.x, panOffset.y, zoom]);
+	}, [appView, insertImageNode, panOffset.x, panOffset.y, zoom]);
 
 	useEffect(() => {
 		const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -3812,6 +4100,37 @@ export const App: React.FC = () => {
 			const hasSelection = selectionIds.length > 0;
 			const isCmd = e.ctrlKey || e.metaKey;
 			const key = e.key.toLowerCase();
+			const isEditorView = appView === 'editor';
+
+			if (isCmd && key === 'k') {
+				e.preventDefault();
+				setCommandPaletteOpen((prev) => !prev);
+				return;
+			}
+
+			if (commandPaletteOpen) {
+				if (e.key === 'Escape') {
+					e.preventDefault();
+					setCommandPaletteOpen(false);
+				}
+				return;
+			}
+
+			if (isCmd && key === 'o') {
+				e.preventDefault();
+				handleOpenFile();
+				return;
+			}
+
+			if (isCmd && key === 'w' && isEditorView) {
+				e.preventDefault();
+				handleBackToProjects();
+				return;
+			}
+
+			if (!isEditorView) {
+				return;
+			}
 
 			if (e.key === 'Escape') {
 				if (contextMenu) {
@@ -4025,6 +4344,8 @@ export const App: React.FC = () => {
 			window.removeEventListener('keyup', handleKeyUp, options);
 		};
 	}, [
+		appView,
+		commandPaletteOpen,
 		displayDocument,
 		document,
 		selectionIds,
@@ -4032,6 +4353,8 @@ export const App: React.FC = () => {
 		canRedo,
 		redoCommand,
 		undoCommand,
+		handleBackToProjects,
+		handleOpenFile,
 		handleSave,
 		handleLoad,
 		handleImportImage,
@@ -4072,6 +4395,76 @@ export const App: React.FC = () => {
 		setActiveTool(tool as 'select' | 'hand' | 'frame' | 'rectangle' | 'text');
 	}, []);
 
+	const commandItems = useMemo<CommandPaletteItem[]>(() => {
+		const items: CommandPaletteItem[] = [
+			{
+				id: 'command-new-project',
+				label: 'New Project',
+				section: 'Commands',
+				action: () => {
+					void handleCreateProject();
+				},
+			},
+			{
+				id: 'command-open-file',
+				label: 'Open File',
+				section: 'Commands',
+				shortcut: 'Cmd+O',
+				action: () => {
+					void handleOpenFile();
+				},
+			},
+		];
+
+		if (appView === 'editor') {
+			items.push({
+				id: 'command-back-projects',
+				label: 'Back to Projects',
+				section: 'Commands',
+				shortcut: 'Cmd+W',
+				action: handleBackToProjects,
+			});
+		}
+
+		if (appView === 'editor' && currentPath) {
+			items.push({
+				id: 'file-current',
+				label: fileName,
+				description: currentPath,
+				section: 'Files',
+				disabled: true,
+				action: () => {},
+			});
+		}
+
+		const sortedProjects = [...projects].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
+		for (const project of sortedProjects) {
+			const isMissing = missingPaths[project.path];
+			items.push({
+				id: `project-${project.id}`,
+				label: project.name,
+				description: isMissing ? 'Missing file' : project.path,
+				section: 'Projects',
+				disabled: isMissing,
+				action: () => {
+					void handleOpenProject(project);
+				},
+			});
+		}
+
+		return items;
+	}, [
+		appView,
+		currentPath,
+		fileName,
+		handleBackToProjects,
+		handleCreateProject,
+		handleOpenFile,
+		handleOpenProject,
+		missingPaths,
+		projects,
+	]);
+
 	return (
 		<div
 			style={{
@@ -4092,72 +4485,115 @@ export const App: React.FC = () => {
 				}}
 			/>
 
-			<div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-				<LayersPanel
-					document={displayDocument}
-					selectionIds={selectionIds}
-					renameRequestId={renameRequestId}
-					collapsed={leftPanelCollapsed}
-					onToggleCollapsed={toggleLeftPanel}
-					onRenameRequestHandled={() => setRenameRequestId(null)}
-					onSelect={selectNode}
-					onRename={handleRenameNode}
-					onToggleVisible={handleToggleNodeVisible}
-					onToggleLocked={handleToggleNodeLocked}
-					onReorder={handleReorderChild}
-				/>
-
-				<div
-					ref={canvasWrapperRef}
-					style={{ flex: 1, overflow: 'hidden', position: 'relative' }}
-					onContextMenu={(e) => handleCanvasContextMenu(e as unknown as React.MouseEvent<HTMLCanvasElement>)}
-				>
-					<Canvas
-						width={canvasSize.width}
-						height={canvasSize.height}
-						document={displayDocument}
-						boundsMap={boundsMap}
-						view={view}
-						selectionBounds={selectionBounds}
-						hoverBounds={hoverBounds}
-						showHandles={selectionIds.length > 0}
-						hoverHandle={hoverHandle}
-						snapGuides={snapGuides}
-						layoutGuides={layoutGuideState.lines}
-						layoutGuideBounds={layoutGuideState.bounds}
-						marqueeRect={marqueeRect}
-						cursor={cursor}
-						onMouseLeave={() => {
-							setHoverHandle(null);
-							setHoverHit(null);
-						}}
-						onMouseDown={handleCanvasMouseDown}
-						onMouseMove={handleCanvasMouseMove}
-						onMouseUp={handleCanvasMouseUp}
-						onWheel={handleCanvasWheel}
-						onContextMenu={handleCanvasContextMenu}
-					/>
-
-					<ActionBar
-						activeTool={activeTool}
-						onToolChange={handleToolChange}
-						onSave={handleSave}
-						onLoad={handleLoad}
-						onImport={handleImportImage}
-						onCreateDeviceFrame={handleCreateDeviceFrame}
+			{appView === 'projects' ? (
+				<div style={{ display: 'flex', flex: 1, overflow: 'auto' }}>
+					<ProjectsScreen
+						projects={projects}
+						missingPaths={missingPaths}
+						search={projectsSearch}
+						onSearchChange={handleProjectsSearchChange}
+						onCreateProject={handleCreateProject}
+						onOpenFile={handleOpenFile}
+						onOpenProject={handleOpenProject}
+						onRenameProject={handleRenameProject}
+						onDuplicateProject={handleDuplicateProject}
+						onDeleteProject={handleDeleteProject}
+						onTogglePin={handleTogglePinProject}
+						onRemoveMissing={handleRemoveMissingProject}
 					/>
 				</div>
+			) : (
+				<>
+					<div
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							height: '36px',
+							padding: '0 16px',
+							borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+							backgroundColor: 'rgba(30, 30, 30, 0.9)',
+						}}
+					>
+						<ProjectHandle
+							projectName={projectName}
+							fileName={fileName}
+							workspaceName={projectWorkspace}
+							env={projectEnv}
+							version={projectVersion}
+							breadcrumb={projectBreadcrumb}
+							onRename={handleRenameCurrentProject}
+							onDuplicate={handleDuplicateCurrentProject}
+						/>
+					</div>
+					<ProjectTabs fileName={fileName} isDirty={isDirty} />
+					<div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+						<LayersPanel
+							document={displayDocument}
+							selectionIds={selectionIds}
+							renameRequestId={renameRequestId}
+							collapsed={leftPanelCollapsed}
+							onToggleCollapsed={toggleLeftPanel}
+							onRenameRequestHandled={() => setRenameRequestId(null)}
+							onSelect={selectNode}
+							onRename={handleRenameNode}
+							onToggleVisible={handleToggleNodeVisible}
+							onToggleLocked={handleToggleNodeLocked}
+							onReorder={handleReorderChild}
+						/>
 
-				<PropertiesPanel
-					selectedNode={selectedNode}
-					document={document}
-					collapsed={rightPanelCollapsed}
-					onToggleCollapsed={toggleRightPanel}
-					onUpdateNode={handleUpdateNode}
-					onOpenPlugin={handleOpenPlugin}
-					zoom={zoom}
-				/>
-			</div>
+						<div
+							ref={canvasWrapperRef}
+							style={{ flex: 1, overflow: 'hidden', position: 'relative' }}
+							onContextMenu={(e) => handleCanvasContextMenu(e as unknown as React.MouseEvent<HTMLCanvasElement>)}
+						>
+							<Canvas
+								width={canvasSize.width}
+								height={canvasSize.height}
+								document={displayDocument}
+								boundsMap={boundsMap}
+								view={view}
+								selectionBounds={selectionBounds}
+								hoverBounds={hoverBounds}
+								showHandles={selectionIds.length > 0}
+								hoverHandle={hoverHandle}
+								snapGuides={snapGuides}
+								layoutGuides={layoutGuideState.lines}
+								layoutGuideBounds={layoutGuideState.bounds}
+								marqueeRect={marqueeRect}
+								cursor={cursor}
+								onMouseLeave={() => {
+									setHoverHandle(null);
+									setHoverHit(null);
+								}}
+								onMouseDown={handleCanvasMouseDown}
+								onMouseMove={handleCanvasMouseMove}
+								onMouseUp={handleCanvasMouseUp}
+								onWheel={handleCanvasWheel}
+								onContextMenu={handleCanvasContextMenu}
+							/>
+
+							<ActionBar
+								activeTool={activeTool}
+								onToolChange={handleToolChange}
+								onSave={handleSave}
+								onLoad={handleLoad}
+								onImport={handleImportImage}
+								onCreateDeviceFrame={handleCreateDeviceFrame}
+							/>
+						</div>
+
+						<PropertiesPanel
+							selectedNode={selectedNode}
+							document={document}
+							collapsed={rightPanelCollapsed}
+							onToggleCollapsed={toggleRightPanel}
+							onUpdateNode={handleUpdateNode}
+							onOpenPlugin={handleOpenPlugin}
+							zoom={zoom}
+						/>
+					</div>
+				</>
+			)}
 
 			{contextMenu && (
 				<ContextMenu
@@ -4181,6 +4617,12 @@ export const App: React.FC = () => {
 					showDev={isDev}
 				/>
 			)}
+
+			<CommandPalette
+				open={commandPaletteOpen}
+				items={commandItems}
+				onClose={() => setCommandPaletteOpen(false)}
+			/>
 
 			{toastMessage && (
 				<div

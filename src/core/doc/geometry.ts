@@ -9,7 +9,7 @@ export interface Bounds {
 
 export type WorldPositionMap = Record<string, { x: number; y: number }>;
 export type WorldBoundsMap = Record<string, Bounds>;
-export type BoundsOverrideMap = Record<string, Bounds>;
+export type BoundsOverrideMap = Record<string, Partial<Bounds>>;
 export type ParentMap = Record<string, string | null>;
 
 export const computeGroupLocalBounds = (children: Node[]): Bounds => {

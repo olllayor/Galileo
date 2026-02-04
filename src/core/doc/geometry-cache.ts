@@ -272,8 +272,18 @@ export class GeometryCache {
 					width: override.width ?? existing.width,
 					height: override.height ?? existing.height,
 				};
-			} else {
-				result[nodeId] = override;
+			} else if (
+				override.x !== undefined &&
+				override.y !== undefined &&
+				override.width !== undefined &&
+				override.height !== undefined
+			) {
+				result[nodeId] = {
+					x: override.x,
+					y: override.y,
+					width: override.width,
+					height: override.height,
+				};
 			}
 		}
 		return result;
