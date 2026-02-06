@@ -42,7 +42,7 @@ import {
 } from './core/doc';
 import { generateId } from './core/doc/id';
 import { createDocument } from './core/doc/types';
-import type { Constraints, Document, ImageMeta, ImageMetaUnsplash, Node, ShadowEffect } from './core/doc/types';
+import type { Constraints, Document, ImageMeta, ImageMetaUnsplash, ImageOutline, Node, ShadowEffect } from './core/doc/types';
 import type { Command } from './core/commands/types';
 import {
 	createProjectMeta,
@@ -101,6 +101,11 @@ const ZOOM_SENSITIVITY = 0.0035;
 const TEXT_PADDING = 4;
 const CLIPBOARD_PREFIX = 'GALILEO_CLIPBOARD_V1:';
 const DEFAULT_CANVAS_SIZE = { width: 1280, height: 800 } as const;
+const DEFAULT_IMAGE_OUTLINE = {
+	color: '#ffffff',
+	width: 12,
+	blur: 0,
+} as const;
 type RemoveBackgroundResult = {
 	maskPngBase64: string;
 	width: number;
@@ -213,6 +218,29 @@ type ClipboardPayload = {
 const cloneShadowEffects = (effects: ShadowEffect[] | undefined): ShadowEffect[] | null => {
 	if (!effects || effects.length === 0) return null;
 	return effects.map((effect) => ({ ...effect }));
+};
+
+const normalizeImageOutline = (outline: Partial<ImageOutline> | undefined): ImageOutline => ({
+	enabled: outline?.enabled === true,
+	color:
+		typeof outline?.color === 'string' && outline.color.trim().length > 0
+			? outline.color
+			: DEFAULT_IMAGE_OUTLINE.color,
+	width:
+		typeof outline?.width === 'number' && Number.isFinite(outline.width)
+			? Math.max(0, outline.width)
+			: DEFAULT_IMAGE_OUTLINE.width,
+	blur:
+		typeof outline?.blur === 'number' && Number.isFinite(outline.blur)
+			? Math.max(0, outline.blur)
+			: DEFAULT_IMAGE_OUTLINE.blur,
+});
+
+const mergeImageOutline = (current: ImageOutline | undefined, updates: Partial<ImageOutline>): ImageOutline => {
+	return normalizeImageOutline({
+		...current,
+		...updates,
+	});
 };
 
 const applyPositionUpdates = (doc: Document, updates: Record<string, { x: number; y: number }>): Document => {
@@ -1486,27 +1514,28 @@ export const App: React.FC = () => {
 				type: 'setProps',
 				payload: {
 					id: nodeId,
-					props: {
-						image: {
-							...image,
-							maskAssetId: undefined,
-							bgRemoveMeta: undefined,
+						props: {
+							image: {
+								...image,
+								maskAssetId: undefined,
+								bgRemoveMeta: undefined,
+								outline: undefined,
+							},
 						},
 					},
-				},
-			});
-		},
-		[document.nodes, executeCommand],
-	);
+				});
+			},
+			[document.nodes, executeCommand],
+		);
 
 	const removeBackgroundForImage = useCallback(
-		async (nodeId: string) => {
+		async (nodeId: string, options?: { outlineOnSuccess?: Partial<ImageOutline> }): Promise<boolean> => {
 			const node = document.nodes[nodeId];
 			if (!node || node.type !== 'image') {
-				return;
+				return false;
 			}
 			if (isRemovingBackground) {
-				return;
+				return false;
 			}
 			flushSync(() => {
 				setIsRemovingBackground(true);
@@ -1523,6 +1552,7 @@ export const App: React.FC = () => {
 				});
 
 				const maskAssetId = generateId();
+				const outline = options?.outlineOnSuccess ? mergeImageOutline(node.image?.outline, options.outlineOnSuccess) : undefined;
 				const now = Date.now();
 				const commands: Command[] = [
 					{
@@ -1560,6 +1590,7 @@ export const App: React.FC = () => {
 										revision: result.revision,
 										createdAt: now,
 									},
+									...(outline ? { outline } : {}),
 								},
 							},
 						},
@@ -1571,9 +1602,10 @@ export const App: React.FC = () => {
 					timestamp: now,
 					source: 'user',
 					description: 'Remove background',
-					type: 'batch',
-					payload: { commands },
-				});
+						type: 'batch',
+						payload: { commands },
+					});
+				return true;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				if (message.includes('unsupported_platform')) {
@@ -1584,11 +1616,47 @@ export const App: React.FC = () => {
 					showToast('Background removal failed. Try re-importing the image.');
 				}
 				console.error('Background removal error:', error);
+				return false;
 			} finally {
 				setIsRemovingBackground(false);
 			}
 		},
 		[document, executeCommand, isRemovingBackground, showToast],
+	);
+
+	const updateImageOutline = useCallback(
+		async (nodeId: string, updates: Partial<ImageOutline>) => {
+			const node = document.nodes[nodeId];
+			if (!node || node.type !== 'image') {
+				return;
+			}
+			const image = node.image ?? {};
+			const nextOutline = mergeImageOutline(image.outline, updates);
+			const needsMaskForEnable = nextOutline.enabled === true && !image.maskAssetId;
+
+			if (needsMaskForEnable) {
+				await removeBackgroundForImage(nodeId, { outlineOnSuccess: nextOutline });
+				return;
+			}
+
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Update image outline',
+				type: 'setProps',
+				payload: {
+					id: nodeId,
+					props: {
+						image: {
+							...image,
+							outline: nextOutline,
+						},
+					},
+				},
+			});
+		},
+		[document.nodes, executeCommand, removeBackgroundForImage],
 	);
 
 	const getDefaultInsertPosition = useCallback(() => {
@@ -5149,6 +5217,7 @@ export const App: React.FC = () => {
 							onOpenPlugin={handleOpenPlugin}
 							onRemoveBackground={removeBackgroundForImage}
 							onClearBackground={clearBackgroundRemoval}
+							onUpdateImageOutline={updateImageOutline}
 							isRemovingBackground={isRemovingBackground}
 							zoom={zoom}
 							onCopyEffects={(nodeId) => copyEffects(nodeId)}

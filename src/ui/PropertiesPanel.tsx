@@ -19,6 +19,7 @@ import type {
 	LayoutGuideType,
 	LayoutSizing,
 	Node,
+	ImageOutline,
 	ShadowBlendMode,
 	ShadowEffect,
 } from '../core/doc/types';
@@ -41,6 +42,7 @@ interface PropertiesPanelProps {
 	onOpenPlugin?: (pluginId: string) => void;
 	onRemoveBackground?: (id: string) => void;
 	onClearBackground?: (id: string) => void;
+	onUpdateImageOutline?: (id: string, updates: Partial<ImageOutline>) => void | Promise<void>;
 	isRemovingBackground?: boolean;
 	zoom?: number;
 	onCopyEffects?: (nodeId: string) => void;
@@ -57,6 +59,12 @@ const defaultLayout: Layout = {
 	crossAlignment: 'center',
 };
 
+const DEFAULT_IMAGE_OUTLINE = {
+	color: '#ffffff',
+	width: 12,
+	blur: 0,
+} as const;
+
 const clamp = (value: number, min: number, max: number): number => {
 	return Math.min(max, Math.max(min, value));
 };
@@ -67,6 +75,11 @@ const safeNumber = (value: number | undefined, fallback = 0): number => {
 
 const safeRound = (value: number | undefined, fallback = 0): number => {
 	return Math.round(safeNumber(value, fallback));
+};
+
+const isHexColor = (value: string | undefined): boolean => {
+	if (typeof value !== 'string') return false;
+	return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value.trim());
 };
 
 const createDefaultShadowEffect = (type: 'drop' | 'inner' | 'auto'): ShadowEffect => {
@@ -122,6 +135,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	onOpenPlugin,
 	onRemoveBackground,
 	onClearBackground,
+	onUpdateImageOutline,
 	isRemovingBackground = false,
 	zoom = 1,
 	onCopyEffects,
@@ -288,6 +302,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	const isUnsplashPhoto = imageMeta?.kind === 'unsplash';
 	const hasBgMask = selectedNode.type === 'image' && Boolean(selectedNode.image?.maskAssetId);
 	const bgRemoveMeta = selectedNode.type === 'image' ? selectedNode.image?.bgRemoveMeta : undefined;
+	const imageOutline = selectedNode.type === 'image' ? selectedNode.image?.outline : undefined;
+	const outlineEnabled = imageOutline?.enabled === true;
+	const outlineColor = isHexColor(imageOutline?.color) ? (imageOutline?.color as string) : DEFAULT_IMAGE_OUTLINE.color;
+	const outlineWidth = safeNumber(imageOutline?.width, DEFAULT_IMAGE_OUTLINE.width);
+	const outlineBlur = safeNumber(imageOutline?.blur, DEFAULT_IMAGE_OUTLINE.blur);
+	const outlineControlsDisabled = isRemovingBackground || !hasBgMask;
 
 	const handleInputChange = (field: keyof Node, value: unknown) => {
 		onUpdateNode(selectedNode.id, { [field]: value });
@@ -2489,20 +2509,163 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 							>
 								Clear background removal
 							</button>
-						)}
-						{bgRemoveMeta && (
+							)}
+							{bgRemoveMeta && (
+								<div
+									style={{
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+									}}
+								>
+									Background removed (Apple Vision)
+								</div>
+							)}
+
 							<div
 								style={{
-									fontSize: typography.fontSize.xs,
-									color: colors.text.tertiary,
+									marginTop: spacing.xs,
+									paddingTop: spacing.sm,
+									borderTop: `1px solid ${colors.border.subtle}`,
+									display: 'grid',
+									gap: spacing.sm,
 								}}
 							>
-								Background removed (Apple Vision)
+								<label
+									style={{
+										display: 'flex',
+										alignItems: 'center',
+										gap: spacing.sm,
+										fontSize: typography.fontSize.md,
+										color: colors.text.secondary,
+									}}
+								>
+									<input
+										type="checkbox"
+										checked={outlineEnabled}
+										disabled={isRemovingBackground}
+										onChange={(e) => onUpdateImageOutline?.(selectedNode.id, { enabled: e.target.checked })}
+										style={{ accentColor: colors.accent.primary }}
+									/>
+									Subject outline
+								</label>
+
+								<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm }}>
+									<div>
+										<label
+											style={{
+												display: 'block',
+												fontSize: typography.fontSize.xs,
+												color: colors.text.tertiary,
+												marginBottom: '4px',
+											}}
+										>
+											Width
+										</label>
+										<input
+											type="number"
+											min={0}
+											max={24}
+											step={1}
+											disabled={outlineControlsDisabled}
+											value={safeRound(outlineWidth, DEFAULT_IMAGE_OUTLINE.width)}
+											onChange={(e) => {
+												const value = Number(e.target.value);
+												if (Number.isNaN(value)) return;
+												onUpdateImageOutline?.(selectedNode.id, { width: Math.max(0, value) });
+											}}
+											style={{
+												width: '100%',
+												padding: spacing.xs,
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												fontSize: typography.fontSize.md,
+												backgroundColor: colors.bg.tertiary,
+												color: colors.text.primary,
+												cursor: outlineControlsDisabled ? 'not-allowed' : 'text',
+												opacity: outlineControlsDisabled ? 0.6 : 1,
+											}}
+										/>
+									</div>
+									<div>
+										<label
+											style={{
+												display: 'block',
+												fontSize: typography.fontSize.xs,
+												color: colors.text.tertiary,
+												marginBottom: '4px',
+											}}
+										>
+											Blur
+										</label>
+										<input
+											type="number"
+											min={0}
+											max={48}
+											step={1}
+											disabled={outlineControlsDisabled}
+											value={safeRound(outlineBlur, DEFAULT_IMAGE_OUTLINE.blur)}
+											onChange={(e) => {
+												const value = Number(e.target.value);
+												if (Number.isNaN(value)) return;
+												onUpdateImageOutline?.(selectedNode.id, { blur: Math.max(0, value) });
+											}}
+											style={{
+												width: '100%',
+												padding: spacing.xs,
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												fontSize: typography.fontSize.md,
+												backgroundColor: colors.bg.tertiary,
+												color: colors.text.primary,
+												cursor: outlineControlsDisabled ? 'not-allowed' : 'text',
+												opacity: outlineControlsDisabled ? 0.6 : 1,
+											}}
+										/>
+									</div>
+								</div>
+
+								<div>
+									<label
+										style={{
+											display: 'block',
+											fontSize: typography.fontSize.xs,
+											color: colors.text.tertiary,
+											marginBottom: '4px',
+										}}
+									>
+										Color
+									</label>
+									<input
+										type="color"
+										disabled={outlineControlsDisabled}
+										value={outlineColor}
+										onChange={(e) => onUpdateImageOutline?.(selectedNode.id, { color: e.target.value })}
+										style={{
+											width: '100%',
+											height: '28px',
+											border: `1px solid ${colors.border.default}`,
+											borderRadius: radii.sm,
+											backgroundColor: colors.bg.tertiary,
+											cursor: outlineControlsDisabled ? 'not-allowed' : 'pointer',
+											opacity: outlineControlsDisabled ? 0.6 : 1,
+										}}
+									/>
+								</div>
+
+								{!hasBgMask && (
+									<div
+										style={{
+											fontSize: typography.fontSize.xs,
+											color: colors.text.tertiary,
+										}}
+									>
+										Outline needs a subject mask. Enabling outline will run background removal first.
+									</div>
+								)}
 							</div>
-						)}
+						</div>
 					</div>
-				</div>
-			)}
+				)}
 
 			<div style={{ marginBottom: spacing.lg }}>
 				<h4

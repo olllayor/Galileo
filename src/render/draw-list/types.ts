@@ -19,6 +19,12 @@ export interface GradientPaint {
   angle?: number;
 }
 
+export interface ImageOutlineStyle {
+  color: string;
+  width: number;
+  blur: number;
+}
+
 export type DrawCommand =
   | DrawRectCommand
   | DrawTextCommand
@@ -80,6 +86,7 @@ export interface DrawImageCommand {
   height: number;
   src: string;
   maskSrc?: string;
+  outline?: ImageOutlineStyle;
   opacity?: number;
   effects?: RenderableShadowEffect[];
 }

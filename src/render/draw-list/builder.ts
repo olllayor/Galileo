@@ -8,7 +8,7 @@ import {
 	type WorldBoundsMap,
 } from '../../core/doc';
 import type { Color, Document, Node, RenderableShadowEffect } from '../../core/doc/types';
-import type { DrawCommand, GradientPaint, GradientStop, Paint } from './types';
+import type { DrawCommand, GradientPaint, GradientStop, ImageOutlineStyle, Paint } from './types';
 
 type BuildDrawListOptions = {
 	includeFrameFill?: boolean;
@@ -208,6 +208,7 @@ const buildNodeCommandsFromBounds = (
 	} else if (node.type === 'image') {
 		const src = resolveImageSource(doc, node);
 		const maskSrc = resolveImageMaskSource(doc, node);
+		const outline = resolveImageOutlineStyle(doc, node);
 		if (src) {
 			commands.push({
 				type: 'image',
@@ -218,6 +219,7 @@ const buildNodeCommandsFromBounds = (
 				height,
 				src,
 				maskSrc,
+				outline,
 				opacity: node.opacity,
 				effects: getRenderableEffects(node),
 			});
@@ -273,6 +275,9 @@ const getRenderableEffects = (node: Node): RenderableShadowEffect[] | undefined 
 };
 
 const DEFAULT_FALLBACK_COLOR = '#000000';
+const DEFAULT_IMAGE_OUTLINE_COLOR = '#ffffff';
+const DEFAULT_IMAGE_OUTLINE_WIDTH = 12;
+const DEFAULT_IMAGE_OUTLINE_BLUR = 0;
 
 const colorToPaint = (color?: Color | string): Paint | undefined => {
 	if (!color) {
@@ -539,6 +544,26 @@ const resolveImageMaskSource = (doc: Document, node: Node): string | undefined =
 		return `data:${asset.mime};base64,${asset.dataBase64}`;
 	}
 	return undefined;
+};
+
+const resolveImageOutlineStyle = (doc: Document, node: Node): ImageOutlineStyle | undefined => {
+	const outline = node.image?.outline;
+	if (!outline || outline.enabled !== true) {
+		return undefined;
+	}
+
+	if (!resolveImageMaskSource(doc, node)) {
+		return undefined;
+	}
+
+	return {
+		color:
+			typeof outline.color === 'string' && outline.color.trim().length > 0
+				? outline.color
+				: DEFAULT_IMAGE_OUTLINE_COLOR,
+		width: typeof outline.width === 'number' && Number.isFinite(outline.width) ? Math.max(0, outline.width) : DEFAULT_IMAGE_OUTLINE_WIDTH,
+		blur: typeof outline.blur === 'number' && Number.isFinite(outline.blur) ? Math.max(0, outline.blur) : DEFAULT_IMAGE_OUTLINE_BLUR,
+	};
 };
 
 export const colorToRGBA = (color: string): { r: number; g: number; b: number; a: number } => {

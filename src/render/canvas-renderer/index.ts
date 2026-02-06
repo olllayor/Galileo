@@ -17,7 +17,12 @@ type ShadowRaster = {
 	blendMode: GlobalCompositeOperation;
 };
 
+type OutlineRaster = {
+	canvas: HTMLCanvasElement;
+};
+
 const SHADOW_CACHE_LIMIT = 120;
+const OUTLINE_CACHE_LIMIT = 120;
 
 export class CanvasRenderer {
 	private ctx: CanvasRenderingContext2D;
@@ -25,6 +30,7 @@ export class CanvasRenderer {
 	private height: number;
 	private imageCache: Map<string, HTMLImageElement>;
 	private shadowRasterCache: Map<string, ShadowRaster>;
+	private outlineRasterCache: Map<string, OutlineRaster>;
 	private onInvalidate?: () => void;
 
 	constructor(canvas: HTMLCanvasElement, onInvalidate?: () => void) {
@@ -37,6 +43,7 @@ export class CanvasRenderer {
 		this.height = canvas.height;
 		this.imageCache = new Map();
 		this.shadowRasterCache = new Map();
+		this.outlineRasterCache = new Map();
 		this.onInvalidate = onInvalidate;
 	}
 
@@ -606,6 +613,25 @@ export class CanvasRenderer {
 		}
 	}
 
+	private getCachedOutlineRaster(key: string): OutlineRaster | null {
+		const cached = this.outlineRasterCache.get(key);
+		if (!cached) {
+			return null;
+		}
+		this.outlineRasterCache.delete(key);
+		this.outlineRasterCache.set(key, cached);
+		return cached;
+	}
+
+	private setCachedOutlineRaster(key: string, raster: OutlineRaster): void {
+		this.outlineRasterCache.set(key, raster);
+		while (this.outlineRasterCache.size > OUTLINE_CACHE_LIMIT) {
+			const firstKey = this.outlineRasterCache.keys().next().value;
+			if (typeof firstKey !== 'string') break;
+			this.outlineRasterCache.delete(firstKey);
+		}
+	}
+
 	private computeShadowPadding(effect: RenderableShadowEffect): number {
 		const blur = Math.max(0, effect.blur);
 		const spread = Math.abs(effect.spread);
@@ -726,7 +752,7 @@ export class CanvasRenderer {
 	}
 
 	private drawImage(command: Extract<DrawCommand, { type: 'image' }>): void {
-		const { x, y, width, height, src, maskSrc } = command;
+		const { x, y, width, height, src, maskSrc, outline } = command;
 		const img = this.getImage(src);
 		if (!img.complete || img.naturalWidth === 0) {
 			return;
@@ -737,21 +763,116 @@ export class CanvasRenderer {
 			if (!mask.complete || mask.naturalWidth === 0) {
 				return;
 			}
-			const offscreen = this.createCanvas(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
-			const octx = offscreen.getContext('2d');
-			if (!octx) {
+			const rasterWidth = Math.max(1, Math.round(width));
+			const rasterHeight = Math.max(1, Math.round(height));
+			const maskedSubject = this.createMaskedImageCanvas(img, mask, rasterWidth, rasterHeight);
+			if (!maskedSubject) {
 				return;
 			}
-			octx.clearRect(0, 0, offscreen.width, offscreen.height);
-			octx.drawImage(img, 0, 0, offscreen.width, offscreen.height);
-			octx.globalCompositeOperation = 'destination-in';
-			octx.drawImage(mask, 0, 0, offscreen.width, offscreen.height);
-			octx.globalCompositeOperation = 'source-over';
-			this.ctx.drawImage(offscreen, x, y, width, height);
+
+			if (outline) {
+				const outlineRaster = this.getOutlineRaster(maskSrc, mask, rasterWidth, rasterHeight, outline);
+				if (outlineRaster) {
+					this.ctx.drawImage(outlineRaster.canvas, x, y, width, height);
+				}
+			}
+
+			this.ctx.drawImage(maskedSubject, x, y, width, height);
 			return;
 		}
 
 		this.ctx.drawImage(img, x, y, width, height);
+	}
+
+	private createMaskedImageCanvas(
+		img: HTMLImageElement,
+		mask: HTMLImageElement,
+		width: number,
+		height: number,
+	): HTMLCanvasElement | null {
+		const offscreen = this.createCanvas(width, height);
+		const octx = offscreen.getContext('2d');
+		if (!octx) {
+			return null;
+		}
+		octx.clearRect(0, 0, offscreen.width, offscreen.height);
+		octx.drawImage(img, 0, 0, offscreen.width, offscreen.height);
+		octx.globalCompositeOperation = 'destination-in';
+		octx.drawImage(mask, 0, 0, offscreen.width, offscreen.height);
+		octx.globalCompositeOperation = 'source-over';
+		return offscreen;
+	}
+
+	private getOutlineRaster(
+		maskSrc: string,
+		mask: HTMLImageElement,
+		width: number,
+		height: number,
+		outline: { color: string; width: number; blur: number },
+	): OutlineRaster | null {
+		const outlineWidth = Math.max(
+			0,
+			typeof outline.width === 'number' && Number.isFinite(outline.width) ? outline.width : 0,
+		);
+		const outlineBlur = Math.max(
+			0,
+			typeof outline.blur === 'number' && Number.isFinite(outline.blur) ? outline.blur : 0,
+		);
+		if (outlineWidth <= 0 && outlineBlur <= 0) {
+			return null;
+		}
+
+		const key = this.buildOutlineCacheKey(maskSrc, width, height, {
+			color: outline.color,
+			width: outlineWidth,
+			blur: outlineBlur,
+		});
+		const cached = this.getCachedOutlineRaster(key);
+		if (cached) {
+			return cached;
+		}
+
+		const baseMask = this.createCanvas(width, height);
+		const baseCtx = baseMask.getContext('2d');
+		if (!baseCtx) {
+			return null;
+		}
+		baseCtx.clearRect(0, 0, width, height);
+		baseCtx.drawImage(mask, 0, 0, width, height);
+
+		const dilatedMask = this.applyPositiveSpread(baseMask, outlineWidth);
+		const ringMask = this.cloneCanvas(dilatedMask);
+		const ringCtx = ringMask.getContext('2d');
+		if (!ringCtx) {
+			return null;
+		}
+		ringCtx.globalCompositeOperation = 'destination-out';
+		ringCtx.drawImage(baseMask, 0, 0);
+		ringCtx.globalCompositeOperation = 'source-over';
+
+		const blurred = this.applyBlur(ringMask, outlineBlur);
+		const tinted = this.tintMask(blurred, outline.color, 1);
+		const raster: OutlineRaster = { canvas: tinted };
+		this.setCachedOutlineRaster(key, raster);
+		return raster;
+	}
+
+	private buildOutlineCacheKey(
+		maskSrc: string,
+		width: number,
+		height: number,
+		outline: { color: string; width: number; blur: number },
+	): string {
+		return JSON.stringify({
+			maskSrc: this.compactSourceKey(maskSrc),
+			width,
+			height,
+			outline,
+		});
+	}
+
+	private compactSourceKey(src: string): string {
+		return src.length > 120 ? `${src.slice(0, 36)}:${src.length}:${src.slice(-12)}` : src;
 	}
 
 	private getImage(src: string): HTMLImageElement {
@@ -767,6 +888,7 @@ export class CanvasRenderer {
 		};
 		img.onerror = () => {
 			this.imageCache.delete(src);
+			this.outlineRasterCache.clear();
 		};
 		img.src = src;
 		this.imageCache.set(src, img);
@@ -825,6 +947,7 @@ export class CanvasRenderer {
 		canvas.width = width;
 		canvas.height = height;
 		this.shadowRasterCache.clear();
+		this.outlineRasterCache.clear();
 	}
 
 	private resolvePaint(

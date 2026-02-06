@@ -150,6 +150,15 @@ export const imageBgRemoveMetaSchema = z
 
 export type ImageBgRemoveMeta = z.infer<typeof imageBgRemoveMetaSchema>;
 
+export const imageOutlineSchema = z.object({
+	enabled: z.boolean().optional(),
+	color: z.string().optional(),
+	width: z.number().optional(),
+	blur: z.number().optional(),
+});
+
+export type ImageOutline = z.infer<typeof imageOutlineSchema>;
+
 export const layoutSchema = z.object({
 	type: z.literal('auto'),
 	direction: z.enum(['row', 'column']),
@@ -255,6 +264,7 @@ export const nodeSchema = z.object({
 			meta: imageMetaSchema.optional(),
 			maskAssetId: z.string().optional(),
 			bgRemoveMeta: imageBgRemoveMetaSchema.optional(),
+			outline: imageOutlineSchema.optional(),
 		})
 		.optional(),
 
