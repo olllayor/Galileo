@@ -304,6 +304,10 @@ fn log_env_diagnostics() {
 }
 
 fn main() {
+    if let Ok(path) = dotenvy::dotenv() {
+        eprintln!("[env] Loaded .env from {}", path.display());
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
