@@ -262,6 +262,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	const currentConstraints: Constraints = selectedNode.constraints ?? { horizontal: 'left', vertical: 'top' };
 	const imageMeta = selectedNode.type === 'image' ? selectedNode.image?.meta : undefined;
 	const is3dIcon = imageMeta?.kind === '3d-icon';
+	const isUnsplashPhoto = imageMeta?.kind === 'unsplash';
 	const hasBgMask = selectedNode.type === 'image' && Boolean(selectedNode.image?.maskAssetId);
 	const bgRemoveMeta = selectedNode.type === 'image' ? selectedNode.image?.bgRemoveMeta : undefined;
 
@@ -508,6 +509,47 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					>
 						Edit 3D Icon
 					</button>
+				</div>
+			)}
+
+			{isUnsplashPhoto && imageMeta && (
+				<div style={{ marginBottom: spacing.lg }}>
+					<h4
+						style={{
+							margin: `0 0 ${spacing.sm} 0`,
+							fontSize: typography.fontSize.sm,
+							color: colors.text.secondary,
+							fontWeight: typography.fontWeight.medium,
+						}}
+					>
+						Unsplash Attribution
+					</h4>
+					<div
+						style={{
+							display: 'grid',
+							gap: spacing.xs,
+							fontSize: typography.fontSize.sm,
+							color: colors.text.secondary,
+						}}
+					>
+						<div>Photographer: {imageMeta.photographerName}</div>
+						<a
+							href={imageMeta.photographerProfileUrl}
+							target="_blank"
+							rel="noreferrer noopener"
+							style={{ color: colors.accent.primary, textDecoration: 'none' }}
+						>
+							View photographer profile
+						</a>
+						<a
+							href={imageMeta.photoUnsplashUrl}
+							target="_blank"
+							rel="noreferrer noopener"
+							style={{ color: colors.accent.primary, textDecoration: 'none' }}
+						>
+							View photo on Unsplash
+						</a>
+					</div>
 				</div>
 			)}
 

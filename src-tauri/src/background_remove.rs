@@ -34,10 +34,10 @@ pub fn remove_background(args: RemoveBackgroundArgs) -> Result<RemoveBackgroundR
 #[cfg(target_os = "macos")]
 mod macos {
     use super::{RemoveBackgroundArgs, RemoveBackgroundResult};
+    use base64::Engine;
     use image::{ImageBuffer, ImageFormat, Luma, Rgba};
     use objc::rc::autoreleasepool;
     use objc::runtime::{Object, BOOL, NO};
-    use base64::Engine;
     use objc::{class, msg_send, sel, sel_impl};
     use std::ffi::CStr;
     use std::io::Cursor;
@@ -68,8 +68,15 @@ mod macos {
     type CGImageRef = *const c_void;
 
     extern "C" {
-        fn CGImageSourceCreateWithData(data: CFDataRef, options: CFDictionaryRef) -> CGImageSourceRef;
-        fn CGImageSourceCreateImageAtIndex(source: CGImageSourceRef, index: usize, options: CFDictionaryRef) -> CGImageRef;
+        fn CGImageSourceCreateWithData(
+            data: CFDataRef,
+            options: CFDictionaryRef,
+        ) -> CGImageSourceRef;
+        fn CGImageSourceCreateImageAtIndex(
+            source: CGImageSourceRef,
+            index: usize,
+            options: CFDictionaryRef,
+        ) -> CGImageRef;
         fn CGImageGetWidth(image: CGImageRef) -> usize;
         fn CGImageGetHeight(image: CGImageRef) -> usize;
     }
@@ -86,7 +93,9 @@ mod macos {
 
     const PIXEL_BUFFER_LOCK_READONLY: u64 = 0;
 
-    pub fn remove_background_macos(args: RemoveBackgroundArgs) -> Result<RemoveBackgroundResult, String> {
+    pub fn remove_background_macos(
+        args: RemoveBackgroundArgs,
+    ) -> Result<RemoveBackgroundResult, String> {
         let bytes = super::general_purpose::STANDARD
             .decode(args.image_base64)
             .map_err(|e| format!("Failed to decode image bytes: {e}"))?;
@@ -101,8 +110,13 @@ mod macos {
             let mask_img: ImageBuffer<Luma<u8>, Vec<u8>> =
                 ImageBuffer::from_raw(mask_width, mask_height, mask)
                     .ok_or_else(|| "Failed to create mask image".to_string())?;
-            image::imageops::resize(&mask_img, target_width, target_height, image::imageops::FilterType::Triangle)
-                .into_raw()
+            image::imageops::resize(
+                &mask_img,
+                target_width,
+                target_height,
+                image::imageops::FilterType::Triangle,
+            )
+            .into_raw()
         } else {
             mask
         };
@@ -139,7 +153,8 @@ mod macos {
                 return Err("Failed to create NSData".to_string());
             }
 
-            let request: *mut Object = msg_send![class!(VNGenerateForegroundInstanceMaskRequest), new];
+            let request: *mut Object =
+                msg_send![class!(VNGenerateForegroundInstanceMaskRequest), new];
             if request.is_null() {
                 return Err("Failed to create Vision request".to_string());
             }
@@ -147,7 +162,8 @@ mod macos {
             let revision: i32 = msg_send![request, revision];
 
             let handler: *mut Object = msg_send![class!(VNImageRequestHandler), alloc];
-            let handler: *mut Object = msg_send![handler, initWithData: nsdata options: std::ptr::null::<Object>()];
+            let handler: *mut Object =
+                msg_send![handler, initWithData: nsdata options: std::ptr::null::<Object>()];
             if handler.is_null() {
                 return Err("Failed to create Vision handler".to_string());
             }
@@ -180,7 +196,8 @@ mod macos {
                 return Err("Failed to access mask pixels".to_string());
             }
 
-            let lock_status = CVPixelBufferLockBaseAddress(pixel_buffer, PIXEL_BUFFER_LOCK_READONLY);
+            let lock_status =
+                CVPixelBufferLockBaseAddress(pixel_buffer, PIXEL_BUFFER_LOCK_READONLY);
             if lock_status != 0 {
                 return Err("Failed to lock mask buffer".to_string());
             }

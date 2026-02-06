@@ -11,8 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.5.4",
-    "@tauri-apps/plugin-shell": "^2.0.1",
+    "@tauri-apps/api": "2.5.0",
+    "@tauri-apps/plugin-shell": "2.0.1",
     "akar-icons": "^1.9.31",
     "immer": "^10.1.1",
     "react": "^18.3.1",
@@ -30,6 +30,6 @@
     "eslint-plugin-react-refresh": "^0.4.7",
     "typescript": "^5.5.4",
     "vite": "^5.4.0",
-    "@tauri-apps/cli": "^2.5.4"
+    "@tauri-apps/cli": "2.5.0"
   }
 }

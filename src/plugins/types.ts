@@ -4,7 +4,9 @@ export type PluginPermission =
 	| 'document:write'
 	| 'fs:save'
 	| 'asset:read'
-	| 'asset:read:shared';
+	| 'asset:read:shared'
+	| 'unsplash:search'
+	| 'unsplash:insert';
 
 export type PluginManifest = {
 	id: string;
@@ -55,6 +57,6 @@ export type SelectionGetResult = {
 		// Device preset metadata for mockup integration
 		devicePresetId?: string;
 		isFrame?: boolean;
-		imageMeta?: import('../core/doc/types').ImageMeta3dIcon;
+		imageMeta?: import('../core/doc/types').ImageMeta;
 	}>;
 };

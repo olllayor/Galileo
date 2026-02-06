@@ -6,6 +6,7 @@ use std::io::Cursor;
 use tauri::{path::BaseDirectory, Manager};
 
 mod background_remove;
+mod unsplash;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -139,7 +140,9 @@ fn show_import_dialog() -> Result<Option<String>, String> {
     let dialog = rfd::FileDialog::new()
         .add_filter(
             "Images",
-            &["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "icns", "heic", "heif"],
+            &[
+                "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "icns", "heic", "heif",
+            ],
         )
         .set_title("Import Image")
         .pick_file();
@@ -243,6 +246,63 @@ fn encode_webp(args: EncodeWebpArgs) -> Result<String, String> {
     Ok(general_purpose::STANDARD.encode(&webp_bytes))
 }
 
+fn mask_env_value(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.is_empty() {
+        return "(empty)".to_string();
+    }
+    if chars.len() <= 6 {
+        return "***".to_string();
+    }
+    let prefix: String = chars.iter().take(3).collect();
+    let suffix: String = chars
+        .iter()
+        .rev()
+        .take(2)
+        .copied()
+        .collect::<Vec<char>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{prefix}***{suffix}")
+}
+
+fn log_env_diagnostics() {
+    let tracked_keys = ["UNSPLASH_ACCESS_KEY"];
+    let mut reported = Vec::new();
+    for key in tracked_keys {
+        match std::env::var(key) {
+            Ok(value) if !value.trim().is_empty() => {
+                reported.push(format!("{key}=set({})", mask_env_value(value.trim())));
+            }
+            Ok(_) => {
+                reported.push(format!("{key}=empty"));
+            }
+            Err(_) => {
+                reported.push(format!("{key}=missing"));
+            }
+        }
+    }
+
+    let galileo_keys: Vec<String> = std::env::vars()
+        .map(|(key, _)| key)
+        .filter(|key| key.starts_with("GALILEO_"))
+        .collect();
+
+    if galileo_keys.is_empty() {
+        eprintln!(
+            "[env] Startup env check: {} | GALILEO_* keys: none",
+            reported.join(", ")
+        );
+    } else {
+        eprintln!(
+            "[env] Startup env check: {} | GALILEO_* keys: {}",
+            reported.join(", "),
+            galileo_keys.join(", ")
+        );
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -265,8 +325,14 @@ fn main() {
             save_binary,
             encode_png,
             encode_webp,
+            unsplash::unsplash_search_photos,
+            unsplash::unsplash_get_photo,
+            unsplash::unsplash_track_download,
+            unsplash::unsplash_fetch_image,
         ])
         .setup(|_app| {
+            log_env_diagnostics();
+
             #[cfg(debug_assertions)]
             {
                 let window = _app.get_webview_window("main").unwrap();

@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Unsplash Photos</title>
+  <style>
+    :root {
+      --bg: #0d0f14;
+      --panel: #141924;
+      --panel-2: #1b2230;
+      --line: rgba(255, 255, 255, 0.1);
+      --text: #e8ecf3;
+      --muted: #93a0b5;
+      --accent: #3b82f6;
+      --danger: #ef4444;
+      --success: #22c55e;
+      --radius: 10px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      height: 100%;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: linear-gradient(180deg, rgba(20, 25, 36, 0.98) 0%, rgba(20, 25, 36, 0.88) 100%);
+      border-bottom: 1px solid var(--line);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      backdrop-filter: blur(8px);
+    }
+
+    .title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .title {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .count {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .search {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .search:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+    }
+
+    .selection {
+      font-size: 12px;
+      color: var(--muted);
+      min-height: 16px;
+    }
+
+    .selection.ok {
+      color: var(--success);
+    }
+
+    .selection.warn {
+      color: #f59e0b;
+    }
+
+    .status {
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--muted);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.4;
+      margin: 12px;
+      margin-top: 0;
+    }
+
+    .status.error {
+      border-color: rgba(239, 68, 68, 0.35);
+      color: #fecaca;
+      background: rgba(239, 68, 68, 0.1);
+    }
+
+    .grid {
+      padding: 12px;
+      padding-top: 0;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 220px;
+    }
+
+    .thumb-wrap {
+      aspect-ratio: 1 / 1;
+      background: #090b10;
+      position: relative;
+    }
+
+    .thumb {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .meta {
+      padding: 8px;
+      display: grid;
+      gap: 8px;
+      flex: 1;
+    }
+
+    .credit {
+      font-size: 11px;
+      line-height: 1.4;
+      color: var(--muted);
+    }
+
+    .credit a {
+      color: #c7d2fe;
+      text-decoration: none;
+    }
+
+    .credit a:hover {
+      text-decoration: underline;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 7px 8px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    button.primary {
+      background: var(--accent);
+      border-color: rgba(59, 130, 246, 0.8);
+      color: #ffffff;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .loading {
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 14px 0 18px;
+    }
+
+    .footnote {
+      margin: 0 12px 12px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.4;
+      border-top: 1px dashed var(--line);
+      padding-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title-row">
+      <div class="title">Unsplash Photos</div>
+      <div class="count" id="resultCount">0 results</div>
+    </div>
+    <input id="searchInput" class="search" type="text" placeholder="Search photos (e.g. workspace, ui, product)" />
+    <div id="selectionHint" class="selection">Select one image in Galileo to enable Replace.</div>
+  </div>
+
+  <div id="status" class="status" style="display:none;"></div>
+  <div id="grid" class="grid"></div>
+  <div id="loading" class="loading" style="display:none;">Loading photos...</div>
+  <div class="footnote">Photos by creators on Unsplash. Insert and Replace trigger Unsplash download tracking for API compliance.</div>
+
+  <script>
+    const searchInput = document.getElementById('searchInput');
+    const grid = document.getElementById('grid');
+    const statusEl = document.getElementById('status');
+    const loadingEl = document.getElementById('loading');
+    const countEl = document.getElementById('resultCount');
+    const selectionHintEl = document.getElementById('selectionHint');
+
+    const pending = new Map();
+    const rpc = {
+      call(method, params) {
+        const id = (crypto.randomUUID && crypto.randomUUID()) || `rpc_${Date.now()}_${Math.random()}`;
+        window.parent.postMessage({ rpc: 1, id, method, params }, '*');
+        return new Promise((resolve, reject) => {
+          pending.set(id, { resolve, reject });
+          setTimeout(() => {
+            if (!pending.has(id)) return;
+            pending.delete(id);
+            reject(new Error('RPC timeout'));
+          }, 30000);
+        });
+      },
+    };
+
+    window.addEventListener('message', (event) => {
+      const data = event.data;
+      if (!data || data.rpc !== 1 || !data.id) return;
+      const req = pending.get(data.id);
+      if (!req) return;
+      pending.delete(data.id);
+      if (data.ok) {
+        req.resolve(data.result);
+      } else {
+        req.reject(new Error(data.error?.message || 'RPC error'));
+      }
+    });
+
+    const state = {
+      query: '',
+      page: 1,
+      perPage: 24,
+      total: 0,
+      totalPages: 0,
+      results: [],
+      loading: false,
+      loadingMore: false,
+      loadingInsertKey: null,
+      error: '',
+      selection: {
+        canReplace: false,
+        targetNodeId: null,
+      },
+      searchToken: 0,
+    };
+
+    const escapeHtml = (text) => {
+      return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    };
+
+    const getFriendlyError = (error) => {
+      const message = (error && error.message ? error.message : String(error || 'Unknown error')).toLowerCase();
+      if (message.includes('unsplash_missing_access_key')) {
+        return 'Unsplash is not configured. Set UNSPLASH_ACCESS_KEY in the Tauri process and restart Galileo.';
+      }
+      if (message.includes('unsplash_rate_limited') || message.includes('429')) {
+        return 'Unsplash rate limit reached. Wait a bit, then retry.';
+      }
+      if (message.includes('permission_denied')) {
+        return 'Plugin permission denied by host.';
+      }
+      if (message.includes('timeout')) {
+        return 'Request timed out. Please retry.';
+      }
+      if (message.includes('network') || message.includes('request_failed')) {
+        return 'Network request failed. Check your connection and retry.';
+      }
+      return error && error.message ? error.message : 'Request failed.';
+    };
+
+    const hasMore = () => {
+      if (state.query.trim().length === 0) return false;
+      if (state.totalPages > 0) {
+        return state.page <= state.totalPages;
+      }
+      return state.results.length >= state.perPage;
+    };
+
+    const renderStatus = () => {
+      if (!state.error) {
+        statusEl.style.display = 'none';
+        return;
+      }
+      statusEl.style.display = 'block';
+      statusEl.className = 'status error';
+      statusEl.textContent = state.error;
+    };
+
+    const renderSelectionHint = () => {
+      if (state.selection.canReplace) {
+        selectionHintEl.className = 'selection ok';
+        selectionHintEl.textContent = 'Replace is enabled for the selected image layer.';
+        return;
+      }
+      selectionHintEl.className = 'selection warn';
+      selectionHintEl.textContent = 'Select exactly one image layer in Galileo to enable Replace.';
+    };
+
+    const renderGrid = () => {
+      countEl.textContent = `${state.results.length} result${state.results.length === 1 ? '' : 's'}`;
+      loadingEl.style.display = state.loading || state.loadingMore ? 'block' : 'none';
+
+      if (state.query.trim().length === 0) {
+        grid.innerHTML = '<div class="status">Type a search query to browse Unsplash photos.</div>';
+        return;
+      }
+
+      if (!state.loading && state.results.length === 0) {
+        grid.innerHTML = '<div class="status">No photos found for this query.</div>';
+        return;
+      }
+
+      grid.innerHTML = state.results
+        .map((photo) => {
+          const photoId = escapeHtml(photo.id);
+          const insertKey = `insert:${photo.id}`;
+          const replaceKey = `replace:${photo.id}`;
+          const inserting = state.loadingInsertKey === insertKey;
+          const replacing = state.loadingInsertKey === replaceKey;
+          const disableReplace = !state.selection.canReplace || Boolean(state.loadingInsertKey);
+
+          return `
+            <article class="card">
+              <div class="thumb-wrap">
+                <img class="thumb" src="${escapeHtml(photo.urls.small)}" alt="${escapeHtml(photo.altDescription || photo.description || 'Unsplash photo')}" loading="lazy" />
+              </div>
+              <div class="meta">
+                <div class="credit">
+                  by
+                  <a href="${escapeHtml(photo.user.links.html)}" target="_blank" rel="noopener noreferrer">${escapeHtml(photo.user.name)}</a>
+                  on
+                  <a href="${escapeHtml(photo.links.html)}" target="_blank" rel="noopener noreferrer">Unsplash</a>
+                </div>
+                <div class="actions">
+                  <button class="primary" data-action="insert" data-photo-id="${photoId}" ${state.loadingInsertKey ? 'disabled' : ''}>
+                    ${inserting ? 'Inserting...' : 'Insert'}
+                  </button>
+                  <button data-action="replace" data-photo-id="${photoId}" ${disableReplace ? 'disabled' : ''}>
+                    ${replacing ? 'Replacing...' : 'Replace'}
+                  </button>
+                </div>
+              </div>
+            </article>
+          `;
+        })
+        .join('');
+    };
+
+    const render = () => {
+      renderStatus();
+      renderSelectionHint();
+      renderGrid();
+    };
+
+    const refreshSelection = async () => {
+      try {
+        const selection = await rpc.call('selection.get');
+        const nodes = Array.isArray(selection?.nodes) ? selection.nodes : [];
+        const ids = Array.isArray(selection?.ids) ? selection.ids : [];
+        const canReplace = ids.length === 1 && nodes.length === 1 && nodes[0]?.type === 'image' && selection?.primaryId;
+        state.selection.canReplace = Boolean(canReplace);
+        state.selection.targetNodeId = canReplace ? selection.primaryId : null;
+      } catch (_error) {
+        state.selection.canReplace = false;
+        state.selection.targetNodeId = null;
+      }
+      renderSelectionHint();
+      renderGrid();
+    };
+
+    const loadPhotos = async ({ reset }) => {
+      const query = state.query.trim();
+      if (!query) {
+        state.results = [];
+        state.error = '';
+        state.total = 0;
+        state.totalPages = 0;
+        state.page = 1;
+        render();
+        return;
+      }
+
+      if (state.loading || state.loadingMore) return;
+      const token = ++state.searchToken;
+      if (reset) {
+        state.page = 1;
+        state.total = 0;
+        state.totalPages = 0;
+        state.results = [];
+      }
+      state.error = '';
+      state.loading = state.page === 1;
+      state.loadingMore = state.page > 1;
+      render();
+
+      try {
+        const response = await rpc.call('unsplash.search', {
+          query,
+          page: state.page,
+          perPage: state.perPage,
+          contentFilter: 'high',
+        });
+
+        if (token !== state.searchToken) return;
+        const next = Array.isArray(response?.results) ? response.results : [];
+        if (state.page === 1) {
+          state.results = next;
+        } else {
+          state.results = state.results.concat(next);
+        }
+        state.total = Number(response?.total) || state.results.length;
+        state.totalPages = Number(response?.totalPages) || 0;
+        if (next.length > 0) {
+          state.page += 1;
+        }
+      } catch (error) {
+        if (token !== state.searchToken) return;
+        state.error = getFriendlyError(error);
+      } finally {
+        if (token === state.searchToken) {
+          state.loading = false;
+          state.loadingMore = false;
+          render();
+        }
+      }
+    };
+
+    const applyPhoto = async (photoId, action) => {
+      if (state.loadingInsertKey) return;
+
+      if (action === 'replace') {
+        await refreshSelection();
+        if (!state.selection.canReplace || !state.selection.targetNodeId) {
+          state.error = 'Select exactly one image layer before Replace.';
+          render();
+          return;
+        }
+      }
+
+      const loadingKey = `${action}:${photoId}`;
+      state.loadingInsertKey = loadingKey;
+      state.error = '';
+      render();
+
+      try {
+        const payload = {
+          photoId,
+          mode: action,
+          sizeUrl: 'regular',
+        };
+
+        if (action === 'replace') {
+          payload.targetNodeId = state.selection.targetNodeId;
+        }
+
+        await rpc.call('unsplash.insert', payload);
+        await rpc.call('host.toast', {
+          message: action === 'replace' ? 'Unsplash photo replaced' : 'Unsplash photo inserted',
+        });
+      } catch (error) {
+        state.error = getFriendlyError(error);
+      } finally {
+        state.loadingInsertKey = null;
+        await refreshSelection();
+        render();
+      }
+    };
+
+    let debounceTimer = null;
+    searchInput.addEventListener('input', () => {
+      state.query = searchInput.value;
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
+      debounceTimer = setTimeout(() => {
+        loadPhotos({ reset: true });
+      }, 300);
+    });
+
+    grid.addEventListener('click', async (event) => {
+      const target = event.target.closest('button[data-action][data-photo-id]');
+      if (!target) return;
+      const action = target.dataset.action;
+      const photoId = target.dataset.photoId;
+      if (!photoId || (action !== 'insert' && action !== 'replace')) return;
+      await applyPhoto(photoId, action);
+    });
+
+    const observer = new IntersectionObserver(
+      async (entries) => {
+        const first = entries[0];
+        if (!first || !first.isIntersecting) return;
+        if (!hasMore()) return;
+        if (state.loading || state.loadingMore) return;
+        await loadPhotos({ reset: false });
+      },
+      {
+        root: null,
+        rootMargin: '300px',
+        threshold: 0.01,
+      },
+    );
+
+    const sentinel = document.createElement('div');
+    sentinel.style.width = '100%';
+    sentinel.style.height = '1px';
+    sentinel.style.marginBottom = '1px';
+    document.body.appendChild(sentinel);
+    observer.observe(sentinel);
+
+    window.addEventListener('focus', () => {
+      void refreshSelection();
+    });
+
+    void refreshSelection();
+    render();
+  </script>
+</body>
+</html>

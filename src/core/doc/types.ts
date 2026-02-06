@@ -90,9 +90,24 @@ export const imageMeta3dIconSchema = z
 	})
 	.passthrough();
 
-export const imageMetaSchema = imageMeta3dIconSchema.optional();
+export const imageMetaUnsplashSchema = z
+	.object({
+		kind: z.literal('unsplash'),
+		photoId: z.string(),
+		photographerName: z.string(),
+		photographerUsername: z.string(),
+		photographerProfileUrl: z.string(),
+		photoUnsplashUrl: z.string(),
+		downloadLocation: z.string(),
+		insertedAt: z.number(),
+	})
+	.passthrough();
+
+export const imageMetaSchema = z.discriminatedUnion('kind', [imageMeta3dIconSchema, imageMetaUnsplashSchema]);
 
 export type ImageMeta3dIcon = z.infer<typeof imageMeta3dIconSchema>;
+export type ImageMetaUnsplash = z.infer<typeof imageMetaUnsplashSchema>;
+export type ImageMeta = z.infer<typeof imageMetaSchema>;
 
 export const imageBgRemoveMetaSchema = z
 	.object({

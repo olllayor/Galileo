@@ -42,7 +42,7 @@ import {
 } from './core/doc';
 import { generateId } from './core/doc/id';
 import { createDocument } from './core/doc/types';
-import type { Constraints, Document, ImageMeta3dIcon, Node, ShadowEffect } from './core/doc/types';
+import type { Constraints, Document, ImageMeta, ImageMetaUnsplash, Node, ShadowEffect } from './core/doc/types';
 import type { Command } from './core/commands/types';
 import {
 	createProjectMeta,
@@ -106,6 +106,30 @@ type RemoveBackgroundResult = {
 	width: number;
 	height: number;
 	revision?: number;
+};
+type UnsplashSearchResult = {
+	id: string;
+	width: number;
+	height: number;
+	color?: string;
+	blurHash?: string;
+	description?: string;
+	altDescription?: string;
+	urls: { thumb: string; small: string; regular: string; full: string; raw: string };
+	links: { html: string; downloadLocation: string };
+	user: { name: string; username: string; links: { html: string } };
+};
+type UnsplashSearchResponse = {
+	total: number;
+	totalPages: number;
+	results: UnsplashSearchResult[];
+};
+type UnsplashInsertMode = 'insert' | 'replace';
+type UnsplashFetchImageResult = {
+	dataBase64: string;
+	mime: string;
+	width: number;
+	height: number;
 };
 type DragState =
 	| {
@@ -746,6 +770,109 @@ const isRpcRequest = (value: unknown): value is RpcRequest => {
 	return req.rpc === 1 && typeof req.id === 'string' && typeof req.method === 'string';
 };
 
+const UNSPLASH_UTM_SOURCE = 'galileo';
+const UNSPLASH_UTM_MEDIUM = 'referral';
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+	return typeof value === 'object' && value !== null;
+};
+
+const getString = (value: unknown): string | null => {
+	return typeof value === 'string' && value.trim().length > 0 ? value : null;
+};
+
+const getNumber = (value: unknown): number | null => {
+	return typeof value === 'number' && Number.isFinite(value) ? value : null;
+};
+
+const appendUnsplashUtm = (rawUrl: string): string => {
+	try {
+		const url = new URL(rawUrl);
+		url.searchParams.set('utm_source', UNSPLASH_UTM_SOURCE);
+		url.searchParams.set('utm_medium', UNSPLASH_UTM_MEDIUM);
+		return url.toString();
+	} catch {
+		return rawUrl;
+	}
+};
+
+const normalizeUnsplashPhoto = (payload: unknown): UnsplashSearchResult | null => {
+	if (!isRecord(payload)) return null;
+
+	const id = getString(payload.id);
+	const width = getNumber(payload.width);
+	const height = getNumber(payload.height);
+	const color = getString(payload.color) ?? undefined;
+	const blurHash = getString(payload.blur_hash) ?? undefined;
+	const description = getString(payload.description) ?? undefined;
+	const altDescription = getString(payload.alt_description) ?? undefined;
+	if (!id || width === null || height === null) return null;
+
+	const urls = isRecord(payload.urls) ? payload.urls : null;
+	const links = isRecord(payload.links) ? payload.links : null;
+	const user = isRecord(payload.user) ? payload.user : null;
+	const userLinks = user && isRecord(user.links) ? user.links : null;
+	if (!urls || !links || !user || !userLinks) return null;
+
+	const thumb = getString(urls.thumb);
+	const small = getString(urls.small);
+	const regular = getString(urls.regular);
+	const full = getString(urls.full);
+	const raw = getString(urls.raw);
+	const html = getString(links.html);
+	const downloadLocation = getString(links.download_location);
+	const username = getString(user.username);
+	const name = getString(user.name);
+	const userHtml = getString(userLinks.html);
+
+	if (
+		!thumb ||
+		!small ||
+		!regular ||
+		!full ||
+		!raw ||
+		!html ||
+		!downloadLocation ||
+		!username ||
+		!name ||
+		!userHtml
+	) {
+		return null;
+	}
+
+	return {
+		id,
+		width,
+		height,
+		color,
+		blurHash,
+		description,
+		altDescription,
+		urls: { thumb, small, regular, full, raw },
+		links: { html, downloadLocation },
+		user: {
+			name,
+			username,
+			links: { html: userHtml },
+		},
+	};
+};
+
+const normalizeUnsplashSearchResponse = (payload: unknown): UnsplashSearchResponse => {
+	if (!isRecord(payload)) {
+		return { total: 0, totalPages: 0, results: [] };
+	}
+	const total = getNumber(payload.total) ?? 0;
+	const totalPages = getNumber(payload.total_pages) ?? 0;
+	const rawResults = Array.isArray(payload.results) ? payload.results : [];
+	const results = rawResults.map(normalizeUnsplashPhoto).filter((entry): entry is UnsplashSearchResult => Boolean(entry));
+	return {
+		total,
+		totalPages,
+		results,
+	};
+};
+
 export const App: React.FC = () => {
 	const {
 		document,
@@ -1207,7 +1334,7 @@ export const App: React.FC = () => {
 			height?: number;
 			name?: string;
 			originalPath?: string;
-			meta?: ImageMeta3dIcon;
+			meta?: ImageMeta;
 			index?: number;
 			position?: { x: number; y: number };
 			maxDimension?: number;
@@ -2399,6 +2526,161 @@ export const App: React.FC = () => {
 						return { rpc: 1, id: request.id, ok: true, result };
 					}
 
+					case 'unsplash.search': {
+						if (!hasPermission(plugin.manifest, 'unsplash:search')) {
+							return fail('permission_denied', 'unsplash:search is required');
+						}
+						const params = (request.params || {}) as {
+							query?: string;
+							page?: number;
+							perPage?: number;
+							orientation?: 'landscape' | 'portrait' | 'squarish';
+							contentFilter?: 'low' | 'high';
+						};
+						const query = params.query?.trim();
+						if (!query) {
+							return fail('invalid_params', 'query is required');
+						}
+
+						const rawResponse = await invoke<unknown>('unsplash_search_photos', {
+							args: {
+								query,
+								page: Math.max(1, params.page ?? 1),
+								perPage: clamp(params.perPage ?? 24, 1, 30),
+								orientation: params.orientation,
+								contentFilter: params.contentFilter ?? 'high',
+							},
+						});
+						const result = normalizeUnsplashSearchResponse(rawResponse);
+						return { rpc: 1, id: request.id, ok: true, result };
+					}
+
+					case 'unsplash.insert': {
+						if (!hasPermission(plugin.manifest, 'unsplash:insert')) {
+							return fail('permission_denied', 'unsplash:insert is required');
+						}
+						if (!hasPermission(plugin.manifest, 'document:write')) {
+							return fail('permission_denied', 'document:write is required');
+						}
+
+						const params = (request.params || {}) as {
+							photoId?: string;
+							mode?: UnsplashInsertMode;
+							targetNodeId?: string;
+							sizeUrl?: 'regular' | 'full';
+						};
+
+						const photoId = params.photoId?.trim();
+						if (!photoId) {
+							return fail('invalid_params', 'photoId is required');
+						}
+
+						const mode: UnsplashInsertMode = params.mode === 'replace' ? 'replace' : 'insert';
+						const sizeUrl = params.sizeUrl === 'full' ? 'full' : 'regular';
+						const rawPhoto = await invoke<unknown>('unsplash_get_photo', {
+							args: { photoId },
+						});
+						const photo = normalizeUnsplashPhoto(rawPhoto);
+						if (!photo) {
+							return fail('invalid_response', 'Unsplash photo response is invalid');
+						}
+
+						await invoke('unsplash_track_download', {
+							args: { downloadLocation: photo.links.downloadLocation },
+						});
+
+						const imageUrl = photo.urls[sizeUrl];
+						const fetched = await invoke<UnsplashFetchImageResult>('unsplash_fetch_image', {
+							args: { url: imageUrl },
+						});
+
+						const photoName = photo.description ?? photo.altDescription ?? `Photo by ${photo.user.name}`;
+						const meta: ImageMetaUnsplash = {
+							kind: 'unsplash',
+							photoId: photo.id,
+							photographerName: photo.user.name,
+							photographerUsername: photo.user.username,
+							photographerProfileUrl: appendUnsplashUtm(photo.user.links.html),
+							photoUnsplashUrl: appendUnsplashUtm(photo.links.html),
+							downloadLocation: photo.links.downloadLocation,
+							insertedAt: Date.now(),
+						};
+
+						if (mode === 'replace') {
+							const targetNodeId = params.targetNodeId ?? selectionIds[0];
+							if (!targetNodeId) {
+								return fail('invalid_params', 'targetNodeId is required for replace mode');
+							}
+							const node = document.nodes[targetNodeId];
+							if (!node || node.type !== 'image') {
+								return fail('invalid_params', 'Target node must be an image');
+							}
+
+							const assetId = generateId();
+							const commands: Command[] = [
+								{
+									id: generateId(),
+									timestamp: Date.now(),
+									source: 'user',
+									description: 'Create image asset',
+									type: 'createAsset',
+									payload: {
+										id: assetId,
+										asset: {
+											type: 'image',
+											mime: fetched.mime,
+											dataBase64: fetched.dataBase64,
+											width: fetched.width,
+											height: fetched.height,
+										},
+									},
+								} as Command,
+								{
+									id: generateId(),
+									timestamp: Date.now(),
+									source: 'user',
+									description: 'Replace image',
+									type: 'setProps',
+									payload: {
+										id: targetNodeId,
+										props: {
+											image: {
+												mime: fetched.mime,
+												assetId,
+												originalPath: node.image?.originalPath,
+												meta,
+											},
+											name: photoName,
+										},
+									},
+								},
+							];
+
+							executeCommand({
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Replace Unsplash image',
+								type: 'batch',
+								payload: { commands },
+							} as Command);
+
+							return { rpc: 1, id: request.id, ok: true, result: { nodeId: targetNodeId, mode } };
+						}
+
+						const newNodeId = await insertImageNode({
+							dataBase64: fetched.dataBase64,
+							mime: fetched.mime,
+							width: fetched.width,
+							height: fetched.height,
+							name: photoName,
+							meta,
+							position: getDefaultInsertPosition(),
+							maxDimension: 1200,
+						});
+						return { rpc: 1, id: request.id, ok: true, result: { newNodeId, mode } };
+					}
+
 					case 'export.snapshot': {
 						if (!hasPermission(plugin.manifest, 'export:snapshot')) {
 							return fail('permission_denied', 'export:snapshot is required');
@@ -2441,7 +2723,7 @@ export const App: React.FC = () => {
 							height: number;
 							position?: { x: number; y: number };
 							name?: string;
-							meta?: ImageMeta3dIcon;
+							meta?: ImageMeta;
 						};
 						if (!params.dataBase64 || !params.mime) {
 							return fail('invalid_params', 'dataBase64 and mime are required');
@@ -2471,7 +2753,7 @@ export const App: React.FC = () => {
 							width?: number;
 							height?: number;
 							name?: string;
-							meta?: ImageMeta3dIcon;
+							meta?: ImageMeta;
 							resize?: boolean;
 						};
 						if (!params.nodeId) {

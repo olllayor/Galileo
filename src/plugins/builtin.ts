@@ -46,4 +46,16 @@ export const builtinPlugins: PluginRegistration[] = [
     entryUrl: '/plugins/mockrocket/index.html?v=10',
     source: 'builtin',
   },
+  {
+    manifest: {
+      id: 'com.galileo.unsplash',
+      name: 'Unsplash Photos',
+      version: '0.1.0',
+      entry: 'index.html',
+      permissions: ['selection:read', 'document:write', 'unsplash:search', 'unsplash:insert'],
+      ui: { width: 420, height: 680 },
+    },
+    entryUrl: '/plugins/unsplash/index.html?v=1',
+    source: 'builtin',
+  },
 ];
