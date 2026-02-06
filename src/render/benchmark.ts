@@ -4,6 +4,7 @@
  */
 
 import { exportNodeSnapshot, type SnapshotOptions } from './export';
+import { ENABLE_AUTO_SHADOWS_V2 } from '../core/feature-flags';
 import { createDocument } from '../core/doc/types';
 import type { Document, Node } from '../core/doc/types';
 
@@ -37,7 +38,11 @@ type ShadowGoldenFixtureId =
 	| 'overflow-clip-content-only'
 	| 'consistency-shape'
 	| 'consistency-frame'
-	| 'consistency-auto-layout-frame';
+	| 'consistency-auto-layout-frame'
+	| 'auto-elevation-low'
+	| 'auto-elevation-high'
+	| 'auto-angle-variance'
+	| 'auto-on-image';
 
 export type ShadowGoldenResult = {
 	fixture: ShadowGoldenFixtureId;
@@ -211,6 +216,8 @@ const withRootChild = (node: Node): { doc: Document; nodeId: string } => {
 };
 
 const buildShadowFixture = (fixture: ShadowGoldenFixtureId): { doc: Document; nodeId: string } => {
+	const tinyPngDataUrl =
+		'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2+x2cAAAAASUVORK5CYII=';
 	switch (fixture) {
 		case 'spread-positive':
 			return withRootChild({
@@ -382,7 +389,6 @@ const buildShadowFixture = (fixture: ShadowGoldenFixtureId): { doc: Document; no
 				visible: true,
 			});
 		case 'consistency-auto-layout-frame':
-		default:
 			return withRootChild({
 				id: 'consistency-auto-layout-frame',
 				type: 'frame',
@@ -415,6 +421,103 @@ const buildShadowFixture = (fixture: ShadowGoldenFixtureId): { doc: Document; no
 				children: [],
 				visible: true,
 			});
+		case 'auto-elevation-low':
+			return withRootChild({
+				id: 'auto-elevation-low',
+				type: 'rectangle',
+				position: { x: 220, y: 170 },
+				size: { width: 280, height: 160 },
+				fill: { type: 'solid', value: '#ffffff' },
+				cornerRadius: 16,
+				effects: [
+					{
+						type: 'auto',
+						elevation: 4,
+						angle: 90,
+						distance: 18,
+						softness: 55,
+						color: '#000000',
+						opacity: 0.28,
+						blendMode: 'normal',
+						enabled: true,
+					},
+				],
+				visible: true,
+			});
+		case 'auto-elevation-high':
+			return withRootChild({
+				id: 'auto-elevation-high',
+				type: 'rectangle',
+				position: { x: 220, y: 170 },
+				size: { width: 280, height: 160 },
+				fill: { type: 'solid', value: '#ffffff' },
+				cornerRadius: 16,
+				effects: [
+					{
+						type: 'auto',
+						elevation: 18,
+						angle: 90,
+						distance: 24,
+						softness: 70,
+						color: '#000000',
+						opacity: 0.3,
+						blendMode: 'normal',
+						enabled: true,
+					},
+				],
+				visible: true,
+			});
+		case 'auto-angle-variance':
+			return withRootChild({
+				id: 'auto-angle-variance',
+				type: 'rectangle',
+				position: { x: 220, y: 170 },
+				size: { width: 280, height: 160 },
+				fill: { type: 'solid', value: '#ffffff' },
+				cornerRadius: 16,
+				effects: [
+					{
+						type: 'auto',
+						elevation: 10,
+						angle: 225,
+						distance: 26,
+						softness: 58,
+						color: '#000000',
+						opacity: 0.3,
+						blendMode: 'normal',
+						enabled: true,
+					},
+				],
+				visible: true,
+			});
+		case 'auto-on-image':
+			return withRootChild({
+				id: 'auto-on-image',
+				type: 'image',
+				position: { x: 220, y: 170 },
+				size: { width: 240, height: 180 },
+				image: {
+					src: tinyPngDataUrl,
+				},
+				effects: [
+					{
+						type: 'auto',
+						elevation: 12,
+						angle: 90,
+						distance: 20,
+						softness: 60,
+						color: '#000000',
+						opacity: 0.3,
+						blendMode: 'normal',
+						enabled: true,
+					},
+				],
+				visible: true,
+			});
+		default: {
+			const exhaustive: never = fixture;
+			throw new Error(`Unsupported shadow fixture: ${String(exhaustive)}`);
+		}
 	}
 };
 
@@ -450,6 +553,10 @@ export const runShadowGoldenHarness = async (
 		'consistency-shape',
 		'consistency-frame',
 		'consistency-auto-layout-frame',
+		'auto-elevation-low',
+		'auto-elevation-high',
+		'auto-angle-variance',
+		'auto-on-image',
 	];
 
 	const results: ShadowGoldenResult[] = [];
@@ -496,4 +603,5 @@ export const runShadowGoldenHarness = async (
 if (typeof window !== 'undefined') {
 	(window as unknown as Record<string, unknown>).runExportBenchmark = runExportBenchmark;
 	(window as unknown as Record<string, unknown>).runShadowGoldenHarness = runShadowGoldenHarness;
+	(window as unknown as Record<string, unknown>).isAutoShadowsV2Enabled = ENABLE_AUTO_SHADOWS_V2;
 }

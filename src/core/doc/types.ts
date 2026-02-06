@@ -59,8 +59,38 @@ const innerShadowEffectSchema = shadowEffectBaseSchema.extend({
 	type: z.literal('inner'),
 });
 
-export const shadowEffectSchema = z.discriminatedUnion('type', [dropShadowEffectSchema, innerShadowEffectSchema]);
+export const autoShadowEffectBindingSchema = z.object({
+	elevation: z.string().optional(),
+	angle: z.string().optional(),
+	distance: z.string().optional(),
+	softness: z.string().optional(),
+	color: z.string().optional(),
+	opacity: z.string().optional(),
+	blendMode: z.string().optional(),
+});
+
+export type AutoShadowEffectBinding = z.infer<typeof autoShadowEffectBindingSchema>;
+
+const autoShadowEffectSchema = z.object({
+	type: z.literal('auto'),
+	elevation: z.number(),
+	angle: z.number(),
+	distance: z.number(),
+	softness: z.number(),
+	color: z.string(),
+	opacity: z.number(),
+	blendMode: shadowBlendModeSchema.optional(),
+	enabled: z.boolean().optional(),
+	bindings: autoShadowEffectBindingSchema.optional(),
+});
+
+export const shadowEffectSchema = z.discriminatedUnion('type', [
+	dropShadowEffectSchema,
+	innerShadowEffectSchema,
+	autoShadowEffectSchema,
+]);
 export type ShadowEffect = z.infer<typeof shadowEffectSchema>;
+export type RenderableShadowEffect = z.infer<typeof dropShadowEffectSchema> | z.infer<typeof innerShadowEffectSchema>;
 
 export const positionSchema = z.object({
 	x: z.number(),
@@ -257,6 +287,7 @@ export const nodeSchema = z.object({
 	shadowOverflow: z.enum(['visible', 'clipped', 'clip-content-only']).optional(),
 	effects: shadowEffectSchema.array().optional(),
 	effectBindings: shadowEffectBindingSchema.optional(),
+	effectVariables: z.record(z.union([z.string(), z.number()])).optional(),
 	constraints: constraintsSchema.optional(),
 	layoutGuides: layoutGuideSchema.optional(),
 	layoutSizing: layoutSizingSchema.optional(),
@@ -286,7 +317,7 @@ export const documentSchema = z.object({
 export type Document = z.infer<typeof documentSchema>;
 
 export const createDocument = (): Document => ({
-	version: 3,
+	version: 4,
 	rootId: 'root',
 	nodes: {
 		root: {

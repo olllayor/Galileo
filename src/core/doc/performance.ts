@@ -26,6 +26,9 @@ export interface PerformanceMetrics {
 		cacheHitRate: number;
 		lastRenderMs: number;
 		avgRenderMs: number;
+		autoShadowCompiles: number;
+		autoShadowCompileMsLast: number;
+		autoShadowCompileMsAvg: number;
 	};
 	lastFrameMs: number;
 	framesPerSecond: number;
@@ -76,6 +79,10 @@ class PerformanceMonitor {
 				: 0;
 		const shadowAvgMs =
 			shadowMetrics.sampleCount > 0 ? shadowMetrics.totalRenderMs / shadowMetrics.sampleCount : 0;
+		const autoCompileAvgMs =
+			shadowMetrics.autoShadowCompiles > 0
+				? shadowMetrics.autoShadowCompileMsTotal / shadowMetrics.autoShadowCompiles
+				: 0;
 
 		return {
 			geometry: {
@@ -93,6 +100,9 @@ class PerformanceMonitor {
 				cacheHitRate: shadowHitRate,
 				lastRenderMs: shadowMetrics.lastRenderMs,
 				avgRenderMs: shadowAvgMs,
+				autoShadowCompiles: shadowMetrics.autoShadowCompiles,
+				autoShadowCompileMsLast: shadowMetrics.autoShadowCompileMsLast,
+				autoShadowCompileMsAvg: autoCompileAvgMs,
 			},
 			lastFrameMs: this.frameTimes[this.frameTimes.length - 1] ?? 0,
 			framesPerSecond: avgFrameTime > 0 ? 1000 / avgFrameTime : 0,
@@ -113,6 +123,9 @@ class PerformanceMonitor {
 		console.log(
 			`   Shadows: ${m.shadows.lastRenderMs.toFixed(2)}ms last, ${(m.shadows.cacheHitRate * 100).toFixed(0)}% cache hit`,
 		);
+		console.log(
+			`   Auto shadow compile: ${m.shadows.autoShadowCompileMsLast.toFixed(2)}ms last, ${m.shadows.autoShadowCompileMsAvg.toFixed(2)}ms avg (${m.shadows.autoShadowCompiles} samples)`,
+		);
 	}
 
 	/**
@@ -132,6 +145,9 @@ type ShadowMetrics = {
 	lastRenderMs: number;
 	totalRenderMs: number;
 	sampleCount: number;
+	autoShadowCompiles: number;
+	autoShadowCompileMsLast: number;
+	autoShadowCompileMsTotal: number;
 };
 
 const shadowMetrics: ShadowMetrics = {
@@ -140,6 +156,9 @@ const shadowMetrics: ShadowMetrics = {
 	lastRenderMs: 0,
 	totalRenderMs: 0,
 	sampleCount: 0,
+	autoShadowCompiles: 0,
+	autoShadowCompileMsLast: 0,
+	autoShadowCompileMsTotal: 0,
 };
 
 export const recordShadowCacheHit = (): void => {
@@ -157,6 +176,15 @@ export const recordShadowRenderDuration = (durationMs: number): void => {
 	shadowMetrics.lastRenderMs = durationMs;
 	shadowMetrics.totalRenderMs += durationMs;
 	shadowMetrics.sampleCount += 1;
+};
+
+export const recordAutoShadowCompileDuration = (durationMs: number): void => {
+	if (!Number.isFinite(durationMs) || durationMs < 0) {
+		return;
+	}
+	shadowMetrics.autoShadowCompiles += 1;
+	shadowMetrics.autoShadowCompileMsLast = durationMs;
+	shadowMetrics.autoShadowCompileMsTotal += durationMs;
 };
 
 export const getPerformanceMonitor = (): PerformanceMonitor => {

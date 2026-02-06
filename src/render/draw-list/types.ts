@@ -1,4 +1,4 @@
-import type { ShadowEffect } from '../../core/doc/types';
+import type { RenderableShadowEffect } from '../../core/doc/types';
 
 export type Paint = string | GradientPaint;
 
@@ -41,7 +41,7 @@ export interface DrawRectCommand {
   strokeWidth?: number;
   cornerRadius?: number;
   opacity?: number;
-  effects?: ShadowEffect[];
+  effects?: RenderableShadowEffect[];
 }
 
 export interface DrawTextCommand {
@@ -54,7 +54,7 @@ export interface DrawTextCommand {
   fontSize: number;
   fill?: string;
   opacity?: number;
-  effects?: ShadowEffect[];
+  effects?: RenderableShadowEffect[];
 }
 
 export interface DrawEllipseCommand {
@@ -68,7 +68,7 @@ export interface DrawEllipseCommand {
   stroke?: Paint;
   strokeWidth?: number;
   opacity?: number;
-  effects?: ShadowEffect[];
+  effects?: RenderableShadowEffect[];
 }
 
 export interface DrawImageCommand {
@@ -81,7 +81,7 @@ export interface DrawImageCommand {
   src: string;
   maskSrc?: string;
   opacity?: number;
-  effects?: ShadowEffect[];
+  effects?: RenderableShadowEffect[];
 }
 
 export interface DrawPathCommand {
@@ -97,7 +97,7 @@ export interface DrawPathCommand {
   strokeWidth?: number;
   opacity?: number;
   fillRule?: 'nonzero' | 'evenodd';
-  effects?: ShadowEffect[];
+  effects?: RenderableShadowEffect[];
 }
 
 export interface ClipCommand {
