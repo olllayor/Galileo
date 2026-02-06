@@ -19,10 +19,12 @@ import type {
 	LayoutGuideType,
 	LayoutSizing,
 	Node,
+	ShadowBlendMode,
+	ShadowEffect,
 } from '../core/doc/types';
-import { createDefaultLayoutGuides } from '../core/doc';
-import { findParentNode } from '../core/doc';
+import { ENABLE_SHADOWS_V1, createDefaultLayoutGuides, findParentNode, resolveShadowOverflow } from '../core/doc';
 import { colors, spacing, typography, radii, transitions, panels } from './design-system';
+import { ScrubbableNumberInput } from './ScrubbableNumberInput';
 
 interface PropertiesPanelProps {
 	selectedNode: Node | null;
@@ -35,6 +37,9 @@ interface PropertiesPanelProps {
 	onClearBackground?: (id: string) => void;
 	isRemovingBackground?: boolean;
 	zoom?: number;
+	onCopyEffects?: (nodeId: string) => void;
+	onPasteEffects?: (nodeId: string) => void;
+	canPasteEffects?: boolean;
 }
 
 const defaultLayout: Layout = {
@@ -58,6 +63,33 @@ const safeRound = (value: number | undefined, fallback = 0): number => {
 	return Math.round(safeNumber(value, fallback));
 };
 
+const createDefaultShadowEffect = (type: 'drop' | 'inner'): ShadowEffect => {
+	if (type === 'inner') {
+		return {
+			type: 'inner',
+			x: 0,
+			y: 1,
+			blur: 4,
+			spread: 0,
+			color: '#000000',
+			opacity: 0.2,
+			blendMode: 'normal',
+			enabled: true,
+		};
+	}
+	return {
+		type: 'drop',
+		x: 0,
+		y: 8,
+		blur: 24,
+		spread: 0,
+		color: '#000000',
+		opacity: 0.24,
+		blendMode: 'normal',
+		enabled: true,
+	};
+};
+
 export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	selectedNode,
 	document,
@@ -69,7 +101,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	onClearBackground,
 	isRemovingBackground = false,
 	zoom = 1,
+	onCopyEffects,
+	onPasteEffects,
+	canPasteEffects = false,
 }) => {
+	const [draggedEffectIndex, setDraggedEffectIndex] = React.useState<number | null>(null);
+
 	// Collapsed rail mode
 	if (collapsed) {
 		return (
@@ -327,6 +364,39 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	const layoutGuides = selectedNode.layoutGuides;
 	const hasLayoutGuides = Boolean(layoutGuides);
 	const layoutGuideType = layoutGuides?.type ?? 'grid';
+	const effects = selectedNode.effects ?? [];
+	const enabledEffectsCount = effects.filter((effect) => effect.enabled !== false).length;
+	const shadowOverflow = selectedNode.type === 'frame' ? resolveShadowOverflow(selectedNode) : 'visible';
+
+	const updateEffects = (nextEffects: ShadowEffect[]) => {
+		handleInputChange('effects', nextEffects);
+	};
+
+	const addEffect = (type: 'drop' | 'inner') => {
+		updateEffects([...effects, createDefaultShadowEffect(type)]);
+	};
+
+	const updateEffect = (index: number, updates: Partial<ShadowEffect>) => {
+		updateEffects(effects.map((effect, i) => (i === index ? { ...effect, ...updates } : effect)));
+	};
+
+	const removeEffect = (index: number) => {
+		updateEffects(effects.filter((_, i) => i !== index));
+	};
+
+	const reorderEffects = (fromIndex: number, toIndex: number) => {
+		if (fromIndex === toIndex) return;
+		const next = effects.slice();
+		const [moved] = next.splice(fromIndex, 1);
+		if (!moved) return;
+		next.splice(toIndex, 0, moved);
+		updateEffects(next);
+	};
+
+	const handleShadowOverflowChange = (value: 'visible' | 'clipped' | 'clip-content-only') => {
+		handleInputChange('shadowOverflow', value);
+		handleInputChange('clipContent', value !== 'visible');
+	};
 
 	return (
 		<div
@@ -836,7 +906,41 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					Auto layout
 				</label>
 
-				{selectedNode.type === 'frame' && (
+				{selectedNode.type === 'frame' && ENABLE_SHADOWS_V1 && (
+					<div style={{ marginTop: spacing.sm }}>
+						<label
+							style={{
+								display: 'block',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								marginBottom: '4px',
+							}}
+						>
+							Shadow overflow
+						</label>
+						<select
+							value={shadowOverflow}
+							onChange={(e) =>
+								handleShadowOverflowChange(e.target.value as 'visible' | 'clipped' | 'clip-content-only')
+							}
+							style={{
+								width: '100%',
+								padding: spacing.xs,
+								border: `1px solid ${colors.border.default}`,
+								borderRadius: radii.sm,
+								fontSize: typography.fontSize.md,
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.primary,
+							}}
+						>
+							<option value="visible">Visible</option>
+							<option value="clipped">Clipped</option>
+							<option value="clip-content-only">Clip Content Only</option>
+						</select>
+					</div>
+				)}
+
+				{selectedNode.type === 'frame' && !ENABLE_SHADOWS_V1 && (
 					<label
 						style={{
 							display: 'flex',
@@ -1460,7 +1564,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 				)}
 			</div>
 
-			<div style={{ marginBottom: spacing.lg }}>
+			{ENABLE_SHADOWS_V1 && (
+				<div style={{ marginBottom: spacing.lg }}>
 				<h4
 					style={{
 						margin: `0 0 ${spacing.sm} 0`,
@@ -1557,6 +1662,384 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						</div>
 					)}
 				</div>
+				</div>
+			)}
+
+			<div style={{ marginBottom: spacing.lg }}>
+				<h4
+					style={{
+						margin: `0 0 ${spacing.sm} 0`,
+						fontSize: typography.fontSize.sm,
+						color: colors.text.secondary,
+						fontWeight: typography.fontWeight.medium,
+					}}
+				>
+					Effects
+				</h4>
+				<div style={{ display: 'flex', gap: spacing.sm, marginBottom: spacing.sm }}>
+					<button
+						type="button"
+						onClick={() => addEffect('drop')}
+						style={{
+							padding: `${spacing.xs} ${spacing.sm}`,
+							borderRadius: radii.sm,
+							border: `1px solid ${colors.border.default}`,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.secondary,
+							fontSize: typography.fontSize.md,
+							cursor: 'pointer',
+							flex: 1,
+						}}
+					>
+						+ Drop
+					</button>
+					<button
+						type="button"
+						onClick={() => addEffect('inner')}
+						style={{
+							padding: `${spacing.xs} ${spacing.sm}`,
+							borderRadius: radii.sm,
+							border: `1px solid ${colors.border.default}`,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.secondary,
+							fontSize: typography.fontSize.md,
+							cursor: 'pointer',
+							flex: 1,
+						}}
+					>
+						+ Inner
+					</button>
+				</div>
+				<div style={{ display: 'flex', gap: spacing.sm, marginBottom: spacing.sm }}>
+					<button
+						type="button"
+						onClick={() => onCopyEffects?.(selectedNode.id)}
+						disabled={effects.length === 0}
+						style={{
+							padding: `${spacing.xs} ${spacing.sm}`,
+							borderRadius: radii.sm,
+							border: `1px solid ${colors.border.default}`,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.secondary,
+							fontSize: typography.fontSize.md,
+							cursor: effects.length === 0 ? 'not-allowed' : 'pointer',
+							opacity: effects.length === 0 ? 0.5 : 1,
+							flex: 1,
+						}}
+					>
+						Copy Effects
+					</button>
+					<button
+						type="button"
+						onClick={() => onPasteEffects?.(selectedNode.id)}
+						disabled={!canPasteEffects}
+						style={{
+							padding: `${spacing.xs} ${spacing.sm}`,
+							borderRadius: radii.sm,
+							border: `1px solid ${colors.border.default}`,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.secondary,
+							fontSize: typography.fontSize.md,
+							cursor: canPasteEffects ? 'pointer' : 'not-allowed',
+							opacity: canPasteEffects ? 1 : 0.5,
+							flex: 1,
+						}}
+					>
+						Paste Effects
+					</button>
+				</div>
+
+				{enabledEffectsCount > 6 && (
+					<div
+						style={{
+							marginBottom: spacing.sm,
+							padding: spacing.xs,
+							borderRadius: radii.sm,
+							backgroundColor: 'rgba(255, 159, 10, 0.12)',
+							border: '1px solid rgba(255, 159, 10, 0.35)',
+							fontSize: typography.fontSize.xs,
+							color: colors.text.secondary,
+						}}
+					>
+						Performance warning: more than 6 enabled effects may reduce rendering speed.
+					</div>
+				)}
+
+				{effects.length === 0 && (
+					<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary }}>No effects on this layer.</div>
+				)}
+
+				{effects.map((effect, index) => (
+					<div
+						key={`${effect.type}-${index}`}
+						draggable
+						onDragStart={() => setDraggedEffectIndex(index)}
+						onDragEnd={() => setDraggedEffectIndex(null)}
+						onDragOver={(e) => {
+							e.preventDefault();
+						}}
+						onDrop={() => {
+							if (draggedEffectIndex === null) return;
+							reorderEffects(draggedEffectIndex, index);
+							setDraggedEffectIndex(null);
+						}}
+						style={{
+							border: `1px solid ${colors.border.default}`,
+							borderRadius: radii.sm,
+							padding: spacing.sm,
+							marginBottom: spacing.sm,
+							backgroundColor:
+								draggedEffectIndex === index ? colors.bg.active : colors.bg.tertiary,
+						}}
+					>
+						<div style={{ display: 'flex', alignItems: 'center', marginBottom: spacing.sm, gap: spacing.xs }}>
+							<div
+								style={{
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									cursor: 'grab',
+									userSelect: 'none',
+								}}
+								title="Drag to reorder"
+							>
+								:::
+							</div>
+							<div style={{ flex: 1, fontSize: typography.fontSize.sm, color: colors.text.secondary }}>
+								{effect.type === 'drop' ? 'Drop shadow' : 'Inner shadow'}
+							</div>
+							<button
+								type="button"
+								onClick={() => updateEffect(index, { enabled: effect.enabled === false })}
+								style={{
+									border: `1px solid ${colors.border.default}`,
+									backgroundColor: 'transparent',
+									color: colors.text.tertiary,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.xs,
+									cursor: 'pointer',
+									padding: '2px 6px',
+								}}
+							>
+								{effect.enabled === false ? 'Show' : 'Hide'}
+							</button>
+							<button
+								type="button"
+								onClick={() => removeEffect(index)}
+								style={{
+									border: `1px solid ${colors.border.default}`,
+									backgroundColor: 'transparent',
+									color: colors.semantic.error,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.xs,
+									cursor: 'pointer',
+									padding: '2px 6px',
+								}}
+							>
+								Delete
+							</button>
+						</div>
+
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									X
+								</label>
+								<ScrubbableNumberInput
+									value={safeNumber(effect.x)}
+									onChange={(value) => updateEffect(index, { x: value })}
+									step={1}
+									scrubStep={0.25}
+									inputStyle={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.secondary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Y
+								</label>
+								<ScrubbableNumberInput
+									value={safeNumber(effect.y)}
+									onChange={(value) => updateEffect(index, { y: value })}
+									step={1}
+									scrubStep={0.25}
+									inputStyle={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.secondary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Blur
+								</label>
+								<ScrubbableNumberInput
+									value={safeNumber(effect.blur)}
+									onChange={(value) => updateEffect(index, { blur: Math.max(0, value) })}
+									min={0}
+									step={1}
+									scrubStep={0.25}
+									inputStyle={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.secondary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Spread
+								</label>
+								<ScrubbableNumberInput
+									value={safeNumber(effect.spread)}
+									onChange={(value) => updateEffect(index, { spread: value })}
+									step={1}
+									scrubStep={0.2}
+									inputStyle={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.secondary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+						</div>
+
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Color
+								</label>
+								<input
+									type="color"
+									value={effect.color}
+									onChange={(e) => updateEffect(index, { color: e.target.value })}
+									style={{
+										width: '100%',
+										height: '28px',
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										cursor: 'pointer',
+										backgroundColor: colors.bg.secondary,
+									}}
+								/>
+							</div>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Opacity
+								</label>
+								<ScrubbableNumberInput
+									value={safeRound(safeNumber(effect.opacity, 1) * 100)}
+									onChange={(value) => updateEffect(index, { opacity: clamp(value / 100, 0, 1) })}
+									min={0}
+									max={100}
+									step={1}
+									scrubStep={0.25}
+									inputStyle={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.secondary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+						</div>
+
+						<div>
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								Blend mode
+							</label>
+							<select
+								value={effect.blendMode ?? 'normal'}
+								onChange={(e) => updateEffect(index, { blendMode: e.target.value as ShadowBlendMode })}
+								style={{
+									width: '100%',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.secondary,
+									color: colors.text.primary,
+								}}
+							>
+								<option value="normal">Normal</option>
+								<option value="multiply">Multiply</option>
+								<option value="screen">Screen</option>
+								<option value="overlay">Overlay</option>
+							</select>
+						</div>
+					</div>
+				))}
 			</div>
 
 			{selectedNode.type === 'image' && (

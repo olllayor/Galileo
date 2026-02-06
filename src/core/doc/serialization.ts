@@ -1,6 +1,6 @@
 import { documentSchema, type Document } from './types';
 
-export const CURRENT_DOCUMENT_VERSION = 2;
+export const CURRENT_DOCUMENT_VERSION = 3;
 
 export type DocumentParseResult =
   | { ok: true; doc: Document; warnings: string[] }
@@ -43,17 +43,24 @@ const migrateDocument = (raw: unknown): DocumentParseResult => {
     return { ok: false, error: `Unsupported document version ${version}` };
   }
 
-  const warnings: string[] = [];
-  let migrated = raw as Document;
+	const warnings: string[] = [];
+	let migrated = raw as Document;
 
-  if (version < CURRENT_DOCUMENT_VERSION) {
-    warnings.push(`Document version ${version} < ${CURRENT_DOCUMENT_VERSION}; migrated to ${CURRENT_DOCUMENT_VERSION}`);
-    migrated = {
-      ...(raw as Record<string, unknown>),
-      version: CURRENT_DOCUMENT_VERSION,
-      assets: (raw as { assets?: unknown }).assets ?? {},
-    } as Document;
-  }
+	if (version < CURRENT_DOCUMENT_VERSION) {
+		warnings.push(`Document version ${version} < ${CURRENT_DOCUMENT_VERSION}; migrated to ${CURRENT_DOCUMENT_VERSION}`);
+		const rawObject = raw as Record<string, unknown>;
+		const rawNodes = (rawObject.nodes ?? {}) as Record<string, unknown>;
+		const migratedNodes = Object.fromEntries(
+			Object.entries(rawNodes).map(([id, node]) => [id, migrateNode(node, version)]),
+		);
+
+		migrated = {
+			...rawObject,
+			version: CURRENT_DOCUMENT_VERSION,
+			assets: (raw as { assets?: unknown }).assets ?? {},
+			nodes: migratedNodes,
+		} as Document;
+	}
 
   const parsed = documentSchema.safeParse(migrated);
   if (!parsed.success) {
@@ -67,6 +74,20 @@ const migrateDocument = (raw: unknown): DocumentParseResult => {
   }
 
   return { ok: true, doc: parsed.data, warnings };
+};
+
+const migrateNode = (rawNode: unknown, version: number): unknown => {
+	if (!rawNode || typeof rawNode !== 'object') {
+		return rawNode;
+	}
+
+	const node = { ...(rawNode as Record<string, unknown>) };
+
+	if (version < 3 && node.type === 'frame' && node.shadowOverflow === undefined) {
+		node.shadowOverflow = node.clipContent === true ? 'clipped' : 'visible';
+	}
+
+	return node;
 };
 
 export const parseDocumentText = (content: string): DocumentParseResult => {

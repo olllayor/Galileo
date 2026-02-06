@@ -1,3 +1,5 @@
+import type { ShadowEffect } from '../../core/doc/types';
+
 export type Paint = string | GradientPaint;
 
 export interface GradientStop {
@@ -29,6 +31,7 @@ export type DrawCommand =
 
 export interface DrawRectCommand {
   type: 'rect';
+  nodeId?: string;
   x: number;
   y: number;
   width: number;
@@ -38,10 +41,12 @@ export interface DrawRectCommand {
   strokeWidth?: number;
   cornerRadius?: number;
   opacity?: number;
+  effects?: ShadowEffect[];
 }
 
 export interface DrawTextCommand {
   type: 'text';
+  nodeId?: string;
   x: number;
   y: number;
   text: string;
@@ -49,10 +54,12 @@ export interface DrawTextCommand {
   fontSize: number;
   fill?: string;
   opacity?: number;
+  effects?: ShadowEffect[];
 }
 
 export interface DrawEllipseCommand {
   type: 'ellipse';
+  nodeId?: string;
   x: number;
   y: number;
   radiusX: number;
@@ -61,10 +68,12 @@ export interface DrawEllipseCommand {
   stroke?: Paint;
   strokeWidth?: number;
   opacity?: number;
+  effects?: ShadowEffect[];
 }
 
 export interface DrawImageCommand {
   type: 'image';
+  nodeId?: string;
   x: number;
   y: number;
   width: number;
@@ -72,10 +81,12 @@ export interface DrawImageCommand {
   src: string;
   maskSrc?: string;
   opacity?: number;
+  effects?: ShadowEffect[];
 }
 
 export interface DrawPathCommand {
   type: 'path';
+  nodeId?: string;
   d: string;
   x: number;
   y: number;
@@ -86,6 +97,7 @@ export interface DrawPathCommand {
   strokeWidth?: number;
   opacity?: number;
   fillRule?: 'nonzero' | 'evenodd';
+  effects?: ShadowEffect[];
 }
 
 export interface ClipCommand {
@@ -94,6 +106,7 @@ export interface ClipCommand {
   y: number;
   width: number;
   height: number;
+  cornerRadius?: number;
 }
 
 export interface RestoreCommand {

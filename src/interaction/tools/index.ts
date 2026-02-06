@@ -54,6 +54,7 @@ export const createFrameTool = (parentId?: string): Tool => ({
 			size: { width: 300, height: 200 },
 			fill: { type: 'solid', value: '#ffffff' },
 			clipContent: false,
+			shadowOverflow: 'visible',
 			visible: true,
 		};
 
@@ -585,13 +586,15 @@ export const getHitStackInContainer = (doc: Document, hitIds: string[], containe
 };
 
 const isDescendantOf = (doc: Document, nodeId: string, ancestorId: string): boolean => {
-	let current = nodeId;
-	while (true) {
+	let current: string | null = nodeId;
+	while (current && current !== doc.rootId) {
 		const parent = findParentNode(doc, current);
 		if (!parent) return false;
 		if (parent.id === ancestorId) return true;
 		current = parent.id;
 	}
+	if (current === ancestorId) return true;
+	return false;
 };
 
 /**

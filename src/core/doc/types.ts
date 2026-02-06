@@ -25,6 +25,43 @@ export const strokeSchema = z.object({
 
 export type Stroke = z.infer<typeof strokeSchema>;
 
+export const shadowBlendModeSchema = z.enum(['normal', 'multiply', 'screen', 'overlay']);
+export type ShadowBlendMode = z.infer<typeof shadowBlendModeSchema>;
+
+export const shadowEffectBindingSchema = z.object({
+	x: z.string().optional(),
+	y: z.string().optional(),
+	blur: z.string().optional(),
+	spread: z.string().optional(),
+	color: z.string().optional(),
+	opacity: z.string().optional(),
+	blendMode: z.string().optional(),
+});
+
+export type ShadowEffectBinding = z.infer<typeof shadowEffectBindingSchema>;
+
+const shadowEffectBaseSchema = z.object({
+	x: z.number(),
+	y: z.number(),
+	blur: z.number(),
+	spread: z.number(),
+	color: z.string(),
+	opacity: z.number(),
+	blendMode: shadowBlendModeSchema.optional(),
+	enabled: z.boolean().optional(),
+});
+
+const dropShadowEffectSchema = shadowEffectBaseSchema.extend({
+	type: z.literal('drop'),
+});
+
+const innerShadowEffectSchema = shadowEffectBaseSchema.extend({
+	type: z.literal('inner'),
+});
+
+export const shadowEffectSchema = z.discriminatedUnion('type', [dropShadowEffectSchema, innerShadowEffectSchema]);
+export type ShadowEffect = z.infer<typeof shadowEffectSchema>;
+
 export const positionSchema = z.object({
 	x: z.number(),
 	y: z.number(),
@@ -202,6 +239,9 @@ export const nodeSchema = z.object({
 	visible: z.boolean().optional(),
 	aspectRatioLocked: z.boolean().optional(),
 	clipContent: z.boolean().optional(),
+	shadowOverflow: z.enum(['visible', 'clipped', 'clip-content-only']).optional(),
+	effects: shadowEffectSchema.array().optional(),
+	effectBindings: shadowEffectBindingSchema.optional(),
 	constraints: constraintsSchema.optional(),
 	layoutGuides: layoutGuideSchema.optional(),
 	layoutSizing: layoutSizingSchema.optional(),
@@ -231,7 +271,7 @@ export const documentSchema = z.object({
 export type Document = z.infer<typeof documentSchema>;
 
 export const createDocument = (): Document => ({
-	version: 2,
+	version: 3,
 	rootId: 'root',
 	nodes: {
 		root: {

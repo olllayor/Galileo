@@ -1,5 +1,11 @@
-import { buildWorldBoundsMap, type WorldBoundsMap } from '../../core/doc';
-import type { Color, Document, Node } from '../../core/doc/types';
+import {
+	ENABLE_SHADOWS_V1,
+	buildWorldBoundsMap,
+	normalizeShadowEffects,
+	resolveShadowOverflow,
+	type WorldBoundsMap,
+} from '../../core/doc';
+import type { Color, Document, Node, ShadowEffect } from '../../core/doc/types';
 import type { DrawCommand, GradientPaint, GradientStop, Paint } from './types';
 
 type BuildDrawListOptions = {
@@ -47,6 +53,7 @@ export const buildDrawListForNode = (
 			y: 0,
 			width: base.width,
 			height: base.height,
+			cornerRadius: node.type === 'frame' ? node.cornerRadius : undefined,
 		});
 	}
 	buildNodeCommandsFromBounds(doc, node, commands, map, base, nodeId, includeFrameFill);
@@ -77,10 +84,30 @@ const buildNodeCommandsFromBounds = (
 	}
 
 	if (node.type === 'frame') {
+		const overflowMode = ENABLE_SHADOWS_V1
+			? resolveShadowOverflow(node)
+			: node.clipContent
+				? 'clip-content-only'
+				: 'visible';
+		const clipFrame = ENABLE_SHADOWS_V1 && overflowMode === 'clipped';
+		const clipChildrenOnly = overflowMode === 'clip-content-only';
 		const shouldIncludeFill = node.id !== rootId || includeRootFrameFill;
+
+		if (clipFrame) {
+			commands.push({
+				type: 'clip',
+				x,
+				y,
+				width,
+				height,
+				cornerRadius: node.cornerRadius,
+			});
+		}
+
 		if (node.fill && shouldIncludeFill) {
 			commands.push({
 				type: 'rect',
+				nodeId: node.id,
 				x,
 				y,
 				width,
@@ -88,17 +115,19 @@ const buildNodeCommandsFromBounds = (
 				fill: colorToPaint(node.fill),
 				cornerRadius: node.cornerRadius,
 				opacity: node.opacity,
+				effects: getRenderableEffects(node),
 			});
 		}
 
 		if (node.children && node.children.length > 0) {
-			if (node.clipContent) {
+			if (!clipFrame && clipChildrenOnly) {
 				commands.push({
 					type: 'clip',
 					x,
 					y,
 					width,
 					height,
+					cornerRadius: node.cornerRadius,
 				});
 			}
 
@@ -109,9 +138,13 @@ const buildNodeCommandsFromBounds = (
 				}
 			}
 
-			if (node.clipContent) {
+			if (!clipFrame && clipChildrenOnly) {
 				commands.push({ type: 'restore' });
 			}
+		}
+
+		if (clipFrame) {
+			commands.push({ type: 'restore' });
 		}
 	} else if (node.type === 'group') {
 		// Groups are transparent containers - they don't render themselves,
@@ -128,6 +161,7 @@ const buildNodeCommandsFromBounds = (
 		if (node.fill || node.stroke) {
 			commands.push({
 				type: 'rect',
+				nodeId: node.id,
 				x,
 				y,
 				width,
@@ -137,12 +171,14 @@ const buildNodeCommandsFromBounds = (
 				strokeWidth: node.stroke?.width,
 				cornerRadius: node.cornerRadius,
 				opacity: node.opacity,
+				effects: getRenderableEffects(node),
 			});
 		}
 	} else if (node.type === 'ellipse') {
 		if (node.fill || node.stroke) {
 			commands.push({
 				type: 'ellipse',
+				nodeId: node.id,
 				x: x + width / 2,
 				y: y + height / 2,
 				radiusX: width / 2,
@@ -151,11 +187,13 @@ const buildNodeCommandsFromBounds = (
 				stroke: node.stroke ? colorToPaint(node.stroke.color) : undefined,
 				strokeWidth: node.stroke?.width,
 				opacity: node.opacity,
+				effects: getRenderableEffects(node),
 			});
 		}
 	} else if (node.type === 'text') {
 		commands.push({
 			type: 'text',
+			nodeId: node.id,
 			x,
 			y,
 			text: node.text || '',
@@ -163,6 +201,7 @@ const buildNodeCommandsFromBounds = (
 			fontSize: node.fontSize || 14,
 			fill: colorToText(node.fill),
 			opacity: node.opacity,
+			effects: getRenderableEffects(node),
 		});
 	} else if (node.type === 'image') {
 		const src = resolveImageSource(doc, node);
@@ -170,6 +209,7 @@ const buildNodeCommandsFromBounds = (
 		if (src) {
 			commands.push({
 				type: 'image',
+				nodeId: node.id,
 				x,
 				y,
 				width,
@@ -177,6 +217,7 @@ const buildNodeCommandsFromBounds = (
 				src,
 				maskSrc,
 				opacity: node.opacity,
+				effects: getRenderableEffects(node),
 			});
 		}
 	} else if (node.type === 'path') {
@@ -184,6 +225,7 @@ const buildNodeCommandsFromBounds = (
 		if (pathData && (node.fill || node.stroke)) {
 			commands.push({
 				type: 'path',
+				nodeId: node.id,
 				d: pathData.d,
 				x,
 				y,
@@ -194,17 +236,20 @@ const buildNodeCommandsFromBounds = (
 				strokeWidth: node.stroke?.width,
 				opacity: node.opacity,
 				fillRule: pathData.fillRule,
+				effects: getRenderableEffects(node),
 			});
 		} else if (node.fill) {
 			const color = colorToPaint(node.fill);
 			commands.push({
 				type: 'rect',
+				nodeId: node.id,
 				x,
 				y,
 				width,
 				height,
 				fill: color,
 				opacity: node.opacity,
+				effects: getRenderableEffects(node),
 			});
 		}
 	} else if (node.type === 'componentInstance') {
@@ -217,6 +262,12 @@ const buildNodeCommandsFromBounds = (
 			}
 		}
 	}
+};
+
+const getRenderableEffects = (node: Node): ShadowEffect[] | undefined => {
+	if (!ENABLE_SHADOWS_V1) return undefined;
+	const effects = normalizeShadowEffects(node.effects);
+	return effects.length > 0 ? effects : undefined;
 };
 
 const DEFAULT_FALLBACK_COLOR = '#000000';

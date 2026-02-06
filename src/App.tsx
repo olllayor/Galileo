@@ -42,7 +42,7 @@ import {
 } from './core/doc';
 import { generateId } from './core/doc/id';
 import { createDocument } from './core/doc/types';
-import type { Constraints, Document, ImageMeta3dIcon, Node } from './core/doc/types';
+import type { Constraints, Document, ImageMeta3dIcon, Node, ShadowEffect } from './core/doc/types';
 import type { Command } from './core/commands/types';
 import {
 	createProjectMeta,
@@ -100,6 +100,7 @@ const AUTOSAVE_DELAY_MS = 1500;
 const ZOOM_SENSITIVITY = 0.0035;
 const TEXT_PADDING = 4;
 const CLIPBOARD_PREFIX = 'GALILEO_CLIPBOARD_V1:';
+const DEFAULT_CANVAS_SIZE = { width: 1280, height: 800 } as const;
 type RemoveBackgroundResult = {
 	maskPngBase64: string;
 	width: number;
@@ -111,7 +112,7 @@ type DragState =
 			mode: 'pan';
 			startScreen: { x: number; y: number };
 			startPan: { x: number; y: number };
-	  }
+		}
 	| {
 			mode: 'move';
 			startWorld: { x: number; y: number };
@@ -120,7 +121,7 @@ type DragState =
 			initialPositions: Record<string, { x: number; y: number }>;
 			startBounds: { x: number; y: number; width: number; height: number };
 			snapTargets: SnapTargets;
-	  }
+		}
 	| {
 			mode: 'resize';
 			startWorld: { x: number; y: number };
@@ -132,14 +133,14 @@ type DragState =
 			initialSize: { width: number; height: number };
 			lockAspectRatio: boolean;
 			constraintSnapshot?: FrameConstraintSnapshot | null;
-	  }
+		}
 	| {
 			mode: 'marquee';
 			startWorld: { x: number; y: number };
 			currentWorld: { x: number; y: number };
 			baseSelection: string[];
 			additive: boolean;
-	  };
+		};
 
 type HoverHit = {
 	id: string;
@@ -183,6 +184,11 @@ type ClipboardPayload = {
 	bounds: Bounds;
 	rootWorldPositions: Record<string, { x: number; y: number }>;
 	parentId: string | null;
+};
+
+const cloneShadowEffects = (effects: ShadowEffect[] | undefined): ShadowEffect[] | null => {
+	if (!effects || effects.length === 0) return null;
+	return effects.map((effect) => ({ ...effect }));
 };
 
 const applyPositionUpdates = (doc: Document, updates: Record<string, { x: number; y: number }>): Document => {
@@ -813,7 +819,8 @@ export const App: React.FC = () => {
 	const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
 	const clipboardRef = useRef<ClipboardPayload | null>(null);
 	const clipboardPasteCountRef = useRef(0);
-	const canvasSize = { width: 1280, height: 800 };
+	const effectsClipboardRef = useRef<ShadowEffect[] | null>(null);
+	const canvasSize = DEFAULT_CANVAS_SIZE;
 
 	const showToast = useCallback((message: string) => {
 		setToastMessage(message);
@@ -1578,12 +1585,15 @@ export const App: React.FC = () => {
 				return nextId;
 			};
 
-			const cloneNode = (oldId: string, parentId: string, isRoot: boolean, index?: number) => {
-				const node = payload.nodes[oldId];
-				if (!node) return;
-				const newId = ensureId(oldId);
-				const { id: _id, children, ...rest } = node;
-				const baseWorld = payload.rootWorldPositions[oldId] || { x: node.position.x, y: node.position.y };
+				const cloneNode = (oldId: string, parentId: string, isRoot: boolean, index?: number) => {
+					const node = payload.nodes[oldId];
+					if (!node) return;
+					const newId = ensureId(oldId);
+					const { children } = node;
+					const rest = Object.fromEntries(
+						Object.entries(node).filter(([key]) => key !== 'id' && key !== 'children'),
+					) as Omit<Node, 'id' | 'children'>;
+					const baseWorld = payload.rootWorldPositions[oldId] || { x: node.position.x, y: node.position.y };
 				const position = isRoot
 					? {
 							x: baseWorld.x + deltaWorld.x - parentWorld.x,
@@ -1738,6 +1748,41 @@ export const App: React.FC = () => {
 		[executeCommand],
 	);
 
+	const copyEffects = useCallback(
+		(preferredNodeId?: string) => {
+			const candidates = preferredNodeId ? [preferredNodeId] : selectionIds;
+			const source = candidates
+				.map((id) => document.nodes[id])
+				.find((node): node is Node => Boolean(node && node.effects && node.effects.length > 0));
+			const cloned = cloneShadowEffects(source?.effects);
+			if (!cloned) {
+				showToast('No effects to copy.');
+				return;
+			}
+			effectsClipboardRef.current = cloned;
+			showToast('Effects copied.');
+		},
+		[document.nodes, selectionIds, showToast],
+	);
+
+	const pasteEffects = useCallback(
+		(preferredTargetIds?: string[]) => {
+			const effects = cloneShadowEffects(effectsClipboardRef.current ?? undefined);
+			if (!effects) {
+				showToast('No copied effects to paste.');
+				return;
+			}
+			const targetIds = preferredTargetIds && preferredTargetIds.length > 0 ? preferredTargetIds : selectionIds;
+			if (targetIds.length === 0) {
+				showToast('Select at least one layer to paste effects.');
+				return;
+			}
+			applyPropsToSelection(targetIds, { effects }, 'Paste effects');
+			showToast(`Pasted effects to ${targetIds.length} layer${targetIds.length === 1 ? '' : 's'}.`);
+		},
+		[applyPropsToSelection, selectionIds, showToast],
+	);
+
 	const deleteNodes = useCallback(
 		(ids: string[]) => {
 			const deletable = ids.filter((id) => id !== document.rootId);
@@ -1779,11 +1824,14 @@ export const App: React.FC = () => {
 			const commands: Command[] = [];
 			const newIds: string[] = [];
 
-			const cloneSubtree = (nodeId: string, parentId: string, index?: number, applyOffset = false): string | null => {
-				const node = document.nodes[nodeId];
-				if (!node) return null;
-				const { id: _id, children, ...rest } = node;
-				const nextId = generateId();
+				const cloneSubtree = (nodeId: string, parentId: string, index?: number, applyOffset = false): string | null => {
+					const node = document.nodes[nodeId];
+					if (!node) return null;
+					const { children } = node;
+					const rest = Object.fromEntries(
+						Object.entries(node).filter(([key]) => key !== 'id' && key !== 'children'),
+					) as Omit<Node, 'id' | 'children'>;
+					const nextId = generateId();
 				const position = { ...node.position };
 				if (applyOffset) {
 					position.x += 10;
@@ -3089,7 +3137,6 @@ export const App: React.FC = () => {
 		},
 		[
 			activeTool,
-			displayDocument,
 			document,
 			executeCommand,
 			handleSelectionPointerDown,
@@ -3291,11 +3338,11 @@ export const App: React.FC = () => {
 			snapDisabled,
 			hoverHandle,
 			hoverHit,
-			document,
 			documentParentMap,
 			displayDocument,
 			boundsMap,
 			parentMap,
+			zoom,
 			getLayoutGuideTargetsForParent,
 			setSelection,
 			hitTestAtPoint,
@@ -3677,7 +3724,7 @@ export const App: React.FC = () => {
 				},
 			});
 		},
-		[document.nodes, document, boundsMap, executeCommand, measureTextSize],
+		[document, boundsMap, executeCommand, measureTextSize],
 	);
 
 	const handleRenameNode = useCallback(
@@ -3698,14 +3745,14 @@ export const App: React.FC = () => {
 	);
 
 	const handleToggleNodeVisible = useCallback(
-		(id: string, _visible: boolean) => {
+		(id: string) => {
 			dispatchEditorAction({ type: 'toggleVisible' }, [id]);
 		},
 		[dispatchEditorAction],
 	);
 
 	const handleToggleNodeLocked = useCallback(
-		(id: string, _locked: boolean) => {
+		(id: string) => {
 			dispatchEditorAction({ type: 'toggleLock' }, [id]);
 		},
 		[dispatchEditorAction],
@@ -3868,8 +3915,8 @@ export const App: React.FC = () => {
 	);
 
 	const handleDeleteProject = useCallback(
-		async (project: ProjectMeta) => {
-			const confirmed = window.confirm(`Delete \"${project.name}\"? This cannot be undone.`);
+			async (project: ProjectMeta) => {
+				const confirmed = window.confirm(`Delete "${project.name}"? This cannot be undone.`);
 			if (!confirmed) return;
 			try {
 				await invoke('delete_document', { args: { path: project.path } });
@@ -4382,6 +4429,16 @@ export const App: React.FC = () => {
 			}
 
 			if (!editable) {
+				if (isCmd && e.altKey && key === 'c') {
+					e.preventDefault();
+					copyEffects();
+					return;
+				}
+				if (isCmd && e.altKey && key === 'v') {
+					e.preventDefault();
+					pasteEffects();
+					return;
+				}
 				if (isCmd && key === 'a') {
 					e.preventDefault();
 					setSelection(getSelectableNodeIds(document));
@@ -4561,6 +4618,8 @@ export const App: React.FC = () => {
 		handleLoad,
 		handleImportImage,
 		copySelectionToClipboard,
+		copyEffects,
+		pasteEffects,
 		transformSession,
 		contextMenu,
 		activePlugin,
@@ -4810,6 +4869,9 @@ export const App: React.FC = () => {
 							onClearBackground={clearBackgroundRemoval}
 							isRemovingBackground={isRemovingBackground}
 							zoom={zoom}
+							onCopyEffects={(nodeId) => copyEffects(nodeId)}
+							onPasteEffects={(nodeId) => pasteEffects([nodeId])}
+							canPasteEffects={Boolean(effectsClipboardRef.current?.length)}
 						/>
 					</div>
 				</>

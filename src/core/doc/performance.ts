@@ -22,6 +22,11 @@ export interface PerformanceMetrics {
 		cellCount: number;
 		avgNodesPerCell: number;
 	};
+	shadows: {
+		cacheHitRate: number;
+		lastRenderMs: number;
+		avgRenderMs: number;
+	};
 	lastFrameMs: number;
 	framesPerSecond: number;
 }
@@ -65,6 +70,12 @@ class PerformanceMonitor {
 			geoStats.cacheHits + geoStats.cacheMisses > 0
 				? geoStats.cacheHits / (geoStats.cacheHits + geoStats.cacheMisses)
 				: 0;
+		const shadowHitRate =
+			shadowMetrics.cacheHits + shadowMetrics.cacheMisses > 0
+				? shadowMetrics.cacheHits / (shadowMetrics.cacheHits + shadowMetrics.cacheMisses)
+				: 0;
+		const shadowAvgMs =
+			shadowMetrics.sampleCount > 0 ? shadowMetrics.totalRenderMs / shadowMetrics.sampleCount : 0;
 
 		return {
 			geometry: {
@@ -77,6 +88,11 @@ class PerformanceMonitor {
 				lastBuildMs: spatialStats.lastBuildMs,
 				cellCount: spatialStats.cellCount,
 				avgNodesPerCell: spatialStats.avgNodesPerCell,
+			},
+			shadows: {
+				cacheHitRate: shadowHitRate,
+				lastRenderMs: shadowMetrics.lastRenderMs,
+				avgRenderMs: shadowAvgMs,
 			},
 			lastFrameMs: this.frameTimes[this.frameTimes.length - 1] ?? 0,
 			framesPerSecond: avgFrameTime > 0 ? 1000 / avgFrameTime : 0,
@@ -94,6 +110,9 @@ class PerformanceMonitor {
 			`   Geometry: ${m.geometry.lastComputeMs.toFixed(2)}ms, ${(m.geometry.cacheHitRate * 100).toFixed(0)}% cache hit, ${m.geometry.totalNodes} nodes`,
 		);
 		console.log(`   Spatial: ${m.spatialIndex.lastBuildMs.toFixed(2)}ms, ${m.spatialIndex.cellCount} cells`);
+		console.log(
+			`   Shadows: ${m.shadows.lastRenderMs.toFixed(2)}ms last, ${(m.shadows.cacheHitRate * 100).toFixed(0)}% cache hit`,
+		);
 	}
 
 	/**
@@ -106,6 +125,39 @@ class PerformanceMonitor {
 
 // Singleton
 let monitor: PerformanceMonitor | null = null;
+
+type ShadowMetrics = {
+	cacheHits: number;
+	cacheMisses: number;
+	lastRenderMs: number;
+	totalRenderMs: number;
+	sampleCount: number;
+};
+
+const shadowMetrics: ShadowMetrics = {
+	cacheHits: 0,
+	cacheMisses: 0,
+	lastRenderMs: 0,
+	totalRenderMs: 0,
+	sampleCount: 0,
+};
+
+export const recordShadowCacheHit = (): void => {
+	shadowMetrics.cacheHits += 1;
+};
+
+export const recordShadowCacheMiss = (): void => {
+	shadowMetrics.cacheMisses += 1;
+};
+
+export const recordShadowRenderDuration = (durationMs: number): void => {
+	if (!Number.isFinite(durationMs) || durationMs < 0) {
+		return;
+	}
+	shadowMetrics.lastRenderMs = durationMs;
+	shadowMetrics.totalRenderMs += durationMs;
+	shadowMetrics.sampleCount += 1;
+};
 
 export const getPerformanceMonitor = (): PerformanceMonitor => {
 	if (!monitor) {

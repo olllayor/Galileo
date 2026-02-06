@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import type { Document, Node } from '../core/doc/types';
 import { colors, spacing, typography, radii, transitions, panels } from './design-system';
 
@@ -164,13 +164,16 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 		});
 	};
 
-	const beginRenameById = (id: string) => {
-		const node = document.nodes[id];
-		if (!node) return;
-		setEditingId(id);
-		setEditingOriginal(node.name ?? '');
-		setDraftName(node.name ?? getDisplayName(node));
-	};
+	const beginRenameById = useCallback(
+		(id: string) => {
+			const node = document.nodes[id];
+			if (!node) return;
+			setEditingId(id);
+			setEditingOriginal(node.name ?? '');
+			setDraftName(node.name ?? getDisplayName(node));
+		},
+		[document.nodes],
+	);
 
 	const cancelRename = () => {
 		setEditingId(null);
@@ -235,7 +238,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 		}
 		beginRenameById(renameRequestId);
 		onRenameRequestHandled?.();
-	}, [renameRequestId, document, parentMap, onRenameRequestHandled]);
+		}, [renameRequestId, document, parentMap, beginRenameById, onRenameRequestHandled]);
 
 	const getSiblings = (parentId: string, excludeId?: string): string[] => {
 		const parent = document.nodes[parentId];
