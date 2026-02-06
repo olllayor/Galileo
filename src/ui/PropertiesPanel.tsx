@@ -22,7 +22,13 @@ import type {
 	ShadowBlendMode,
 	ShadowEffect,
 } from '../core/doc/types';
-import { ENABLE_SHADOWS_V1, createDefaultLayoutGuides, findParentNode, resolveShadowOverflow } from '../core/doc';
+import {
+	ENABLE_AUTO_SHADOWS_V2,
+	ENABLE_SHADOWS_V1,
+	createDefaultLayoutGuides,
+	findParentNode,
+	resolveShadowOverflow,
+} from '../core/doc';
 import { colors, spacing, typography, radii, transitions, panels } from './design-system';
 import { ScrubbableNumberInput } from './ScrubbableNumberInput';
 
@@ -63,7 +69,21 @@ const safeRound = (value: number | undefined, fallback = 0): number => {
 	return Math.round(safeNumber(value, fallback));
 };
 
-const createDefaultShadowEffect = (type: 'drop' | 'inner'): ShadowEffect => {
+const createDefaultShadowEffect = (type: 'drop' | 'inner' | 'auto'): ShadowEffect => {
+	if (type === 'auto') {
+		return {
+			type: 'auto',
+			elevation: 6,
+			angle: 90,
+			distance: 18,
+			softness: 55,
+			color: '#000000',
+			opacity: 0.28,
+			blendMode: 'normal',
+			enabled: true,
+			bindings: {},
+		};
+	}
 	if (type === 'inner') {
 		return {
 			type: 'inner',
@@ -89,6 +109,9 @@ const createDefaultShadowEffect = (type: 'drop' | 'inner'): ShadowEffect => {
 		enabled: true,
 	};
 };
+
+type AutoShadowBindingField = 'elevation' | 'angle' | 'distance' | 'softness' | 'color' | 'opacity' | 'blendMode';
+type EffectVariableRow = { key: string; value: string };
 
 export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	selectedNode,
@@ -367,17 +390,42 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	const effects = selectedNode.effects ?? [];
 	const enabledEffectsCount = effects.filter((effect) => effect.enabled !== false).length;
 	const shadowOverflow = selectedNode.type === 'frame' ? resolveShadowOverflow(selectedNode) : 'visible';
+	const effectVariables = selectedNode.effectVariables ?? {};
+	const effectVariableRows: EffectVariableRow[] = Object.entries(effectVariables).map(([key, value]) => ({
+		key,
+		value: String(value),
+	}));
 
 	const updateEffects = (nextEffects: ShadowEffect[]) => {
 		handleInputChange('effects', nextEffects);
 	};
 
-	const addEffect = (type: 'drop' | 'inner') => {
+	const addEffect = (type: 'drop' | 'inner' | 'auto') => {
 		updateEffects([...effects, createDefaultShadowEffect(type)]);
 	};
 
-	const updateEffect = (index: number, updates: Partial<ShadowEffect>) => {
-		updateEffects(effects.map((effect, i) => (i === index ? { ...effect, ...updates } : effect)));
+	const updateEffect = (index: number, updater: (effect: ShadowEffect) => ShadowEffect) => {
+		updateEffects(effects.map((effect, i) => (i === index ? updater(effect) : effect)));
+	};
+
+	const updateEffectPatch = (index: number, updates: Partial<ShadowEffect>) => {
+		updateEffect(index, (effect) => ({ ...effect, ...updates } as ShadowEffect));
+	};
+
+	const updateAutoBinding = (index: number, field: AutoShadowBindingField, bindingKey: string) => {
+		updateEffect(index, (effect) => {
+			if (effect.type !== 'auto') return effect;
+			const current = effect.bindings ?? {};
+			const trimmed = bindingKey.trim();
+			const nextBindings =
+				trimmed.length > 0
+					? { ...current, [field]: trimmed }
+					: Object.fromEntries(Object.entries(current).filter(([key]) => key !== field));
+			return {
+				...effect,
+				bindings: Object.keys(nextBindings).length > 0 ? nextBindings : undefined,
+			};
+		});
 	};
 
 	const removeEffect = (index: number) => {
@@ -396,6 +444,30 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	const handleShadowOverflowChange = (value: 'visible' | 'clipped' | 'clip-content-only') => {
 		handleInputChange('shadowOverflow', value);
 		handleInputChange('clipContent', value !== 'visible');
+	};
+
+	const updateEffectVariable = (currentKey: string, nextKey: string, value: string) => {
+		const trimmedCurrentKey = currentKey.trim();
+		const trimmedNextKey = nextKey.trim();
+		const baseEntries = Object.entries(effectVariables).filter(([key]) => key !== trimmedCurrentKey);
+		if (!trimmedNextKey) {
+			handleInputChange('effectVariables', baseEntries.length > 0 ? Object.fromEntries(baseEntries) : undefined);
+			return;
+		}
+		const numericValue = Number(value);
+		const normalizedValue = Number.isFinite(numericValue) && value.trim() !== '' ? numericValue : value;
+		const next = Object.fromEntries([...baseEntries, [trimmedNextKey, normalizedValue]]);
+		handleInputChange('effectVariables', next);
+	};
+
+	const addEffectVariable = () => {
+		let index = 1;
+		let candidate = `var${index}`;
+		while (effectVariables[candidate] !== undefined) {
+			index += 1;
+			candidate = `var${index}`;
+		}
+		handleInputChange('effectVariables', { ...effectVariables, [candidate]: 0 });
 	};
 
 	return (
@@ -1709,6 +1781,24 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					>
 						+ Inner
 					</button>
+					{ENABLE_AUTO_SHADOWS_V2 && (
+						<button
+							type="button"
+							onClick={() => addEffect('auto')}
+							style={{
+								padding: `${spacing.xs} ${spacing.sm}`,
+								borderRadius: radii.sm,
+								border: `1px solid ${colors.border.default}`,
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.secondary,
+								fontSize: typography.fontSize.md,
+								cursor: 'pointer',
+								flex: 1,
+							}}
+						>
+							+ Auto
+						</button>
+					)}
 				</div>
 				<div style={{ display: 'flex', gap: spacing.sm, marginBottom: spacing.sm }}>
 					<button
@@ -1805,11 +1895,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								:::
 							</div>
 							<div style={{ flex: 1, fontSize: typography.fontSize.sm, color: colors.text.secondary }}>
-								{effect.type === 'drop' ? 'Drop shadow' : 'Inner shadow'}
+								{effect.type === 'drop' ? 'Drop shadow' : effect.type === 'inner' ? 'Inner shadow' : 'Auto shadow'}
 							</div>
 							<button
 								type="button"
-								onClick={() => updateEffect(index, { enabled: effect.enabled === false })}
+								onClick={() => updateEffectPatch(index, { enabled: effect.enabled === false })}
 								style={{
 									border: `1px solid ${colors.border.default}`,
 									backgroundColor: 'transparent',
@@ -1839,207 +1929,470 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 							</button>
 						</div>
 
-						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
-							<div>
-								<label
-									style={{
-										display: 'block',
-										fontSize: typography.fontSize.xs,
-										color: colors.text.tertiary,
-										marginBottom: '4px',
-									}}
-								>
-									X
-								</label>
-								<ScrubbableNumberInput
-									value={safeNumber(effect.x)}
-									onChange={(value) => updateEffect(index, { x: value })}
-									step={1}
-									scrubStep={0.25}
-									inputStyle={{
-										width: '100%',
-										padding: spacing.xs,
-										border: `1px solid ${colors.border.default}`,
-										borderRadius: radii.sm,
-										fontSize: typography.fontSize.md,
-										backgroundColor: colors.bg.secondary,
-										color: colors.text.primary,
-									}}
-								/>
-							</div>
-							<div>
-								<label
-									style={{
-										display: 'block',
-										fontSize: typography.fontSize.xs,
-										color: colors.text.tertiary,
-										marginBottom: '4px',
-									}}
-								>
-									Y
-								</label>
-								<ScrubbableNumberInput
-									value={safeNumber(effect.y)}
-									onChange={(value) => updateEffect(index, { y: value })}
-									step={1}
-									scrubStep={0.25}
-									inputStyle={{
-										width: '100%',
-										padding: spacing.xs,
-										border: `1px solid ${colors.border.default}`,
-										borderRadius: radii.sm,
-										fontSize: typography.fontSize.md,
-										backgroundColor: colors.bg.secondary,
-										color: colors.text.primary,
-									}}
-								/>
-							</div>
-							<div>
-								<label
-									style={{
-										display: 'block',
-										fontSize: typography.fontSize.xs,
-										color: colors.text.tertiary,
-										marginBottom: '4px',
-									}}
-								>
-									Blur
-								</label>
-								<ScrubbableNumberInput
-									value={safeNumber(effect.blur)}
-									onChange={(value) => updateEffect(index, { blur: Math.max(0, value) })}
-									min={0}
-									step={1}
-									scrubStep={0.25}
-									inputStyle={{
-										width: '100%',
-										padding: spacing.xs,
-										border: `1px solid ${colors.border.default}`,
-										borderRadius: radii.sm,
-										fontSize: typography.fontSize.md,
-										backgroundColor: colors.bg.secondary,
-										color: colors.text.primary,
-									}}
-								/>
-							</div>
-							<div>
-								<label
-									style={{
-										display: 'block',
-										fontSize: typography.fontSize.xs,
-										color: colors.text.tertiary,
-										marginBottom: '4px',
-									}}
-								>
-									Spread
-								</label>
-								<ScrubbableNumberInput
-									value={safeNumber(effect.spread)}
-									onChange={(value) => updateEffect(index, { spread: value })}
-									step={1}
-									scrubStep={0.2}
-									inputStyle={{
-										width: '100%',
-										padding: spacing.xs,
-										border: `1px solid ${colors.border.default}`,
-										borderRadius: radii.sm,
-										fontSize: typography.fontSize.md,
-										backgroundColor: colors.bg.secondary,
-										color: colors.text.primary,
-									}}
-								/>
-							</div>
-						</div>
+						{(effect.type === 'drop' || effect.type === 'inner') && (
+							<>
+								<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
+									<div>
+										<label
+											style={{
+												display: 'block',
+												fontSize: typography.fontSize.xs,
+												color: colors.text.tertiary,
+												marginBottom: '4px',
+											}}
+										>
+											X
+										</label>
+										<ScrubbableNumberInput
+											value={safeNumber(effect.x)}
+											onChange={(value) => updateEffectPatch(index, { x: value })}
+											step={1}
+											scrubStep={0.25}
+											inputStyle={{
+												width: '100%',
+												padding: spacing.xs,
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												fontSize: typography.fontSize.md,
+												backgroundColor: colors.bg.secondary,
+												color: colors.text.primary,
+											}}
+										/>
+									</div>
+									<div>
+										<label
+											style={{
+												display: 'block',
+												fontSize: typography.fontSize.xs,
+												color: colors.text.tertiary,
+												marginBottom: '4px',
+											}}
+										>
+											Y
+										</label>
+										<ScrubbableNumberInput
+											value={safeNumber(effect.y)}
+											onChange={(value) => updateEffectPatch(index, { y: value })}
+											step={1}
+											scrubStep={0.25}
+											inputStyle={{
+												width: '100%',
+												padding: spacing.xs,
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												fontSize: typography.fontSize.md,
+												backgroundColor: colors.bg.secondary,
+												color: colors.text.primary,
+											}}
+										/>
+									</div>
+									<div>
+										<label
+											style={{
+												display: 'block',
+												fontSize: typography.fontSize.xs,
+												color: colors.text.tertiary,
+												marginBottom: '4px',
+											}}
+										>
+											Blur
+										</label>
+										<ScrubbableNumberInput
+											value={safeNumber(effect.blur)}
+											onChange={(value) => updateEffectPatch(index, { blur: Math.max(0, value) })}
+											min={0}
+											step={1}
+											scrubStep={0.25}
+											inputStyle={{
+												width: '100%',
+												padding: spacing.xs,
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												fontSize: typography.fontSize.md,
+												backgroundColor: colors.bg.secondary,
+												color: colors.text.primary,
+											}}
+										/>
+									</div>
+									<div>
+										<label
+											style={{
+												display: 'block',
+												fontSize: typography.fontSize.xs,
+												color: colors.text.tertiary,
+												marginBottom: '4px',
+											}}
+										>
+											Spread
+										</label>
+										<ScrubbableNumberInput
+											value={safeNumber(effect.spread)}
+											onChange={(value) => updateEffectPatch(index, { spread: value })}
+											step={1}
+											scrubStep={0.2}
+											inputStyle={{
+												width: '100%',
+												padding: spacing.xs,
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												fontSize: typography.fontSize.md,
+												backgroundColor: colors.bg.secondary,
+												color: colors.text.primary,
+											}}
+										/>
+									</div>
+								</div>
 
-						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
-							<div>
-								<label
-									style={{
-										display: 'block',
-										fontSize: typography.fontSize.xs,
-										color: colors.text.tertiary,
-										marginBottom: '4px',
-									}}
-								>
-									Color
-								</label>
-								<input
-									type="color"
-									value={effect.color}
-									onChange={(e) => updateEffect(index, { color: e.target.value })}
-									style={{
-										width: '100%',
-										height: '28px',
-										border: `1px solid ${colors.border.default}`,
-										borderRadius: radii.sm,
-										cursor: 'pointer',
-										backgroundColor: colors.bg.secondary,
-									}}
-								/>
-							</div>
-							<div>
-								<label
-									style={{
-										display: 'block',
-										fontSize: typography.fontSize.xs,
-										color: colors.text.tertiary,
-										marginBottom: '4px',
-									}}
-								>
-									Opacity
-								</label>
-								<ScrubbableNumberInput
-									value={safeRound(safeNumber(effect.opacity, 1) * 100)}
-									onChange={(value) => updateEffect(index, { opacity: clamp(value / 100, 0, 1) })}
-									min={0}
-									max={100}
-									step={1}
-									scrubStep={0.25}
-									inputStyle={{
-										width: '100%',
-										padding: spacing.xs,
-										border: `1px solid ${colors.border.default}`,
-										borderRadius: radii.sm,
-										fontSize: typography.fontSize.md,
-										backgroundColor: colors.bg.secondary,
-										color: colors.text.primary,
-									}}
-								/>
-							</div>
-						</div>
+								<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
+									<div>
+										<label
+											style={{
+												display: 'block',
+												fontSize: typography.fontSize.xs,
+												color: colors.text.tertiary,
+												marginBottom: '4px',
+											}}
+										>
+											Color
+										</label>
+										<input
+											type="color"
+											value={effect.color}
+											onChange={(e) => updateEffectPatch(index, { color: e.target.value })}
+											style={{
+												width: '100%',
+												height: '28px',
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												cursor: 'pointer',
+												backgroundColor: colors.bg.secondary,
+											}}
+										/>
+									</div>
+									<div>
+										<label
+											style={{
+												display: 'block',
+												fontSize: typography.fontSize.xs,
+												color: colors.text.tertiary,
+												marginBottom: '4px',
+											}}
+										>
+											Opacity
+										</label>
+										<ScrubbableNumberInput
+											value={safeRound(safeNumber(effect.opacity, 1) * 100)}
+											onChange={(value) => updateEffectPatch(index, { opacity: clamp(value / 100, 0, 1) })}
+											min={0}
+											max={100}
+											step={1}
+											scrubStep={0.25}
+											inputStyle={{
+												width: '100%',
+												padding: spacing.xs,
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												fontSize: typography.fontSize.md,
+												backgroundColor: colors.bg.secondary,
+												color: colors.text.primary,
+											}}
+										/>
+									</div>
+								</div>
 
-						<div>
-							<label
-								style={{
-									display: 'block',
-									fontSize: typography.fontSize.xs,
-									color: colors.text.tertiary,
-									marginBottom: '4px',
-								}}
-							>
-								Blend mode
-							</label>
-							<select
-								value={effect.blendMode ?? 'normal'}
-								onChange={(e) => updateEffect(index, { blendMode: e.target.value as ShadowBlendMode })}
-								style={{
-									width: '100%',
-									padding: spacing.xs,
-									border: `1px solid ${colors.border.default}`,
-									borderRadius: radii.sm,
-									fontSize: typography.fontSize.md,
-									backgroundColor: colors.bg.secondary,
-									color: colors.text.primary,
-								}}
-							>
-								<option value="normal">Normal</option>
-								<option value="multiply">Multiply</option>
-								<option value="screen">Screen</option>
-								<option value="overlay">Overlay</option>
-							</select>
-						</div>
+								<div>
+									<label
+										style={{
+											display: 'block',
+											fontSize: typography.fontSize.xs,
+											color: colors.text.tertiary,
+											marginBottom: '4px',
+										}}
+									>
+										Blend mode
+									</label>
+									<select
+										value={effect.blendMode ?? 'normal'}
+										onChange={(e) => updateEffectPatch(index, { blendMode: e.target.value as ShadowBlendMode })}
+										style={{
+											width: '100%',
+											padding: spacing.xs,
+											border: `1px solid ${colors.border.default}`,
+											borderRadius: radii.sm,
+											fontSize: typography.fontSize.md,
+											backgroundColor: colors.bg.secondary,
+											color: colors.text.primary,
+										}}
+									>
+										<option value="normal">Normal</option>
+										<option value="multiply">Multiply</option>
+										<option value="screen">Screen</option>
+										<option value="overlay">Overlay</option>
+									</select>
+								</div>
+							</>
+						)}
+
+						{effect.type === 'auto' && (
+							<>
+								<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
+									<div>
+										<label style={{ display: 'block', fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: '4px' }}>
+											Elevation
+										</label>
+										<ScrubbableNumberInput
+											value={safeNumber(effect.elevation)}
+											onChange={(value) => updateEffectPatch(index, { elevation: clamp(value, 0, 24) })}
+											min={0}
+											max={24}
+											step={1}
+											scrubStep={0.2}
+											inputStyle={{
+												width: '100%',
+												padding: spacing.xs,
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												fontSize: typography.fontSize.md,
+												backgroundColor: colors.bg.secondary,
+												color: colors.text.primary,
+											}}
+										/>
+									</div>
+									<div>
+										<label style={{ display: 'block', fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: '4px' }}>
+											Angle
+										</label>
+										<ScrubbableNumberInput
+											value={safeNumber(effect.angle)}
+											onChange={(value) => updateEffectPatch(index, { angle: value })}
+											step={1}
+											scrubStep={0.25}
+											inputStyle={{
+												width: '100%',
+												padding: spacing.xs,
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												fontSize: typography.fontSize.md,
+												backgroundColor: colors.bg.secondary,
+												color: colors.text.primary,
+											}}
+										/>
+									</div>
+									<div>
+										<label style={{ display: 'block', fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: '4px' }}>
+											Distance
+										</label>
+										<ScrubbableNumberInput
+											value={safeNumber(effect.distance)}
+											onChange={(value) => updateEffectPatch(index, { distance: clamp(value, 0, 80) })}
+											min={0}
+											max={80}
+											step={1}
+											scrubStep={0.25}
+											inputStyle={{
+												width: '100%',
+												padding: spacing.xs,
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												fontSize: typography.fontSize.md,
+												backgroundColor: colors.bg.secondary,
+												color: colors.text.primary,
+											}}
+										/>
+									</div>
+									<div>
+										<label style={{ display: 'block', fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: '4px' }}>
+											Softness
+										</label>
+										<ScrubbableNumberInput
+											value={safeNumber(effect.softness)}
+											onChange={(value) => updateEffectPatch(index, { softness: clamp(value, 0, 100) })}
+											min={0}
+											max={100}
+											step={1}
+											scrubStep={0.25}
+											inputStyle={{
+												width: '100%',
+												padding: spacing.xs,
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												fontSize: typography.fontSize.md,
+												backgroundColor: colors.bg.secondary,
+												color: colors.text.primary,
+											}}
+										/>
+									</div>
+								</div>
+
+								<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
+									<div>
+										<label style={{ display: 'block', fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: '4px' }}>
+											Color
+										</label>
+										<input
+											type="color"
+											value={effect.color}
+											onChange={(e) => updateEffectPatch(index, { color: e.target.value })}
+											style={{
+												width: '100%',
+												height: '28px',
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												cursor: 'pointer',
+												backgroundColor: colors.bg.secondary,
+											}}
+										/>
+									</div>
+									<div>
+										<label style={{ display: 'block', fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: '4px' }}>
+											Opacity
+										</label>
+										<ScrubbableNumberInput
+											value={safeRound(safeNumber(effect.opacity, 1) * 100)}
+											onChange={(value) => updateEffectPatch(index, { opacity: clamp(value / 100, 0, 1) })}
+											min={0}
+											max={100}
+											step={1}
+											scrubStep={0.25}
+											inputStyle={{
+												width: '100%',
+												padding: spacing.xs,
+												border: `1px solid ${colors.border.default}`,
+												borderRadius: radii.sm,
+												fontSize: typography.fontSize.md,
+												backgroundColor: colors.bg.secondary,
+												color: colors.text.primary,
+											}}
+										/>
+									</div>
+								</div>
+
+								<div style={{ marginBottom: spacing.sm }}>
+									<label style={{ display: 'block', fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: '4px' }}>
+										Blend mode
+									</label>
+									<select
+										value={effect.blendMode ?? 'normal'}
+										onChange={(e) => updateEffectPatch(index, { blendMode: e.target.value as ShadowBlendMode })}
+										style={{
+											width: '100%',
+											padding: spacing.xs,
+											border: `1px solid ${colors.border.default}`,
+											borderRadius: radii.sm,
+											fontSize: typography.fontSize.md,
+											backgroundColor: colors.bg.secondary,
+											color: colors.text.primary,
+										}}
+									>
+										<option value="normal">Normal</option>
+										<option value="multiply">Multiply</option>
+										<option value="screen">Screen</option>
+										<option value="overlay">Overlay</option>
+									</select>
+								</div>
+
+								<div style={{ borderTop: `1px solid ${colors.border.default}`, paddingTop: spacing.xs }}>
+									<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: spacing.xs }}>
+										Bindings (Advanced)
+									</div>
+									<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.xs }}>
+										{(['elevation', 'angle', 'distance', 'softness', 'color', 'opacity', 'blendMode'] as AutoShadowBindingField[]).map((field) => (
+											<div key={field}>
+												<label style={{ display: 'block', fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: '2px' }}>
+													{field}
+												</label>
+												<input
+													type="text"
+													value={effect.bindings?.[field] ?? ''}
+													onChange={(e) => updateAutoBinding(index, field, e.target.value)}
+													placeholder="variable key"
+													style={{
+														width: '100%',
+														padding: '4px 6px',
+														border: `1px solid ${colors.border.default}`,
+														borderRadius: radii.sm,
+														fontSize: typography.fontSize.xs,
+														backgroundColor: colors.bg.secondary,
+														color: colors.text.primary,
+													}}
+												/>
+											</div>
+										))}
+									</div>
+								</div>
+							</>
+						)}
 					</div>
 				))}
+
+				{ENABLE_AUTO_SHADOWS_V2 && (
+					<div style={{ marginTop: spacing.sm, borderTop: `1px solid ${colors.border.default}`, paddingTop: spacing.sm }}>
+						<div
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								justifyContent: 'space-between',
+								marginBottom: spacing.xs,
+							}}
+						>
+							<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary }}>Effect Variables</div>
+							<button
+								type="button"
+								onClick={addEffectVariable}
+								style={{
+									border: `1px solid ${colors.border.default}`,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.secondary,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.xs,
+									cursor: 'pointer',
+									padding: '2px 6px',
+								}}
+							>
+								+ Variable
+							</button>
+						</div>
+						{effectVariableRows.length === 0 && (
+							<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary }}>
+								No effect variables on this node.
+							</div>
+						)}
+						{effectVariableRows.map((row) => (
+							<div key={row.key} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.xs, marginBottom: spacing.xs }}>
+								<input
+									type="text"
+									value={row.key}
+									onChange={(e) => updateEffectVariable(row.key, e.target.value, row.value)}
+									placeholder="name"
+									style={{
+										width: '100%',
+										padding: '4px 6px',
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.xs,
+										backgroundColor: colors.bg.secondary,
+										color: colors.text.primary,
+									}}
+								/>
+								<input
+									type="text"
+									value={row.value}
+									onChange={(e) => updateEffectVariable(row.key, row.key, e.target.value)}
+									placeholder="value"
+									style={{
+										width: '100%',
+										padding: '4px 6px',
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.xs,
+										backgroundColor: colors.bg.secondary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+						))}
+					</div>
+				)}
 			</div>
 
 			{selectedNode.type === 'image' && (

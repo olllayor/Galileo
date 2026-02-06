@@ -1,6 +1,6 @@
 import { documentSchema, type Document } from './types';
 
-export const CURRENT_DOCUMENT_VERSION = 3;
+export const CURRENT_DOCUMENT_VERSION = 4;
 
 export type DocumentParseResult =
   | { ok: true; doc: Document; warnings: string[] }

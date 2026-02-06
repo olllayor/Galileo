@@ -1,11 +1,13 @@
 import {
+	ENABLE_AUTO_SHADOWS_V2,
 	ENABLE_SHADOWS_V1,
 	buildWorldBoundsMap,
+	compileShadowEffects,
 	normalizeShadowEffects,
 	resolveShadowOverflow,
 	type WorldBoundsMap,
 } from '../../core/doc';
-import type { Color, Document, Node, ShadowEffect } from '../../core/doc/types';
+import type { Color, Document, Node, RenderableShadowEffect } from '../../core/doc/types';
 import type { DrawCommand, GradientPaint, GradientStop, Paint } from './types';
 
 type BuildDrawListOptions = {
@@ -264,9 +266,9 @@ const buildNodeCommandsFromBounds = (
 	}
 };
 
-const getRenderableEffects = (node: Node): ShadowEffect[] | undefined => {
+const getRenderableEffects = (node: Node): RenderableShadowEffect[] | undefined => {
 	if (!ENABLE_SHADOWS_V1) return undefined;
-	const effects = normalizeShadowEffects(node.effects);
+	const effects = ENABLE_AUTO_SHADOWS_V2 ? compileShadowEffects(node) : normalizeShadowEffects(node.effects);
 	return effects.length > 0 ? effects : undefined;
 };
 

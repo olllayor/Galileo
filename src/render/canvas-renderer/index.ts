@@ -5,7 +5,7 @@ import {
 	recordShadowCacheMiss,
 	recordShadowRenderDuration,
 } from '../../core/doc';
-import type { ShadowEffect } from '../../core/doc/types';
+import type { RenderableShadowEffect } from '../../core/doc/types';
 import type { DrawCommand, GradientPaint, Paint } from '../draw-list';
 
 type DrawableCommand = Extract<DrawCommand, { type: 'rect' | 'text' | 'ellipse' | 'image' | 'path' }>;
@@ -113,7 +113,7 @@ export class CanvasRenderer {
 		}
 	}
 
-	private drawDropShadow(command: DrawableCommand, effect: ShadowEffect): void {
+	private drawDropShadow(command: DrawableCommand, effect: RenderableShadowEffect): void {
 		if (this.canUseNativeDropShadow(command, effect)) {
 			this.drawNativeDropShadow(command, effect);
 			return;
@@ -121,11 +121,11 @@ export class CanvasRenderer {
 		this.drawRasterShadow(command, effect, 'drop');
 	}
 
-	private drawInnerShadow(command: DrawableCommand, effect: ShadowEffect): void {
+	private drawInnerShadow(command: DrawableCommand, effect: RenderableShadowEffect): void {
 		this.drawRasterShadow(command, effect, 'inner');
 	}
 
-	private drawRasterShadow(command: DrawableCommand, effect: ShadowEffect, kind: 'drop' | 'inner'): void {
+	private drawRasterShadow(command: DrawableCommand, effect: RenderableShadowEffect, kind: 'drop' | 'inner'): void {
 		const startedAt = performance.now();
 		const bounds = this.getCommandBounds(command);
 		if (!bounds) {
@@ -143,14 +143,14 @@ export class CanvasRenderer {
 		recordShadowRenderDuration(performance.now() - startedAt);
 	}
 
-	private canUseNativeDropShadow(command: DrawableCommand, effect: ShadowEffect): boolean {
+	private canUseNativeDropShadow(command: DrawableCommand, effect: RenderableShadowEffect): boolean {
 		if (effect.type !== 'drop') return false;
 		if (Math.abs(effect.spread) > 0.001) return false;
 		if ((effect.blendMode ?? 'normal') !== 'normal') return false;
 		return command.type === 'rect' || command.type === 'ellipse';
 	}
 
-	private drawNativeDropShadow(command: DrawableCommand, effect: ShadowEffect): void {
+	private drawNativeDropShadow(command: DrawableCommand, effect: RenderableShadowEffect): void {
 		this.ctx.save();
 		this.ctx.globalCompositeOperation = 'source-over';
 		this.ctx.globalAlpha *= Math.max(0, Math.min(1, effect.opacity));
@@ -183,7 +183,11 @@ export class CanvasRenderer {
 		}
 	}
 
-	private getShadowRaster(command: DrawableCommand, effect: ShadowEffect, kind: 'drop' | 'inner'): ShadowRaster | null {
+	private getShadowRaster(
+		command: DrawableCommand,
+		effect: RenderableShadowEffect,
+		kind: 'drop' | 'inner',
+	): ShadowRaster | null {
 		const bounds = this.getCommandBounds(command);
 		if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
 			return null;
@@ -507,7 +511,7 @@ export class CanvasRenderer {
 
 	private buildShadowCacheKey(
 		command: DrawableCommand,
-		effect: ShadowEffect,
+		effect: RenderableShadowEffect,
 		kind: 'drop' | 'inner',
 		raster: { width: number; height: number },
 	): string {
@@ -602,7 +606,7 @@ export class CanvasRenderer {
 		}
 	}
 
-	private computeShadowPadding(effect: ShadowEffect): number {
+	private computeShadowPadding(effect: RenderableShadowEffect): number {
 		const blur = Math.max(0, effect.blur);
 		const spread = Math.abs(effect.spread);
 		return Math.ceil(Math.abs(effect.x) + Math.abs(effect.y) + blur * 3 + spread * 2 + 8);
@@ -624,7 +628,7 @@ export class CanvasRenderer {
 		return canvas;
 	}
 
-	private getEnabledEffects(effects: ShadowEffect[] | undefined): ShadowEffect[] {
+	private getEnabledEffects(effects: RenderableShadowEffect[] | undefined): RenderableShadowEffect[] {
 		if (!effects || effects.length === 0) {
 			return [];
 		}
