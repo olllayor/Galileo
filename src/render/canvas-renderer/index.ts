@@ -149,11 +149,35 @@ export class CanvasRenderer {
   }
 
   private drawImage(command: Extract<DrawCommand, { type: 'image' }>): void {
-    const { x, y, width, height, src } = command;
+    const { x, y, width, height, src, maskSrc } = command;
     const img = this.getImage(src);
     if (!img.complete || img.naturalWidth === 0) {
       return;
     }
+
+    if (maskSrc) {
+      const mask = this.getImage(maskSrc);
+      if (!mask.complete || mask.naturalWidth === 0) {
+        return;
+      }
+      const offscreen = document.createElement('canvas');
+      const pixelW = Math.max(1, Math.round(width));
+      const pixelH = Math.max(1, Math.round(height));
+      offscreen.width = pixelW;
+      offscreen.height = pixelH;
+      const octx = offscreen.getContext('2d');
+      if (!octx) {
+        return;
+      }
+      octx.clearRect(0, 0, pixelW, pixelH);
+      octx.drawImage(img, 0, 0, pixelW, pixelH);
+      octx.globalCompositeOperation = 'destination-in';
+      octx.drawImage(mask, 0, 0, pixelW, pixelH);
+      octx.globalCompositeOperation = 'source-over';
+      this.ctx.drawImage(offscreen, x, y, width, height);
+      return;
+    }
+
     this.ctx.drawImage(img, x, y, width, height);
   }
 

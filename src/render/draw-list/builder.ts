@@ -166,6 +166,7 @@ const buildNodeCommandsFromBounds = (
 		});
 	} else if (node.type === 'image') {
 		const src = resolveImageSource(doc, node);
+		const maskSrc = resolveImageMaskSource(doc, node);
 		if (src) {
 			commands.push({
 				type: 'image',
@@ -174,6 +175,7 @@ const buildNodeCommandsFromBounds = (
 				width,
 				height,
 				src,
+				maskSrc,
 				opacity: node.opacity,
 			});
 		}
@@ -472,6 +474,18 @@ const resolveImageSource = (doc: Document, node: Node): string | null => {
 		}
 	}
 	return node.image?.src || null;
+};
+
+const resolveImageMaskSource = (doc: Document, node: Node): string | undefined => {
+	const maskAssetId = node.image?.maskAssetId;
+	if (!maskAssetId) {
+		return undefined;
+	}
+	const asset = doc.assets?.[maskAssetId];
+	if (asset && asset.type === 'image' && asset.dataBase64 && asset.mime) {
+		return `data:${asset.mime};base64,${asset.dataBase64}`;
+	}
+	return undefined;
 };
 
 export const colorToRGBA = (color: string): { r: number; g: number; b: number; a: number } => {

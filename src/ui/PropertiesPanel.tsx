@@ -31,6 +31,9 @@ interface PropertiesPanelProps {
 	onToggleCollapsed?: () => void;
 	onUpdateNode: (id: string, updates: Partial<Node>) => void;
 	onOpenPlugin?: (pluginId: string) => void;
+	onRemoveBackground?: (id: string) => void;
+	onClearBackground?: (id: string) => void;
+	isRemovingBackground?: boolean;
 	zoom?: number;
 }
 
@@ -62,6 +65,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	onToggleCollapsed,
 	onUpdateNode,
 	onOpenPlugin,
+	onRemoveBackground,
+	onClearBackground,
+	isRemovingBackground = false,
 	zoom = 1,
 }) => {
 	// Collapsed rail mode
@@ -219,6 +225,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	const currentConstraints: Constraints = selectedNode.constraints ?? { horizontal: 'left', vertical: 'top' };
 	const imageMeta = selectedNode.type === 'image' ? selectedNode.image?.meta : undefined;
 	const is3dIcon = imageMeta?.kind === '3d-icon';
+	const hasBgMask = selectedNode.type === 'image' && Boolean(selectedNode.image?.maskAssetId);
+	const bgRemoveMeta = selectedNode.type === 'image' ? selectedNode.image?.bgRemoveMeta : undefined;
 
 	const handleInputChange = (field: keyof Node, value: unknown) => {
 		onUpdateNode(selectedNode.id, { [field]: value });
@@ -1550,6 +1558,73 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					)}
 				</div>
 			</div>
+
+			{selectedNode.type === 'image' && (
+				<div style={{ marginBottom: spacing.lg }}>
+					<h4
+						style={{
+							margin: `0 0 ${spacing.sm} 0`,
+							fontSize: typography.fontSize.sm,
+							color: colors.text.secondary,
+							fontWeight: typography.fontWeight.medium,
+						}}
+					>
+						Background
+					</h4>
+					<div style={{ display: 'grid', gap: spacing.sm }}>
+						<button
+							type="button"
+							disabled={isRemovingBackground}
+							onClick={() => onRemoveBackground?.(selectedNode.id)}
+							style={{
+								padding: spacing.xs,
+								borderRadius: radii.sm,
+								border: `1px solid ${colors.border.default}`,
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.secondary,
+								fontSize: typography.fontSize.md,
+								cursor: isRemovingBackground ? 'not-allowed' : 'pointer',
+								width: '100%',
+							}}
+						>
+							{isRemovingBackground
+								? 'Removing background...'
+								: hasBgMask
+									? 'Re-run background removal'
+									: 'Remove background'}
+						</button>
+						{hasBgMask && (
+							<button
+								type="button"
+								disabled={isRemovingBackground}
+								onClick={() => onClearBackground?.(selectedNode.id)}
+								style={{
+									padding: spacing.xs,
+									borderRadius: radii.sm,
+									border: `1px solid ${colors.border.default}`,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.secondary,
+									fontSize: typography.fontSize.md,
+									cursor: isRemovingBackground ? 'not-allowed' : 'pointer',
+									width: '100%',
+								}}
+							>
+								Clear background removal
+							</button>
+						)}
+						{bgRemoveMeta && (
+							<div
+								style={{
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+								}}
+							>
+								Background removed (Apple Vision)
+							</div>
+						)}
+					</div>
+				</div>
+			)}
 
 			<div style={{ marginBottom: spacing.lg }}>
 				<h4

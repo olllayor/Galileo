@@ -3,11 +3,14 @@ name = "galileo"
 version = "0.1.0"
 edition = "2021"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
 [build-dependencies]
-tauri-build = { version = "2.0", features = [] }
+tauri-build = { version = "2.5.4", features = [] }
 
 [dependencies]
-tauri = { version = "2.1", features = [] }
+tauri = { version = "2.5.4", features = [] }
 tauri-plugin-shell = "2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -16,4 +19,8 @@ base64 = "0.22"
 image = { version = "0.25", default-features = false, features = [
   "png",
   "webp",
+  "jpeg",
 ] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"

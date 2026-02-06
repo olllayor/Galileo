@@ -5,6 +5,8 @@ use std::fs;
 use std::io::Cursor;
 use tauri::{path::BaseDirectory, Manager};
 
+mod background_remove;
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveDocumentArgs {
@@ -137,7 +139,7 @@ fn show_import_dialog() -> Result<Option<String>, String> {
     let dialog = rfd::FileDialog::new()
         .add_filter(
             "Images",
-            &["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "icns"],
+            &["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "icns", "heic", "heif"],
         )
         .set_title("Import Image")
         .pick_file();
@@ -245,6 +247,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
+            background_remove::remove_background,
             save_document,
             load_document,
             rename_document,

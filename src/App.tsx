@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { Canvas } from './ui/Canvas';
 import { ActionBar, type Tool } from './ui/ActionBar';
@@ -99,6 +100,12 @@ const AUTOSAVE_DELAY_MS = 1500;
 const ZOOM_SENSITIVITY = 0.0035;
 const TEXT_PADDING = 4;
 const CLIPBOARD_PREFIX = 'GALILEO_CLIPBOARD_V1:';
+type RemoveBackgroundResult = {
+	maskPngBase64: string;
+	width: number;
+	height: number;
+	revision?: number;
+};
 type DragState =
 	| {
 			mode: 'pan';
@@ -497,6 +504,10 @@ const getMimeType = (path: string): string => {
 			return 'image/x-icon';
 		case 'icns':
 			return 'image/icns';
+		case 'heic':
+			return 'image/heic';
+		case 'heif':
+			return 'image/heif';
 		default:
 			return 'application/octet-stream';
 	}
@@ -525,6 +536,37 @@ const getImageSize = (src: string): Promise<{ width: number; height: number }> =
 		};
 		img.src = src;
 	});
+};
+
+const resolveImageBytesForNode = async (
+	doc: Document,
+	node: Node,
+): Promise<{ dataBase64: string; mime: string | undefined }> => {
+	const image = node.image;
+	if (!image) {
+		throw new Error('Image data missing');
+	}
+
+	if (image.assetId) {
+		const asset = doc.assets?.[image.assetId];
+		if (asset && asset.type === 'image' && asset.dataBase64) {
+			return { dataBase64: asset.dataBase64, mime: asset.mime };
+		}
+	}
+
+	if (image.src && image.src.startsWith('data:')) {
+		const parsed = parseDataUrl(image.src);
+		if (parsed) {
+			return { dataBase64: parsed.dataBase64, mime: parsed.mime };
+		}
+	}
+
+	if (image.originalPath) {
+		const dataBase64 = await invoke<string>('load_binary', { path: image.originalPath });
+		return { dataBase64, mime: image.mime ?? getMimeType(image.originalPath) };
+	}
+
+	throw new Error('Image source missing');
 };
 
 const joinPath = (base: string, segment: string): string => {
@@ -757,6 +799,7 @@ export const App: React.FC = () => {
 	const [activePlugin, setActivePlugin] = useState<PluginRegistration | null>(null);
 	const [toastMessage, setToastMessage] = useState<string | null>(null);
 	const toastTimerRef = useRef<number | null>(null);
+	const [isRemovingBackground, setIsRemovingBackground] = useState(false);
 	const [leftPanelCollapsed, setLeftPanelCollapsed] = useState<boolean>(() => {
 		const stored = localStorage.getItem('galileo.ui.leftPanelCollapsed');
 		return stored === 'true';
@@ -771,6 +814,16 @@ export const App: React.FC = () => {
 	const clipboardRef = useRef<ClipboardPayload | null>(null);
 	const clipboardPasteCountRef = useRef(0);
 	const canvasSize = { width: 1280, height: 800 };
+
+	const showToast = useCallback((message: string) => {
+		setToastMessage(message);
+		if (toastTimerRef.current) {
+			window.clearTimeout(toastTimerRef.current);
+		}
+		toastTimerRef.current = window.setTimeout(() => {
+			setToastMessage(null);
+		}, 2400);
+	}, []);
 	const isDev = import.meta.env?.DEV ?? false;
 
 	const updateProjects = useCallback((updater: (prev: ProjectMeta[]) => ProjectMeta[]) => {
@@ -1279,6 +1332,129 @@ export const App: React.FC = () => {
 			view.pan.y,
 			view.zoom,
 		],
+	);
+
+	const clearBackgroundRemoval = useCallback(
+		(nodeId: string) => {
+			const node = document.nodes[nodeId];
+			if (!node || node.type !== 'image') {
+				return;
+			}
+			const image = node.image;
+			if (!image?.maskAssetId) {
+				return;
+			}
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Clear background removal',
+				type: 'setProps',
+				payload: {
+					id: nodeId,
+					props: {
+						image: {
+							...image,
+							maskAssetId: undefined,
+							bgRemoveMeta: undefined,
+						},
+					},
+				},
+			});
+		},
+		[document.nodes, executeCommand],
+	);
+
+	const removeBackgroundForImage = useCallback(
+		async (nodeId: string) => {
+			const node = document.nodes[nodeId];
+			if (!node || node.type !== 'image') {
+				return;
+			}
+			if (isRemovingBackground) {
+				return;
+			}
+			flushSync(() => {
+				setIsRemovingBackground(true);
+			});
+			await new Promise<void>((resolve) =>
+				requestAnimationFrame(() => {
+					setTimeout(resolve, 0);
+				}),
+			);
+			try {
+				const { dataBase64 } = await resolveImageBytesForNode(document, node);
+				const result = await invoke<RemoveBackgroundResult>('remove_background', {
+					args: { imageBase64: dataBase64 },
+				});
+
+				const maskAssetId = generateId();
+				const now = Date.now();
+				const commands: Command[] = [
+					{
+						id: generateId(),
+						timestamp: now,
+						source: 'user',
+						description: 'Create background mask asset',
+						type: 'createAsset',
+						payload: {
+							id: maskAssetId,
+							asset: {
+								type: 'image',
+								mime: 'image/png',
+								dataBase64: result.maskPngBase64,
+								width: result.width,
+								height: result.height,
+							},
+						},
+					},
+					{
+						id: generateId(),
+						timestamp: now,
+						source: 'user',
+						description: 'Apply background removal',
+						type: 'setProps',
+						payload: {
+							id: nodeId,
+							props: {
+								image: {
+									...(node.image || {}),
+									maskAssetId,
+									bgRemoveMeta: {
+										provider: 'apple-vision',
+										model: 'foreground-instance-mask',
+										revision: result.revision,
+										createdAt: now,
+									},
+								},
+							},
+						},
+					},
+				];
+
+				executeCommand({
+					id: generateId(),
+					timestamp: now,
+					source: 'user',
+					description: 'Remove background',
+					type: 'batch',
+					payload: { commands },
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				if (message.includes('unsupported_platform')) {
+					showToast('Background removal requires the macOS app (14+).');
+				} else if (message.includes('no_subject_detected')) {
+					showToast('No subject detected in this image.');
+				} else {
+					showToast('Background removal failed. Try re-importing the image.');
+				}
+				console.error('Background removal error:', error);
+			} finally {
+				setIsRemovingBackground(false);
+			}
+		},
+		[document, executeCommand, isRemovingBackground, showToast],
 	);
 
 	const getDefaultInsertPosition = useCallback(() => {
@@ -1914,12 +2090,14 @@ export const App: React.FC = () => {
 
 		const hasSelection = selectionIds.length > 0;
 		const canRename = selectionIds.length === 1;
+		const primaryId = selectionIds[0];
+		const primaryNode = primaryId ? document.nodes[primaryId] : null;
+		const isSingleImage = selectionIds.length === 1 && primaryNode?.type === 'image';
+		const hasBgMask = Boolean(primaryNode?.image?.maskAssetId);
 		const anyVisible = selectionIds.some((id) => document.nodes[id]?.visible !== false);
 		const anyUnlocked = selectionIds.some((id) => document.nodes[id]?.locked !== true);
 		const lockLabel = anyUnlocked ? 'Lock' : 'Unlock';
 		const visibleLabel = anyVisible ? 'Hide' : 'Show';
-
-		const primaryId = selectionIds[0];
 		let canMoveForward = false;
 		let canMoveBackward = false;
 		if (primaryId) {
@@ -1965,6 +2143,27 @@ export const App: React.FC = () => {
 				enabled: canRename,
 				onSelect: () => dispatchEditorAction({ type: 'rename' }),
 			},
+			...(isSingleImage
+				? [
+						{
+							icon: 'B',
+							label: hasBgMask ? 'Re-run background removal' : 'Remove background',
+							enabled: !isRemovingBackground,
+							onSelect: () => primaryId && removeBackgroundForImage(primaryId),
+						},
+						...(hasBgMask
+							? [
+									{
+										icon: 'C',
+										label: 'Clear background removal',
+										enabled: !isRemovingBackground,
+										onSelect: () => primaryId && clearBackgroundRemoval(primaryId),
+									},
+								]
+							: []),
+						{ separator: true } as ContextMenuItem,
+					]
+				: []),
 			{ separator: true },
 			{
 				icon: 'G',
@@ -2032,14 +2231,17 @@ export const App: React.FC = () => {
 		return [...selectionItems, { separator: true }, pluginMenu];
 	}, [
 		contextMenu?.target,
+		clearBackgroundRemoval,
 		devPlugins,
 		dispatchEditorAction,
 		document.nodes,
 		documentParentMap,
 		handleLoadDevPlugin,
 		isDev,
+		isRemovingBackground,
 		recentPlugins,
 		plugins,
+		removeBackgroundForImage,
 		runPlugin,
 		selectionIds,
 	]);
@@ -4473,9 +4675,15 @@ export const App: React.FC = () => {
 				height: '100vh',
 				overflow: 'hidden',
 				fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", sans-serif',
-				backgroundColor: '#1a1a1a',
+				background: 'linear-gradient(180deg, #1b1c1f 0%, #18191b 100%)',
 			}}
 		>
+			<style>{`
+				@keyframes bg-remove-progress {
+					0% { transform: translateX(-120%); }
+					100% { transform: translateX(280%); }
+				}
+			`}</style>
 			{/* Spacer for native macOS traffic lights */}
 			<div
 				style={{
@@ -4507,25 +4715,34 @@ export const App: React.FC = () => {
 					<div
 						style={{
 							display: 'flex',
-							alignItems: 'center',
-							height: '36px',
-							padding: '0 16px',
-							borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
-							backgroundColor: 'rgba(30, 30, 30, 0.9)',
+							flexDirection: 'column',
+							background: 'linear-gradient(180deg, rgba(34, 35, 38, 0.95) 0%, rgba(29, 30, 33, 0.92) 100%)',
+							backdropFilter: 'blur(20px)',
+							WebkitBackdropFilter: 'blur(20px)',
+							borderBottom: '1px solid rgba(255, 255, 255, 0.07)',
 						}}
 					>
-						<ProjectHandle
-							projectName={projectName}
-							fileName={fileName}
-							workspaceName={projectWorkspace}
-							env={projectEnv}
-							version={projectVersion}
-							breadcrumb={projectBreadcrumb}
-							onRename={handleRenameCurrentProject}
-							onDuplicate={handleDuplicateCurrentProject}
-						/>
+						<div
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								height: '36px',
+								padding: '0 14px',
+							}}
+						>
+							<ProjectHandle
+								projectName={projectName}
+								fileName={fileName}
+								workspaceName={projectWorkspace}
+								env={projectEnv}
+								version={projectVersion}
+								breadcrumb={projectBreadcrumb}
+								onRename={handleRenameCurrentProject}
+								onDuplicate={handleDuplicateCurrentProject}
+							/>
+						</div>
+						<ProjectTabs fileName={fileName} isDirty={isDirty} />
 					</div>
-					<ProjectTabs fileName={fileName} isDirty={isDirty} />
 					<div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 						<LayersPanel
 							document={displayDocument}
@@ -4589,6 +4806,9 @@ export const App: React.FC = () => {
 							onToggleCollapsed={toggleRightPanel}
 							onUpdateNode={handleUpdateNode}
 							onOpenPlugin={handleOpenPlugin}
+							onRemoveBackground={removeBackgroundForImage}
+							onClearBackground={clearBackgroundRemoval}
+							isRemovingBackground={isRemovingBackground}
 							zoom={zoom}
 						/>
 					</div>
@@ -4650,16 +4870,39 @@ export const App: React.FC = () => {
 							height: 28,
 							borderRadius: 8,
 							backgroundColor: '#ffffff',
-							color: '#ff5f5f',
-							fontWeight: 800,
 							display: 'grid',
 							placeItems: 'center',
-							fontSize: 12,
 						}}
 					>
-						3D
+						<img src="/logo.png" alt="Galileo" style={{ width: 18, height: 18 }} />
 					</div>
 					<div>{toastMessage}</div>
+				</div>
+			)}
+
+			{isRemovingBackground && (
+				<div
+					style={{
+						position: 'fixed',
+						left: 0,
+						right: 0,
+						top: 28,
+						height: 5,
+						backgroundColor: 'rgba(255,255,255,0.12)',
+						overflow: 'hidden',
+						zIndex: 1500,
+						pointerEvents: 'none',
+					}}
+				>
+					<div
+						style={{
+							height: '100%',
+							width: '35%',
+							background: 'linear-gradient(90deg, rgba(255,255,255,0.1), rgba(255,255,255,0.95), rgba(255,255,255,0.1))',
+							animation: 'bg-remove-progress 1s ease-in-out infinite',
+							boxShadow: '0 0 10px rgba(255,255,255,0.35)',
+						}}
+					/>
 				</div>
 			)}
 		</div>

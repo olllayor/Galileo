@@ -39,21 +39,6 @@ export const sizeSchema = z.object({
 
 export type Size = z.infer<typeof sizeSchema>;
 
-export const vectorPointSchema = z.object({
-	x: z.number(),
-	y: z.number(),
-});
-
-export const vectorDataSchema = z
-	.object({
-		points: vectorPointSchema.array(),
-		closed: z.boolean().optional(),
-	})
-	.passthrough();
-
-export type VectorPoint = z.infer<typeof vectorPointSchema>;
-export type VectorData = z.infer<typeof vectorDataSchema>;
-
 export const imageMeta3dIconSchema = z
 	.object({
 		kind: z.literal('3d-icon'),
@@ -71,6 +56,17 @@ export const imageMeta3dIconSchema = z
 export const imageMetaSchema = imageMeta3dIconSchema.optional();
 
 export type ImageMeta3dIcon = z.infer<typeof imageMeta3dIconSchema>;
+
+export const imageBgRemoveMetaSchema = z
+	.object({
+		provider: z.literal('apple-vision'),
+		model: z.literal('foreground-instance-mask'),
+		revision: z.number().int().optional(),
+		createdAt: z.number(),
+	})
+	.passthrough();
+
+export type ImageBgRemoveMeta = z.infer<typeof imageBgRemoveMetaSchema>;
 
 export const layoutSchema = z.object({
 	type: z.literal('auto'),
@@ -131,6 +127,21 @@ export const layoutGuideSchema = z.object({
 export type LayoutGuideType = z.infer<typeof layoutGuideTypeSchema>;
 export type LayoutGuide = z.infer<typeof layoutGuideSchema>;
 
+export const vectorPointSchema = z.object({
+	x: z.number(),
+	y: z.number(),
+});
+
+export const vectorDataSchema = z
+	.object({
+		points: vectorPointSchema.array(),
+		closed: z.boolean().optional(),
+	})
+	.passthrough();
+
+export type VectorPoint = z.infer<typeof vectorPointSchema>;
+export type VectorData = z.infer<typeof vectorDataSchema>;
+
 export const nodeSchema = z.object({
 	id: z.string(),
 	type: z.enum(['frame', 'group', 'rectangle', 'text', 'image', 'componentInstance', 'ellipse', 'path']),
@@ -160,6 +171,8 @@ export const nodeSchema = z.object({
 			originalPath: z.string().optional(),
 			assetId: z.string().optional(),
 			meta: imageMetaSchema.optional(),
+			maskAssetId: z.string().optional(),
+			bgRemoveMeta: imageBgRemoveMetaSchema.optional(),
 		})
 		.optional(),
 
@@ -174,10 +187,10 @@ export const nodeSchema = z.object({
 				.passthrough(),
 		])
 		.optional(),
+	vector: vectorDataSchema.optional(),
 
 	pathData: z.string().optional(),
 	d: z.string().optional(),
-	vector: vectorDataSchema.optional(),
 
 	componentId: z.string().optional(),
 	variant: z.record(z.any()).optional(),

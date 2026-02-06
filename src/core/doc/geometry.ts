@@ -235,7 +235,7 @@ export const buildWorldPositionMap = (doc: Document): WorldPositionMap => {
 
 export const buildWorldBoundsMap = (doc: Document, overrides?: BoundsOverrideMap): WorldBoundsMap => {
 	const boundsMap: WorldBoundsMap = {};
-	const layoutOverrides: BoundsOverrideMap = {};
+	const layoutOverrides: Record<string, Partial<Bounds>> = {};
 	const root = doc.nodes[doc.rootId];
 	if (!root) {
 		return boundsMap;

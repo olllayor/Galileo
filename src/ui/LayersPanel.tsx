@@ -390,7 +390,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 				style={{
 					width: `${panels.left.collapsedWidth}px`,
 					borderRight: `1px solid ${colors.border.subtle}`,
-					backgroundColor: colors.bg.secondary,
+					backgroundColor: 'rgba(25, 26, 28, 0.92)',
 					display: 'flex',
 					flexDirection: 'column',
 					alignItems: 'center',
@@ -428,7 +428,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 						display: 'flex',
 						alignItems: 'center',
 						justifyContent: 'center',
-						backgroundColor: colors.bg.active,
+						backgroundColor: 'rgba(255, 255, 255, 0.05)',
 						borderRadius: radii.md,
 						fontSize: typography.fontSize.xs,
 						fontWeight: typography.fontWeight.semibold,
@@ -475,7 +475,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 			style={{
 				width: `${panels.left.width}px`,
 				borderRight: `1px solid ${colors.border.subtle}`,
-				backgroundColor: colors.bg.secondary,
+				backgroundColor: 'rgba(25, 26, 28, 0.92)',
 				display: 'flex',
 				flexDirection: 'column',
 				overflow: 'hidden',
@@ -486,20 +486,20 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 			{/* Panel Header */}
 			<div
 				style={{
-					padding: `${spacing.sm} ${spacing.md}`,
-					fontSize: typography.fontSize.sm,
-					fontWeight: typography.fontWeight.medium,
+					height: '40px',
+					padding: `0 ${spacing.md}`,
+					fontSize: typography.fontSize.lg,
+					fontWeight: typography.fontWeight.semibold,
 					color: colors.text.secondary,
 					borderBottom: `1px solid ${colors.border.subtle}`,
 					position: 'sticky',
 					top: 0,
-					backgroundColor: colors.bg.secondary,
+					backgroundColor: 'rgba(25, 26, 28, 0.94)',
 					zIndex: 1,
 					display: 'flex',
 					alignItems: 'center',
 					justifyContent: 'space-between',
-					textTransform: 'uppercase',
-					letterSpacing: '0.5px',
+					letterSpacing: '0.2px',
 				}}
 			>
 				<span>Layers</span>

@@ -70,6 +70,7 @@ export interface DrawImageCommand {
   width: number;
   height: number;
   src: string;
+  maskSrc?: string;
   opacity?: number;
 }
 

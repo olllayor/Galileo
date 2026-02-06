@@ -169,7 +169,9 @@ export const exportNodeSnapshot = async (
 		includeFrameFill: options.includeFrameFill,
 		clipToBounds: options.clipToBounds,
 	});
-	const imageSources = commands.filter((cmd): cmd is DrawImageCommand => cmd.type === 'image').map((cmd) => cmd.src);
+	const imageSources = commands
+		.filter((cmd): cmd is DrawImageCommand => cmd.type === 'image')
+		.flatMap((cmd) => [cmd.src, cmd.maskSrc].filter(Boolean) as string[]);
 	await preloadImages(imageSources);
 
 	const renderer = new CanvasRenderer(canvas);

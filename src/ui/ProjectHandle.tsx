@@ -18,15 +18,29 @@ interface ProjectHandleProps {
 const badgeStyle = {
 	display: 'inline-flex',
 	alignItems: 'center',
-	height: '20px',
-	padding: '0 8px',
+	height: '18px',
+	padding: '0 7px',
 	borderRadius: radii.full,
 	border: `1px solid ${colors.border.subtle}`,
 	fontSize: typography.fontSize.xs,
-	letterSpacing: '0.2px',
+	letterSpacing: '0.5px',
 	textTransform: 'uppercase' as const,
 	color: colors.text.secondary,
+	backgroundColor: 'rgba(255, 255, 255, 0.015)',
 };
+
+const actionStyle: React.CSSProperties = {
+	padding: 0,
+	border: 'none',
+	background: 'transparent',
+	color: colors.text.secondary,
+	fontSize: typography.fontSize.sm,
+	fontWeight: typography.fontWeight.medium,
+	cursor: 'pointer',
+	transition: `color ${transitions.fast}`,
+};
+
+const normalizeProjectName = (value: string): string => value.trim().toLowerCase().replace(/\.galileo$/i, '');
 
 export const ProjectHandle: React.FC<ProjectHandleProps> = ({
 	projectName,
@@ -43,6 +57,9 @@ export const ProjectHandle: React.FC<ProjectHandleProps> = ({
 	const [isEditing, setIsEditing] = useState(false);
 	const [draftName, setDraftName] = useState(projectName);
 	const inputRef = useRef<HTMLInputElement>(null);
+	const showFileName =
+		fileName.trim().length > 0 && normalizeProjectName(fileName) !== normalizeProjectName(projectName);
+	const showWorkspace = workspaceName.trim().length > 0 && workspaceName.trim().toLowerCase() !== 'local';
 
 	useEffect(() => {
 		setDraftName(projectName);
@@ -69,12 +86,12 @@ export const ProjectHandle: React.FC<ProjectHandleProps> = ({
 			style={{
 				display: 'flex',
 				alignItems: 'center',
-				gap: spacing.sm,
+				gap: spacing.md,
 				flex: 1,
 				minWidth: 0,
 			}}
 		>
-			<div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm, minWidth: 0 }}>
+			<div style={{ display: 'flex', alignItems: 'center', gap: spacing.md, minWidth: 0 }}>
 				<div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs, minWidth: 0 }}>
 					{isEditing ? (
 						<input
@@ -93,12 +110,12 @@ export const ProjectHandle: React.FC<ProjectHandleProps> = ({
 								}
 							}}
 							style={{
-								width: '180px',
+								width: '190px',
 								backgroundColor: colors.bg.primary,
 								border: `1px solid ${colors.border.default}`,
 								borderRadius: radii.md,
 								padding: `0 ${spacing.sm}`,
-								height: '24px',
+								height: '22px',
 								fontSize: typography.fontSize.lg,
 								color: colors.text.primary,
 							}}
@@ -125,33 +142,39 @@ export const ProjectHandle: React.FC<ProjectHandleProps> = ({
 							{projectName}
 						</button>
 					)}
-					<span style={{ color: colors.text.tertiary, fontSize: typography.fontSize.lg }}>—</span>
+					{showFileName ? (
+						<>
+							<span style={{ color: colors.text.tertiary, fontSize: typography.fontSize.lg }}>-</span>
+							<span
+								style={{
+									fontSize: typography.fontSize.lg,
+									color: colors.text.secondary,
+									textOverflow: 'ellipsis',
+									overflow: 'hidden',
+									whiteSpace: 'nowrap',
+									maxWidth: '200px',
+								}}
+							>
+								{fileName}
+							</span>
+						</>
+					) : null}
+				</div>
+				{showWorkspace ? (
 					<span
 						style={{
-							fontSize: typography.fontSize.md,
-							color: colors.text.secondary,
-							textOverflow: 'ellipsis',
-							overflow: 'hidden',
-							whiteSpace: 'nowrap',
-							maxWidth: '200px',
+							fontSize: typography.fontSize.lg,
+							color: colors.text.tertiary,
+							paddingLeft: spacing.xs,
+							borderLeft: `1px solid ${colors.border.subtle}`,
 						}}
 					>
-						{fileName}
+						{workspaceName}
 					</span>
-				</div>
-				<span
-					style={{
-						fontSize: typography.fontSize.sm,
-						color: colors.text.tertiary,
-						paddingLeft: spacing.xs,
-						borderLeft: `1px solid ${colors.border.subtle}`,
-					}}
-				>
-					{workspaceName}
-				</span>
+				) : null}
 			</div>
 
-			<div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs }}>
+			<div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm }}>
 				<span style={{ ...badgeStyle }}>{env}</span>
 				<span style={{ ...badgeStyle }}>{version}</span>
 			</div>
@@ -159,37 +182,8 @@ export const ProjectHandle: React.FC<ProjectHandleProps> = ({
 			<div style={{ display: 'flex', alignItems: 'center', gap: spacing.md, marginLeft: spacing.md }}>
 				<button
 					type="button"
-					onClick={() => setIsEditing(true)}
-					style={{
-						padding: 0,
-						border: 'none',
-						background: 'transparent',
-						color: colors.text.secondary,
-						fontSize: typography.fontSize.sm,
-						cursor: 'pointer',
-						transition: `color ${transitions.fast}`,
-					}}
-					onMouseEnter={(e) => {
-						e.currentTarget.style.color = colors.text.primary;
-					}}
-					onMouseLeave={(e) => {
-						e.currentTarget.style.color = colors.text.secondary;
-					}}
-				>
-					Rename
-				</button>
-				<button
-					type="button"
 					onClick={onDuplicate}
-					style={{
-						padding: 0,
-						border: 'none',
-						background: 'transparent',
-						color: colors.text.secondary,
-						fontSize: typography.fontSize.sm,
-						cursor: 'pointer',
-						transition: `color ${transitions.fast}`,
-					}}
+					style={actionStyle}
 					onMouseEnter={(e) => {
 						e.currentTarget.style.color = colors.text.primary;
 					}}
@@ -205,13 +199,9 @@ export const ProjectHandle: React.FC<ProjectHandleProps> = ({
 					disabled={!onSnapshot}
 					title={onSnapshot ? 'Create snapshot' : 'Snapshots in v1 are not yet available'}
 					style={{
-						padding: 0,
-						border: 'none',
-						background: 'transparent',
+						...actionStyle,
 						color: onSnapshot ? colors.text.secondary : colors.text.disabled,
-						fontSize: typography.fontSize.sm,
 						cursor: onSnapshot ? 'pointer' : 'default',
-						transition: `color ${transitions.fast}`,
 					}}
 					onMouseEnter={(e) => {
 						if (onSnapshot) e.currentTarget.style.color = colors.text.primary;
@@ -228,13 +218,9 @@ export const ProjectHandle: React.FC<ProjectHandleProps> = ({
 					disabled={!onSettings}
 					title={onSettings ? 'Project settings' : 'Project settings in v1 are not yet available'}
 					style={{
-						padding: 0,
-						border: 'none',
-						background: 'transparent',
+						...actionStyle,
 						color: onSettings ? colors.text.secondary : colors.text.disabled,
-						fontSize: typography.fontSize.sm,
 						cursor: onSettings ? 'pointer' : 'default',
-						transition: `color ${transitions.fast}`,
 					}}
 					onMouseEnter={(e) => {
 						if (onSettings) e.currentTarget.style.color = colors.text.primary;

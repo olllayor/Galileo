@@ -117,7 +117,7 @@ export class GeometryCache {
 		this.boundsMap = {};
 		this.parentMap = {};
 		this.dirtyNodes.clear();
-		const layoutOverrides: BoundsOverrideMap = {};
+		const layoutOverrides: Record<string, Partial<{ x: number; y: number; width: number; height: number }>> = {};
 
 		const root = doc.nodes[doc.rootId];
 		if (!root) return;
