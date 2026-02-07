@@ -95,7 +95,8 @@ const clamp = (value: number, min: number, max: number): number => {
 const HANDLE_HIT_SIZE = 14;
 const HIT_SLOP_PX = 6;
 const EDGE_MIN_PX = 6;
-const AUTOSAVE_KEY = 'galileo.autosave.v1';
+const LEGACY_AUTOSAVE_KEY = 'galileo.autosave.v1';
+const UNTITLED_DRAFT_KEY = 'untitled';
 const AUTOSAVE_DELAY_MS = 1500;
 const ZOOM_SENSITIVITY = 0.0035;
 const TEXT_PADDING = 4;
@@ -135,6 +136,14 @@ type UnsplashFetchImageResult = {
 	mime: string;
 	width: number;
 	height: number;
+};
+type DraftPayload = {
+	key: string;
+	path?: string | null;
+	content: string;
+	savedAtMs: number;
+	compressedBytes: number;
+	uncompressedBytes: number;
 };
 type DragState =
 	| {
@@ -213,6 +222,13 @@ type ClipboardPayload = {
 	bounds: Bounds;
 	rootWorldPositions: Record<string, { x: number; y: number }>;
 	parentId: string | null;
+};
+
+const buildDraftKey = (path: string | null): string => {
+	if (!path) {
+		return UNTITLED_DRAFT_KEY;
+	}
+	return `path:${path}`;
 };
 
 const cloneShadowEffects = (effects: ShadowEffect[] | undefined): ShadowEffect[] | null => {
@@ -1031,6 +1047,28 @@ export const App: React.FC = () => {
 		},
 		[updateProjects],
 	);
+
+	const saveDraftSnapshot = useCallback(async (snapshot: { key: string; path: string | null; content: string }) => {
+		try {
+			await invoke('save_draft', {
+				args: {
+					key: snapshot.key,
+					path: snapshot.path,
+					content: snapshot.content,
+				},
+			});
+		} catch (error) {
+			console.warn('Failed to save draft', error);
+		}
+	}, []);
+
+	const deleteDraftByKey = useCallback(async (key: string) => {
+		try {
+			await invoke('delete_draft', { args: { key } });
+		} catch (error) {
+			console.warn('Failed to delete draft', error);
+		}
+	}, []);
 
 	const handleProjectsSearchChange = useCallback((value: string) => {
 		setProjectsSearch(value);
@@ -4123,13 +4161,56 @@ export const App: React.FC = () => {
 		[executeCommand],
 	);
 
-	const confirmDiscard = useCallback(
-		(actionLabel: string) => {
-			if (!isDirty) return true;
-			return window.confirm(`You have unsaved changes. Discard them and ${actionLabel}?`);
-		},
-		[isDirty],
-	);
+	const persistDraftIfNeeded = useCallback(async () => {
+		if (appView !== 'editor' || !isDirty) {
+			return;
+		}
+		await saveDraftSnapshot({
+			key: buildDraftKey(currentPath),
+			path: currentPath,
+			content: serializeDocument(document),
+		});
+	}, [appView, currentPath, document, isDirty, saveDraftSnapshot]);
+
+	const flushDraftNow = useCallback(() => {
+		void persistDraftIfNeeded();
+	}, [persistDraftIfNeeded]);
+
+	const persistCurrentWorkBeforeNavigation = useCallback(async () => {
+		if (appView !== 'editor' || !isDirty) {
+			return;
+		}
+
+		const content = serializeDocument(document);
+
+		if (currentPath) {
+			try {
+				await invoke('save_document', {
+					args: {
+						path: currentPath,
+						content,
+					},
+				});
+				await deleteDraftByKey(buildDraftKey(currentPath));
+				return;
+			} catch (error) {
+				console.warn('Failed to save current project before navigation; falling back to draft', error);
+			}
+		}
+
+		await saveDraftSnapshot({
+			key: buildDraftKey(currentPath),
+			path: currentPath,
+			content,
+		});
+	}, [
+		appView,
+		currentPath,
+		deleteDraftByKey,
+		document,
+		isDirty,
+		saveDraftSnapshot,
+	]);
 
 	const applyLoadedDocument = useCallback(
 		(doc: Document, path: string | null) => {
@@ -4143,7 +4224,6 @@ export const App: React.FC = () => {
 			setSnapGuides([]);
 			setHoverHandle(null);
 			setHoverHit(null);
-			localStorage.removeItem(AUTOSAVE_KEY);
 		},
 		[replaceDocument, markSaved],
 	);
@@ -4172,20 +4252,62 @@ export const App: React.FC = () => {
 		[applyLoadedDocument],
 	);
 
+	const tryRestoreDraftForPath = useCallback(
+		async (path: string): Promise<boolean> => {
+			try {
+				const key = buildDraftKey(path);
+				const draft = await invoke<DraftPayload | null>('load_draft', { args: { key } });
+				if (!draft?.content) {
+					return false;
+				}
+
+				const fileMtime = await invoke<number | null>('get_file_mtime', { path });
+				if (fileMtime !== null && draft.savedAtMs <= fileMtime) {
+					return false;
+				}
+
+				const restore = window.confirm('A newer recovered draft exists for this file. Restore it?');
+				if (!restore) {
+					return false;
+				}
+
+				const parsed = parseDocumentText(draft.content);
+				if (!parsed.ok) {
+					alert(`Failed to restore draft: ${parsed.error}`);
+					return false;
+				}
+
+				applyLoadedDocument(parsed.doc, path);
+				markDirty();
+				return true;
+			} catch (error) {
+				console.warn('Failed to restore project draft', error);
+				return false;
+			}
+		},
+		[applyLoadedDocument, markDirty],
+	);
+
 	const openProjectPath = useCallback(
 		async (path: string) => {
-			if (!confirmDiscard('open another file')) return false;
+			await persistCurrentWorkBeforeNavigation();
+			const restored = await tryRestoreDraftForPath(path);
+			if (restored) {
+				registerProjectOpened(path);
+				setAppView('editor');
+				return true;
+			}
 			const ok = await loadDocumentFromPath(path);
 			if (!ok) return false;
 			registerProjectOpened(path);
 			setAppView('editor');
 			return true;
 		},
-		[confirmDiscard, loadDocumentFromPath, registerProjectOpened],
+		[loadDocumentFromPath, persistCurrentWorkBeforeNavigation, registerProjectOpened, tryRestoreDraftForPath],
 	);
 
 	const handleCreateProject = useCallback(async () => {
-		if (!confirmDiscard('create a new project')) return;
+		await persistCurrentWorkBeforeNavigation();
 		const pickedPath = await invoke<string>('show_save_dialog');
 		if (!pickedPath) {
 			return;
@@ -4203,7 +4325,7 @@ export const App: React.FC = () => {
 			console.error('Create project error:', error);
 			alert('Failed to create project');
 		}
-	}, [applyLoadedDocument, confirmDiscard, ensureGalileoExtension, registerProjectOpened]);
+	}, [applyLoadedDocument, ensureGalileoExtension, persistCurrentWorkBeforeNavigation, registerProjectOpened]);
 
 	const handleOpenFile = useCallback(async () => {
 		const path = await invoke<string>('show_open_dialog');
@@ -4302,12 +4424,14 @@ export const App: React.FC = () => {
 	);
 
 	const handleBackToProjects = useCallback(() => {
-		if (!confirmDiscard('return to Projects')) return;
-		setContextMenu(null);
-		setActivePlugin(null);
-		setPluginManagerOpen(false);
-		setAppView('projects');
-	}, [confirmDiscard]);
+		void (async () => {
+			await persistCurrentWorkBeforeNavigation();
+			setContextMenu(null);
+			setActivePlugin(null);
+			setPluginManagerOpen(false);
+			setAppView('projects');
+		})();
+	}, [persistCurrentWorkBeforeNavigation]);
 
 	const handleRenameCurrentProject = useCallback(
 		(nextName: string) => {
@@ -4326,6 +4450,7 @@ export const App: React.FC = () => {
 
 	const handleSave = useCallback(async () => {
 		try {
+			const previousPath = currentPath;
 			let path = currentPath;
 			let pickedPath: string | null = null;
 			if (!path) {
@@ -4344,13 +4469,14 @@ export const App: React.FC = () => {
 				registerProjectOpened(path);
 			}
 			markSaved();
-			localStorage.removeItem(AUTOSAVE_KEY);
+			const keysToClear = new Set([buildDraftKey(previousPath), buildDraftKey(path)]);
+			await Promise.all(Array.from(keysToClear).map((key) => deleteDraftByKey(key)));
 			alert('Document saved successfully!');
 		} catch (error) {
 			console.error('Save error:', error);
 			alert('Failed to save document');
 		}
-	}, [document, currentPath, ensureGalileoExtension, markSaved, registerProjectOpened]);
+	}, [currentPath, deleteDraftByKey, document, ensureGalileoExtension, markSaved, registerProjectOpened]);
 
 	const handleImportImage = useCallback(async () => {
 		try {
@@ -4445,25 +4571,20 @@ export const App: React.FC = () => {
 	}, [fileName, isDirty]);
 
 	useEffect(() => {
-		if (!isDirty) {
+		if (appView !== 'editor' || !isDirty) {
 			return;
 		}
 
 		const handle = window.setTimeout(() => {
-			try {
-				const payload = {
-					content: serializeDocument(document),
-					path: currentPath,
-					timestamp: Date.now(),
-				};
-				localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(payload));
-			} catch (error) {
-				console.warn('Failed to autosave document', error);
-			}
+			void saveDraftSnapshot({
+				key: buildDraftKey(currentPath),
+				path: currentPath,
+				content: serializeDocument(document),
+			});
 		}, AUTOSAVE_DELAY_MS);
 
 		return () => window.clearTimeout(handle);
-	}, [document, currentPath, isDirty]);
+	}, [appView, currentPath, document, isDirty, saveDraftSnapshot]);
 
 	useEffect(() => {
 		if (appView !== 'editor') return;
@@ -4655,43 +4776,86 @@ export const App: React.FC = () => {
 	}, [appView, insertImageNode, panOffset.x, panOffset.y, zoom]);
 
 	useEffect(() => {
+		const onBlur = () => {
+			flushDraftNow();
+		};
+		window.addEventListener('blur', onBlur);
+		return () => window.removeEventListener('blur', onBlur);
+	}, [flushDraftNow]);
+
+	useEffect(() => {
 		const beforeUnload = (event: BeforeUnloadEvent) => {
 			if (!isDirty) return;
+			flushDraftNow();
 			event.preventDefault();
 			event.returnValue = '';
 		};
 
 		window.addEventListener('beforeunload', beforeUnload);
 		return () => window.removeEventListener('beforeunload', beforeUnload);
-	}, [isDirty]);
+	}, [flushDraftNow, isDirty]);
 
 	useEffect(() => {
-		const raw = localStorage.getItem(AUTOSAVE_KEY);
-		if (!raw) return;
+		let cancelled = false;
 
-		try {
-			const parsed = JSON.parse(raw) as { content?: string; path?: string; timestamp?: number };
-			if (!parsed.content) return;
+		const migrateLegacyAutosave = async () => {
+			const raw = localStorage.getItem(LEGACY_AUTOSAVE_KEY);
+			if (!raw) return;
 
-			const result = parseDocumentText(parsed.content);
-			if (!result.ok) {
-				localStorage.removeItem(AUTOSAVE_KEY);
-				return;
+			try {
+				const parsed = JSON.parse(raw) as { content?: string; path?: string; timestamp?: number };
+				if (!parsed.content) return;
+				await saveDraftSnapshot({
+					key: buildDraftKey(parsed.path ?? null),
+					path: parsed.path ?? null,
+					content: parsed.content,
+				});
+			} catch (error) {
+				console.warn('Failed to migrate legacy autosave', error);
+			} finally {
+				localStorage.removeItem(LEGACY_AUTOSAVE_KEY);
 			}
+		};
 
-			const confirmed = window.confirm('Recovered unsaved changes were found. Restore them?');
-			if (!confirmed) {
-				localStorage.removeItem(AUTOSAVE_KEY);
-				return;
+		const restoreUntitledDraft = async () => {
+			try {
+				const draft = await invoke<DraftPayload | null>('load_draft', {
+					args: { key: UNTITLED_DRAFT_KEY },
+				});
+				if (!draft?.content || cancelled) {
+					return;
+				}
+
+				const confirmed = window.confirm('Recovered unsaved changes were found. Restore them?');
+				if (!confirmed || cancelled) {
+					return;
+				}
+
+				const result = parseDocumentText(draft.content);
+				if (!result.ok) {
+					console.warn('Recovered draft is invalid', result.error);
+					return;
+				}
+
+				applyLoadedDocument(result.doc, draft.path ?? null);
+				markDirty();
+				setAppView('editor');
+			} catch (error) {
+				console.warn('Failed to restore draft', error);
 			}
+		};
 
-			replaceDocument(result.doc);
-			setCurrentPath(parsed.path || null);
-			markDirty();
-		} catch (error) {
-			console.warn('Failed to restore autosave', error);
-		}
-	}, [replaceDocument, markDirty]);
+		void (async () => {
+			await migrateLegacyAutosave();
+			if (!cancelled) {
+				await restoreUntitledDraft();
+			}
+		})();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [applyLoadedDocument, markDirty, saveDraftSnapshot]);
 
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {

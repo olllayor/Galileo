@@ -6,6 +6,7 @@ use std::io::Cursor;
 use tauri::{path::BaseDirectory, Manager};
 
 mod background_remove;
+mod draft_store;
 mod unsplash;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -312,6 +313,11 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             background_remove::remove_background,
+            draft_store::save_draft,
+            draft_store::load_draft,
+            draft_store::delete_draft,
+            draft_store::list_drafts,
+            draft_store::get_file_mtime,
             save_document,
             load_document,
             rename_document,
