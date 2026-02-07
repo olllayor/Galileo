@@ -2,6 +2,7 @@ import type { Document, Node } from '../../core/doc/types';
 import { createNode, findParentNode } from '../../core/doc';
 import type { WorldBoundsMap } from '../../core/doc';
 import { getNodePathData } from '../../core/doc/vector';
+import type { VectorPoint } from '../../core/doc/types';
 
 export interface Tool {
 	type: 'select' | 'rectangle' | 'text' | 'frame' | 'pen';
@@ -102,6 +103,15 @@ export interface HitTestOptions {
 	edgeMinPx?: number;
 	boundsMap?: WorldBoundsMap;
 }
+
+export type VectorSegmentHit = {
+	fromPointId: string;
+	toPointId: string;
+	x: number;
+	y: number;
+	t: number;
+	distancePx: number;
+};
 
 type WorldPoint = { x: number; y: number };
 type WorldTransform = { x: number; y: number; scaleX: number; scaleY: number };
@@ -341,7 +351,15 @@ const hitTestNodeShape = (
 		case 'ellipse':
 			return hitTestEllipse(node, localPoint, transform, context, Boolean(node.fill), sizeOverride);
 		case 'path':
-			return hitTestPath(doc, node, localPoint, transform, context, Boolean(node.fill), sizeOverride);
+			return hitTestPath(
+				doc,
+				node,
+				localPoint,
+				transform,
+				context,
+				Boolean(node.fill) && (node.vector ? node.vector.closed : true),
+				sizeOverride,
+			);
 		case 'boolean':
 			return hitTestPath(doc, node, localPoint, transform, context, Boolean(node.fill), sizeOverride);
 		case 'text':
@@ -614,6 +632,141 @@ const isDescendantOf = (doc: Document, nodeId: string, ancestorId: string): bool
 	}
 	if (current === ancestorId) return true;
 	return false;
+};
+
+const cubicPointAt = (
+	p0: { x: number; y: number },
+	p1: { x: number; y: number },
+	p2: { x: number; y: number },
+	p3: { x: number; y: number },
+	t: number,
+): { x: number; y: number } => {
+	const mt = 1 - t;
+	const mt2 = mt * mt;
+	const t2 = t * t;
+	const a = mt2 * mt;
+	const b = 3 * mt2 * t;
+	const c = 3 * mt * t2;
+	const d = t * t2;
+	return {
+		x: a * p0.x + b * p1.x + c * p2.x + d * p3.x,
+		y: a * p0.y + b * p1.y + c * p2.y + d * p3.y,
+	};
+};
+
+const projectPointToLineSegment = (
+	point: { x: number; y: number },
+	a: { x: number; y: number },
+	b: { x: number; y: number },
+): { x: number; y: number; t: number; distanceSq: number } => {
+	const dx = b.x - a.x;
+	const dy = b.y - a.y;
+	const lenSq = dx * dx + dy * dy;
+	if (lenSq <= 0.000001) {
+		const ddx = point.x - a.x;
+		const ddy = point.y - a.y;
+		return { x: a.x, y: a.y, t: 0, distanceSq: ddx * ddx + ddy * ddy };
+	}
+	const rawT = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lenSq;
+	const t = Math.max(0, Math.min(1, rawT));
+	const x = a.x + dx * t;
+	const y = a.y + dy * t;
+	const ddx = point.x - x;
+	const ddy = point.y - y;
+	return { x, y, t, distanceSq: ddx * ddx + ddy * ddy };
+};
+
+export const hitTestVectorSegment = (
+	screenX: number,
+	screenY: number,
+	points: VectorPoint[],
+	closed: boolean,
+	nodeWorld: { x: number; y: number },
+	view: { pan: { x: number; y: number }; zoom: number },
+	hitThresholdPx = 8,
+): VectorSegmentHit | null => {
+	if (points.length < 2) return null;
+
+	const worldPoints = points.map((point) => ({
+		...point,
+		x: nodeWorld.x + point.x,
+		y: nodeWorld.y + point.y,
+		inHandle: point.inHandle
+			? { x: nodeWorld.x + point.inHandle.x, y: nodeWorld.y + point.inHandle.y }
+			: undefined,
+		outHandle: point.outHandle
+			? { x: nodeWorld.x + point.outHandle.x, y: nodeWorld.y + point.outHandle.y }
+			: undefined,
+	}));
+	const screenTarget = {
+		x: screenX,
+		y: screenY,
+	};
+
+	const edgeCount = closed ? worldPoints.length : worldPoints.length - 1;
+	const maxDistSq = hitThresholdPx * hitThresholdPx;
+	let best: VectorSegmentHit | null = null;
+	let bestDistance = Number.POSITIVE_INFINITY;
+
+	const toScreen = (worldPoint: { x: number; y: number }) => ({
+		x: worldPoint.x * view.zoom + view.pan.x,
+		y: worldPoint.y * view.zoom + view.pan.y,
+	});
+
+	for (let index = 0; index < edgeCount; index += 1) {
+		const from = worldPoints[index];
+		const to = worldPoints[(index + 1) % worldPoints.length];
+		if (!from || !to) continue;
+
+		const fromOut = from.outHandle ?? { x: from.x, y: from.y };
+		const toIn = to.inHandle ?? { x: to.x, y: to.y };
+		const curved = Boolean(from.outHandle || to.inHandle);
+
+		if (!curved) {
+			const projection = projectPointToLineSegment(screenTarget, toScreen(from), toScreen(to));
+			if (projection.distanceSq <= maxDistSq && projection.distanceSq < bestDistance) {
+				const localT = projection.t;
+				bestDistance = projection.distanceSq;
+				best = {
+					fromPointId: from.id,
+					toPointId: to.id,
+					x: from.x + (to.x - from.x) * localT,
+					y: from.y + (to.y - from.y) * localT,
+					t: localT,
+					distancePx: Math.sqrt(projection.distanceSq),
+				};
+			}
+			continue;
+		}
+
+		const curveSamples = 24;
+		let last = toScreen(from);
+		let traveledT = 0;
+		for (let step = 1; step <= curveSamples; step += 1) {
+			const t = step / curveSamples;
+			const curvePoint = cubicPointAt(from, fromOut, toIn, to, t);
+			const screenPoint = toScreen(curvePoint);
+			const projection = projectPointToLineSegment(screenTarget, last, screenPoint);
+			if (projection.distanceSq <= maxDistSq && projection.distanceSq < bestDistance) {
+				const segmentT = projection.t;
+				const resolvedT = traveledT + (t - traveledT) * segmentT;
+				const worldPoint = cubicPointAt(from, fromOut, toIn, to, resolvedT);
+				bestDistance = projection.distanceSq;
+				best = {
+					fromPointId: from.id,
+					toPointId: to.id,
+					x: worldPoint.x,
+					y: worldPoint.y,
+					t: resolvedT,
+					distancePx: Math.sqrt(projection.distanceSq),
+				};
+			}
+			last = screenPoint;
+			traveledT = t;
+		}
+	}
+
+	return best;
 };
 
 /**

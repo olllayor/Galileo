@@ -260,7 +260,9 @@ const buildNodeCommandsFromBounds = (
 		}
 	} else if (node.type === 'path') {
 		const pathData = getNodePathData(node, doc);
-		if (pathData && (node.fill || node.stroke)) {
+		const allowFill = node.vector ? node.vector.closed : true;
+		const fill = allowFill ? node.fill : undefined;
+		if (pathData && (fill || node.stroke)) {
 			commands.push({
 				type: 'path',
 				nodeId: node.id,
@@ -269,15 +271,15 @@ const buildNodeCommandsFromBounds = (
 				y,
 				width,
 				height,
-				fill: node.fill ? colorToPaint(node.fill) : undefined,
+				fill: fill ? colorToPaint(fill) : undefined,
 				stroke: node.stroke ? colorToPaint(node.stroke.color) : undefined,
 				strokeWidth: node.stroke?.width,
 				opacity: node.opacity,
 				fillRule: pathData.fillRule,
 				effects: getRenderableEffects(node),
 			});
-		} else if (node.fill) {
-			const color = colorToPaint(node.fill);
+		} else if (fill) {
+			const color = colorToPaint(fill);
 			commands.push({
 				type: 'rect',
 				nodeId: node.id,

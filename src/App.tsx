@@ -20,6 +20,7 @@ import {
 	createPenTool,
 	hitTestNodeAtPosition,
 	hitTestNodeStackAtPosition,
+	hitTestVectorSegment,
 	findSelectableNode,
 	getHitStackInContainer,
 	pickHitCycle,
@@ -55,6 +56,7 @@ import type {
 	ImageOutline,
 	Node,
 	ShadowEffect,
+	VectorPoint,
 } from './core/doc/types';
 import type { Command } from './core/commands/types';
 import {
@@ -76,7 +78,17 @@ import {
 	type ProjectVersion,
 } from './core/projects/registry';
 import type { CanvasPointerInfo, CanvasWheelInfo } from './hooks/useCanvas';
-import { getHandleCursor, hitTestHandle } from './interaction/handles';
+import {
+	getHandleCursor,
+	getVectorAnchorHandles,
+	getVectorBezierHandles,
+	hitTestHandle,
+	hitTestVectorAnchor,
+	hitTestVectorBezierHandle,
+	type VectorAnchorHandle,
+	type VectorBezierHandle,
+	type VectorBezierHandleKind,
+} from './interaction/handles';
 import type { ResizeHandle } from './interaction/handles';
 import { applyResizeSnapping, applySnapping, buildSiblingSnapTargets } from './interaction/snapping';
 import type { SnapGuide, SnapTargets } from './interaction/snapping';
@@ -108,6 +120,10 @@ const clamp = (value: number, min: number, max: number): number => {
 const HANDLE_HIT_SIZE = 14;
 const HIT_SLOP_PX = 6;
 const EDGE_MIN_PX = 6;
+const VECTOR_ANCHOR_HIT_SIZE = 9;
+const VECTOR_HANDLE_HIT_SIZE = 8;
+const VECTOR_SEGMENT_HIT_SIZE = 10;
+const VECTOR_DRAG_SLOP_PX = 3;
 const LEGACY_AUTOSAVE_KEY = 'galileo.autosave.v1';
 const UNTITLED_DRAFT_KEY = 'untitled';
 const AUTOSAVE_DELAY_MS = 1500;
@@ -191,7 +207,49 @@ type DragState =
 			currentWorld: { x: number; y: number };
 			baseSelection: string[];
 			additive: boolean;
+		}
+	| {
+			mode: 'vectorAnchor';
+			pathId: string;
+			pointId: string;
+			startPoint: { x: number; y: number };
+		}
+	| {
+			mode: 'vectorHandle';
+			pathId: string;
+			pointId: string;
+			handle: 'in' | 'out';
+			draggedValue: { x: number; y: number };
+			mirroredValue?: { x: number; y: number };
+			altKey: boolean;
+		}
+	| {
+			mode: 'penHandle';
+			pathId: string;
+			pointId: string;
+			startScreen: { x: number; y: number };
+			anchorLocal: { x: number; y: number };
+			currentOut: { x: number; y: number };
+			currentIn?: { x: number; y: number };
+			altKey: boolean;
 		};
+
+type PenSession = {
+	pathId: string;
+	parentId: string;
+	lastPointId: string;
+};
+
+type VectorEditSession = {
+	pathId: string;
+	selectedPointId: string | null;
+};
+
+type VectorHover =
+	| { kind: 'anchor'; pointId: string }
+	| { kind: 'handle'; pointId: string; handle: VectorBezierHandleKind }
+	| { kind: 'segment'; fromPointId: string; toPointId: string; x: number; y: number }
+	| null;
 
 type HoverHit = {
 	id: string;
@@ -571,6 +629,42 @@ const sameSelectionSet = (a: string[], b: string[]): boolean => {
 		if (!set.has(id)) return false;
 	}
 	return true;
+};
+
+const constrainWorldPoint45 = (origin: { x: number; y: number }, target: { x: number; y: number }): { x: number; y: number } => {
+	const dx = target.x - origin.x;
+	const dy = target.y - origin.y;
+	const angle = Math.atan2(dy, dx);
+	const snapped = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
+	const distance = Math.hypot(dx, dy);
+	return {
+		x: origin.x + Math.cos(snapped) * distance,
+		y: origin.y + Math.sin(snapped) * distance,
+	};
+};
+
+const applyVectorPointPreview = (
+	doc: Document,
+	pathId: string,
+	pointId: string,
+	updater: (point: VectorPoint) => VectorPoint,
+): Document => {
+	const path = doc.nodes[pathId];
+	if (!path || path.type !== 'path' || !path.vector) return doc;
+	const nextPoints = path.vector.points.map((point) => (point.id === pointId ? updater(point) : point));
+	return {
+		...doc,
+		nodes: {
+			...doc.nodes,
+			[pathId]: {
+				...path,
+				vector: {
+					...path.vector,
+					points: nextPoints,
+				},
+			},
+		},
+	};
 };
 
 const getMimeType = (path: string): string => {
@@ -956,6 +1050,9 @@ export const App: React.FC = () => {
 	const [missingPaths, setMissingPaths] = useState<Record<string, boolean>>({});
 
 	const [activeTool, setActiveTool] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen'>('select');
+	const [penSession, setPenSession] = useState<PenSession | null>(null);
+	const [vectorEditSession, setVectorEditSession] = useState<VectorEditSession | null>(null);
+	const [vectorHover, setVectorHover] = useState<VectorHover>(null);
 	const [spaceKeyHeld, setSpaceKeyHeld] = useState(false);
 	const [toolBeforeSpace, setToolBeforeSpace] = useState<
 		'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen' | null
@@ -1119,6 +1216,52 @@ export const App: React.FC = () => {
 		() => getSelectionBounds(displayDocument, selectionIds, boundsMap),
 		[displayDocument, selectionIds, boundsMap],
 	);
+	const editablePathId = useMemo(() => {
+		if (!ENABLE_VECTOR_EDIT_V1) return null;
+		if (selectedIds.length !== 1) return null;
+		const selected = displayDocument.nodes[selectedIds[0]];
+		if (!selected) return null;
+		if (selected.type === 'path') return selected.id;
+		if (selected.type === 'boolean' && ENABLE_BOOLEAN_V1) {
+			const isolatedId = selected.booleanData?.isolationOperandId;
+			if (!isolatedId) return null;
+			const isolated = displayDocument.nodes[isolatedId];
+			if (isolated?.type === 'path') {
+				return isolated.id;
+			}
+		}
+		return null;
+	}, [displayDocument, selectedIds]);
+	const editablePathNode = editablePathId ? displayDocument.nodes[editablePathId] : null;
+	const editablePathBounds = editablePathId ? boundsMap[editablePathId] : null;
+	const editablePathPointCount = editablePathNode?.type === 'path' ? editablePathNode.vector?.points.length ?? 0 : 0;
+	const isVectorEditActive = Boolean(vectorEditSession && editablePathId && vectorEditSession.pathId === editablePathId);
+	const vectorAnchors = useMemo<VectorAnchorHandle[]>(() => {
+		if (!editablePathNode || editablePathNode.type !== 'path' || !editablePathBounds || !editablePathNode.vector) return [];
+		if (!isVectorEditActive && activeTool !== 'pen') return [];
+		return getVectorAnchorHandles({
+			points: editablePathNode.vector.points,
+			nodeWorld: { x: editablePathBounds.x, y: editablePathBounds.y },
+			selectedPointId: vectorEditSession?.selectedPointId ?? null,
+			hoveredPointId: vectorHover?.kind === 'anchor' ? vectorHover.pointId : null,
+		});
+	}, [editablePathNode, editablePathBounds, isVectorEditActive, activeTool, vectorEditSession, vectorHover]);
+	const vectorBezierHandles = useMemo<VectorBezierHandle[]>(() => {
+		if (!editablePathNode || editablePathNode.type !== 'path' || !editablePathBounds || !editablePathNode.vector) return [];
+		if (!isVectorEditActive && activeTool !== 'pen') return [];
+		return getVectorBezierHandles({
+			points: editablePathNode.vector.points,
+			nodeWorld: { x: editablePathBounds.x, y: editablePathBounds.y },
+			hovered:
+				vectorHover?.kind === 'handle'
+					? { pointId: vectorHover.pointId, kind: vectorHover.handle }
+					: null,
+		});
+	}, [editablePathNode, editablePathBounds, isVectorEditActive, activeTool, vectorHover]);
+	const vectorSegmentPreview =
+		vectorHover?.kind === 'segment' && isVectorEditActive
+			? { x: vectorHover.x, y: vectorHover.y }
+			: null;
 	const layoutGuideState = useMemo(() => {
 		if (selectionIds.length !== 1) return { lines: [], bounds: null as Bounds | null };
 		const node = displayDocument.nodes[selectionIds[0]];
@@ -1347,16 +1490,30 @@ export const App: React.FC = () => {
 		if (dragState?.mode === 'resize') return getHandleCursor(dragState.handle);
 		if (dragState?.mode === 'pan') return 'grabbing';
 		if (dragState?.mode === 'move') return 'move';
+		if (dragState?.mode === 'vectorAnchor') return 'move';
+		if (dragState?.mode === 'vectorHandle' || dragState?.mode === 'penHandle') return 'crosshair';
 		if (isInPanMode) return 'grab';
 		if (transformSession) return getHandleCursor(transformSession.handle);
 		if (hoverHandle) return getHandleCursor(hoverHandle);
+		if (vectorHover?.kind === 'handle') return 'crosshair';
+		if (vectorHover?.kind === 'anchor') return 'pointer';
+		if (vectorHover?.kind === 'segment') return 'copy';
 		if (hoverHit?.locked) return 'not-allowed';
 		if (hoverHit?.kind === 'edge') return hoverHit.edgeCursor || 'move';
 		if (hoverHit?.kind === 'fill') return 'default';
 		if (activeTool === 'frame' || activeTool === 'rectangle' || activeTool === 'text' || activeTool === 'pen')
 			return 'crosshair';
 		return undefined; // Let CSS custom cursor apply
-	}, [dragState, transformSession, hoverHandle, hoverHit, activeTool, isInPanMode]);
+	}, [dragState, transformSession, hoverHandle, hoverHit, activeTool, isInPanMode, vectorHover]);
+
+	useEffect(() => {
+		if (!vectorEditSession) return;
+		const path = displayDocument.nodes[vectorEditSession.pathId];
+		if (!path || path.type !== 'path' || editablePathId !== vectorEditSession.pathId) {
+			setVectorEditSession(null);
+			setVectorHover(null);
+		}
+	}, [displayDocument, editablePathId, vectorEditSession]);
 
 	useEffect(() => {
 		if (recentPluginIds.length === 0 && builtinPlugins.length > 0) {
@@ -2391,6 +2548,22 @@ export const App: React.FC = () => {
 					id: nodeId,
 					isolationOperandId,
 				},
+			} as Command);
+		},
+		[document.nodes, executeCommand],
+	);
+
+	const toggleVectorClosed = useCallback(
+		(pathId: string, closed: boolean) => {
+			const node = document.nodes[pathId];
+			if (!node || node.type !== 'path') return;
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: closed ? 'Close path' : 'Open path',
+				type: 'toggleVectorClosed',
+				payload: { id: pathId, closed },
 			} as Command);
 		},
 		[document.nodes, executeCommand],
@@ -3560,6 +3733,7 @@ export const App: React.FC = () => {
 			const { worldX, worldY, screenX, screenY } = info;
 			setHoverHandle(null);
 			setHoverHit(null);
+			setVectorHover(null);
 			setSnapGuides([]);
 
 			if (transformSession) {
@@ -3587,6 +3761,104 @@ export const App: React.FC = () => {
 			}
 
 			if (activeTool === 'select') {
+				if (ENABLE_VECTOR_EDIT_V1 && info.detail >= 2) {
+					const hit = hitTestAtPoint(worldX, worldY);
+					if (hit?.node.type === 'path') {
+						const selectedBooleanId =
+							selectedIds.length === 1 && document.nodes[selectedIds[0]]?.type === 'boolean' ? selectedIds[0] : null;
+						const selectedBoolean = selectedBooleanId ? document.nodes[selectedBooleanId] : null;
+						const isolatedOperandId =
+							selectedBoolean?.type === 'boolean' ? selectedBoolean.booleanData?.isolationOperandId : undefined;
+						if (isolatedOperandId && isolatedOperandId === hit.node.id) {
+							setVectorEditSession({ pathId: hit.node.id, selectedPointId: null });
+							setVectorHover(null);
+							return;
+						}
+						selectNode(hit.node.id);
+						setVectorEditSession({ pathId: hit.node.id, selectedPointId: null });
+						setVectorHover(null);
+						return;
+					}
+				}
+
+				if (isVectorEditActive && editablePathId) {
+					const pathNode = document.nodes[editablePathId];
+					const pathBounds = boundsMap[editablePathId];
+					if (pathNode?.type === 'path' && pathBounds && pathNode.vector) {
+						const handleHit = hitTestVectorBezierHandle(
+							screenX,
+							screenY,
+							vectorBezierHandles,
+							view,
+							VECTOR_HANDLE_HIT_SIZE,
+						);
+						if (handleHit) {
+							const point = pathNode.vector.points.find((entry) => entry.id === handleHit.pointId);
+							if (!point) return;
+							const draggedValue =
+								handleHit.kind === 'in'
+									? point.inHandle ?? { x: point.x, y: point.y }
+									: point.outHandle ?? { x: point.x, y: point.y };
+							setVectorEditSession({ pathId: editablePathId, selectedPointId: point.id });
+							setDragState({
+								mode: 'vectorHandle',
+								pathId: editablePathId,
+								pointId: point.id,
+								handle: handleHit.kind,
+								draggedValue,
+								altKey: info.altKey,
+							});
+							return;
+						}
+
+						const anchorHit = hitTestVectorAnchor(screenX, screenY, vectorAnchors, view, VECTOR_ANCHOR_HIT_SIZE);
+						if (anchorHit) {
+							const point = pathNode.vector.points.find((entry) => entry.id === anchorHit.pointId);
+							if (!point) return;
+							setVectorEditSession({ pathId: editablePathId, selectedPointId: point.id });
+							setDragState({
+								mode: 'vectorAnchor',
+								pathId: editablePathId,
+								pointId: point.id,
+								startPoint: { x: point.x, y: point.y },
+							});
+							return;
+						}
+
+						const segmentHit = hitTestVectorSegment(
+							screenX,
+							screenY,
+							pathNode.vector.points,
+							pathNode.vector.closed,
+							{ x: pathBounds.x, y: pathBounds.y },
+							view,
+							VECTOR_SEGMENT_HIT_SIZE,
+						);
+						if (segmentHit) {
+							const pointId = generateId();
+							executeCommand({
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Insert vector point',
+								type: 'addVectorPoint',
+								payload: {
+									id: editablePathId,
+									afterPointId: segmentHit.fromPointId,
+									point: {
+										id: pointId,
+										x: segmentHit.x - pathBounds.x,
+										y: segmentHit.y - pathBounds.y,
+										cornerMode: 'sharp',
+									},
+								},
+							} as Command);
+							setVectorEditSession({ pathId: editablePathId, selectedPointId: pointId });
+							return;
+						}
+					}
+				}
+
 				handleSelectionPointerDown(info);
 				return;
 			}
@@ -3721,15 +3993,62 @@ export const App: React.FC = () => {
 			}
 
 			if (activeTool === 'pen' && ENABLE_VECTOR_EDIT_V1) {
-				const activeSelectionId = selectionIds.length === 1 ? selectionIds[0] : null;
-				const selectedNode = activeSelectionId ? document.nodes[activeSelectionId] : null;
-				if (selectedNode?.type === 'path') {
-					const nodeBounds = boundsMap[selectedNode.id];
-					const localPoint = nodeBounds
-						? { x: worldX - nodeBounds.x, y: worldY - nodeBounds.y }
-						: { x: worldX - selectedNode.position.x, y: worldY - selectedNode.position.y };
-					const points = selectedNode.vector?.points ?? [];
-					const lastPointId = points.length > 0 ? points[points.length - 1].id : undefined;
+				const activePathId = (() => {
+					if (penSession?.pathId && document.nodes[penSession.pathId]?.type === 'path') {
+						return penSession.pathId;
+					}
+					if (editablePathId && document.nodes[editablePathId]?.type === 'path') {
+						return editablePathId;
+					}
+					return null;
+				})();
+
+				const activePathNode = activePathId ? document.nodes[activePathId] : null;
+				const activePathBounds = activePathId ? boundsMap[activePathId] : null;
+				if (activePathNode?.type === 'path' && activePathBounds && activePathNode.vector) {
+					const points = activePathNode.vector.points;
+					const firstAnchor =
+						points.length > 0 ? { x: activePathBounds.x + points[0].x, y: activePathBounds.y + points[0].y } : null;
+					if (firstAnchor && !activePathNode.vector.closed && points.length >= 3) {
+						const firstAnchorHit = hitTestVectorAnchor(
+							screenX,
+							screenY,
+							[
+								{
+									id: `anchor:${points[0].id}`,
+									pointId: points[0].id,
+									x: firstAnchor.x,
+									y: firstAnchor.y,
+									isFirst: true,
+									isSelected: false,
+									isHovered: false,
+								},
+							],
+							view,
+							VECTOR_ANCHOR_HIT_SIZE + 2,
+						);
+						if (firstAnchorHit) {
+							toggleVectorClosed(activePathNode.id, true);
+							setPenSession({
+								pathId: activePathNode.id,
+								parentId: documentParentMap[activePathNode.id] ?? document.rootId,
+								lastPointId: points[0].id,
+							});
+							setVectorEditSession({ pathId: activePathNode.id, selectedPointId: points[0].id });
+							return;
+						}
+					}
+
+					const lastPoint = points[points.length - 1];
+					const lastWorld = lastPoint
+						? { x: activePathBounds.x + lastPoint.x, y: activePathBounds.y + lastPoint.y }
+						: null;
+					const constrained = info.shiftKey && lastWorld ? constrainWorldPoint45(lastWorld, { x: worldX, y: worldY }) : { x: worldX, y: worldY };
+					const localPoint = {
+						x: constrained.x - activePathBounds.x,
+						y: constrained.y - activePathBounds.y,
+					};
+					const pointId = generateId();
 					executeCommand({
 						id: generateId(),
 						timestamp: Date.now(),
@@ -3737,12 +4056,26 @@ export const App: React.FC = () => {
 						description: 'Add vector point',
 						type: 'addVectorPoint',
 						payload: {
-							id: selectedNode.id,
-							point: { x: localPoint.x, y: localPoint.y, cornerMode: 'sharp' },
-							afterPointId: lastPointId,
+							id: activePathNode.id,
+							point: { id: pointId, x: localPoint.x, y: localPoint.y, cornerMode: 'sharp' },
+							afterPointId: lastPoint?.id,
 						},
 					} as Command);
-					selectNode(selectedNode.id);
+					setPenSession({
+						pathId: activePathNode.id,
+						parentId: documentParentMap[activePathNode.id] ?? document.rootId,
+						lastPointId: pointId,
+					});
+					setVectorEditSession({ pathId: activePathNode.id, selectedPointId: pointId });
+					setDragState({
+						mode: 'penHandle',
+						pathId: activePathNode.id,
+						pointId,
+						startScreen: { x: screenX, y: screenY },
+						anchorLocal: localPoint,
+						currentOut: localPoint,
+						altKey: info.altKey,
+					});
 					return;
 				}
 
@@ -3754,7 +4087,7 @@ export const App: React.FC = () => {
 				const newIds = Object.keys(result.nodes).filter((id) => !(id in document.nodes));
 				const newId = newIds[0];
 				const newNode = newId ? result.nodes[newId] : null;
-				if (!newId || !newNode) return;
+				if (!newId || !newNode || newNode.type !== 'path') return;
 				executeCommand({
 					id: generateId(),
 					timestamp: Date.now(),
@@ -3767,18 +4100,46 @@ export const App: React.FC = () => {
 						node: newNode,
 					},
 				} as Command);
+				const firstPointId = newNode.vector?.points?.[0]?.id ?? null;
+				setPenSession({
+					pathId: newId,
+					parentId,
+					lastPointId: firstPointId ?? generateId(),
+				});
+				if (firstPointId) {
+					setVectorEditSession({ pathId: newId, selectedPointId: firstPointId });
+					setDragState({
+						mode: 'penHandle',
+						pathId: newId,
+						pointId: firstPointId,
+						startScreen: { x: screenX, y: screenY },
+						anchorLocal: { x: 0, y: 0 },
+						currentOut: { x: 0, y: 0 },
+						altKey: info.altKey,
+					});
+				}
 				selectNode(newId);
 				return;
 			}
 		},
 		[
 			activeTool,
+			boundsMap,
 			document,
+			documentParentMap,
+			editablePathId,
 			executeCommand,
+			hitTestAtPoint,
 			handleSelectionPointerDown,
-			selectNode,
-			selectionBounds,
+			isVectorEditActive,
+			penSession,
+			selectedIds,
 			selectionIds,
+			selectionBounds,
+			toggleVectorClosed,
+			vectorAnchors,
+			vectorBezierHandles,
+			selectNode,
 			setActiveTool,
 			view,
 			measureTextSize,
@@ -3788,7 +4149,6 @@ export const App: React.FC = () => {
 			panOffset,
 			getInsertionParentId,
 			getLocalPointForParent,
-			boundsMap,
 		],
 	);
 
@@ -3839,6 +4199,82 @@ export const App: React.FC = () => {
 
 				setPreviewDocument(applyBoundsUpdates(transformSession.baseDoc, updates));
 				setSnapGuides(snap.guides);
+				return;
+			}
+
+			if (dragState?.mode === 'vectorAnchor') {
+				const pathBounds = boundsMap[dragState.pathId];
+				if (!pathBounds) return;
+				const nextLocal = { x: worldX - pathBounds.x, y: worldY - pathBounds.y };
+				setPreviewDocument(
+					applyVectorPointPreview(document, dragState.pathId, dragState.pointId, (point) => ({
+						...point,
+						x: nextLocal.x,
+						y: nextLocal.y,
+					})),
+				);
+				return;
+			}
+
+			if (dragState?.mode === 'vectorHandle') {
+				const pathBounds = boundsMap[dragState.pathId];
+				const pathNode = document.nodes[dragState.pathId];
+				if (!pathBounds || pathNode?.type !== 'path' || !pathNode.vector) return;
+				const point = pathNode.vector.points.find((entry) => entry.id === dragState.pointId);
+				if (!point) return;
+				const anchorWorld = { x: pathBounds.x + point.x, y: pathBounds.y + point.y };
+				const constrainedWorld = info.shiftKey ? constrainWorldPoint45(anchorWorld, { x: worldX, y: worldY }) : { x: worldX, y: worldY };
+				const nextLocal = { x: constrainedWorld.x - pathBounds.x, y: constrainedWorld.y - pathBounds.y };
+				const mirror = !info.altKey;
+				const mirrored = mirror
+					? { x: point.x - (nextLocal.x - point.x), y: point.y - (nextLocal.y - point.y) }
+					: undefined;
+				const opposite = dragState.handle === 'in' ? 'outHandle' : 'inHandle';
+				setDragState({
+					...dragState,
+					draggedValue: nextLocal,
+					mirroredValue: mirrored,
+					altKey: info.altKey,
+				});
+				setPreviewDocument(
+					applyVectorPointPreview(document, dragState.pathId, dragState.pointId, (entry) => ({
+						...entry,
+						...(dragState.handle === 'in' ? { inHandle: nextLocal } : { outHandle: nextLocal }),
+						...(mirrored ? { [opposite]: mirrored } : {}),
+					})),
+				);
+				return;
+			}
+
+			if (dragState?.mode === 'penHandle') {
+				const pathBounds = boundsMap[dragState.pathId];
+				if (!pathBounds) return;
+				const anchorWorld = {
+					x: pathBounds.x + dragState.anchorLocal.x,
+					y: pathBounds.y + dragState.anchorLocal.y,
+				};
+				const constrainedWorld = info.shiftKey ? constrainWorldPoint45(anchorWorld, { x: worldX, y: worldY }) : { x: worldX, y: worldY };
+				const outLocal = { x: constrainedWorld.x - pathBounds.x, y: constrainedWorld.y - pathBounds.y };
+				const inLocal = info.altKey
+					? undefined
+					: {
+							x: dragState.anchorLocal.x - (outLocal.x - dragState.anchorLocal.x),
+							y: dragState.anchorLocal.y - (outLocal.y - dragState.anchorLocal.y),
+						};
+				setDragState({
+					...dragState,
+					currentOut: outLocal,
+					currentIn: inLocal,
+					altKey: info.altKey,
+				});
+				setPreviewDocument(
+					applyVectorPointPreview(document, dragState.pathId, dragState.pointId, (point) => ({
+						...point,
+						outHandle: outLocal,
+						inHandle: inLocal,
+						cornerMode: info.altKey ? 'disconnected' : 'mirrored',
+					})),
+				);
 				return;
 			}
 
@@ -3938,6 +4374,78 @@ export const App: React.FC = () => {
 				return;
 			}
 
+			const canHoverVectors =
+				(isVectorEditActive || activeTool === 'pen') &&
+				editablePathNode?.type === 'path' &&
+				Boolean(editablePathBounds) &&
+				Boolean(editablePathNode.vector);
+			if (canHoverVectors && editablePathBounds && editablePathNode.type === 'path' && editablePathNode.vector) {
+				const handleHit = hitTestVectorBezierHandle(
+					screenX,
+					screenY,
+					vectorBezierHandles,
+					view,
+					VECTOR_HANDLE_HIT_SIZE,
+				);
+				if (handleHit) {
+					const nextHover: VectorHover = { kind: 'handle', pointId: handleHit.pointId, handle: handleHit.kind };
+					if (
+						vectorHover?.kind !== 'handle' ||
+						vectorHover.pointId !== handleHit.pointId ||
+						vectorHover.handle !== handleHit.kind
+					) {
+						setVectorHover(nextHover);
+					}
+					if (hoverHit) setHoverHit(null);
+					return;
+				}
+
+				const anchorHit = hitTestVectorAnchor(screenX, screenY, vectorAnchors, view, VECTOR_ANCHOR_HIT_SIZE);
+				if (anchorHit) {
+					if (vectorHover?.kind !== 'anchor' || vectorHover.pointId !== anchorHit.pointId) {
+						setVectorHover({ kind: 'anchor', pointId: anchorHit.pointId });
+					}
+					if (hoverHit) setHoverHit(null);
+					return;
+				}
+
+				if (isVectorEditActive) {
+					const segmentHit = hitTestVectorSegment(
+						screenX,
+						screenY,
+						editablePathNode.vector.points,
+						editablePathNode.vector.closed,
+						{ x: editablePathBounds.x, y: editablePathBounds.y },
+						view,
+						VECTOR_SEGMENT_HIT_SIZE,
+					);
+					if (segmentHit) {
+						const nextHover: VectorHover = {
+							kind: 'segment',
+							fromPointId: segmentHit.fromPointId,
+							toPointId: segmentHit.toPointId,
+							x: segmentHit.x,
+							y: segmentHit.y,
+						};
+						if (
+							vectorHover?.kind !== 'segment' ||
+							vectorHover.fromPointId !== segmentHit.fromPointId ||
+							vectorHover.toPointId !== segmentHit.toPointId ||
+							Math.abs(vectorHover.x - segmentHit.x) > 0.01 ||
+							Math.abs(vectorHover.y - segmentHit.y) > 0.01
+						) {
+							setVectorHover(nextHover);
+						}
+						if (hoverHit) setHoverHit(null);
+						return;
+					}
+				}
+			}
+
+			if (vectorHover) {
+				setVectorHover(null);
+			}
+
 			let nextHandle: ResizeHandle | null = null;
 			if (activeTool === 'select' && selectionBounds && selectionIds.length > 0) {
 				nextHandle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
@@ -3967,23 +4475,30 @@ export const App: React.FC = () => {
 		},
 		[
 			activeTool,
+			boundsMap,
+			document,
+			documentParentMap,
 			dragState,
-			transformSession,
+			editablePathBounds,
+			editablePathNode,
+			getEdgeCursorForNode,
+			getLayoutGuideTargetsForParent,
+			hoverHit,
+			hoverHandle,
+			hitTestAtPoint,
+			isVectorEditActive,
+			parentMap,
 			selectionBounds,
 			selectionIds,
-			view,
-			snapDisabled,
-			hoverHandle,
-			hoverHit,
-			documentParentMap,
-			displayDocument,
-			boundsMap,
-			parentMap,
-			zoom,
-			getLayoutGuideTargetsForParent,
 			setSelection,
-			hitTestAtPoint,
-			getEdgeCursorForNode,
+			snapDisabled,
+			transformSession,
+			vectorAnchors,
+			vectorBezierHandles,
+			vectorHover,
+			view,
+			zoom,
+			displayDocument,
 		],
 	);
 
@@ -4067,6 +4582,148 @@ export const App: React.FC = () => {
 			}
 
 			if (!dragState) return;
+
+			if (dragState.mode === 'vectorAnchor') {
+				const pathBounds = boundsMap[dragState.pathId];
+				if (pathBounds) {
+					const nextLocal = { x: info.worldX - pathBounds.x, y: info.worldY - pathBounds.y };
+					const changed =
+						Math.abs(nextLocal.x - dragState.startPoint.x) > 0.01 || Math.abs(nextLocal.y - dragState.startPoint.y) > 0.01;
+					if (changed) {
+						executeCommand({
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Move vector point',
+							type: 'moveVectorPoint',
+							payload: {
+								id: dragState.pathId,
+								pointId: dragState.pointId,
+								x: nextLocal.x,
+								y: nextLocal.y,
+							},
+						} as Command);
+					}
+				}
+				setPreviewDocument(null);
+				setDragState(null);
+				setSnapGuides([]);
+				return;
+			}
+
+			if (dragState.mode === 'vectorHandle') {
+				const pathNode = document.nodes[dragState.pathId];
+				if (pathNode?.type === 'path' && pathNode.vector) {
+					const point = pathNode.vector.points.find((entry) => entry.id === dragState.pointId);
+					if (point) {
+						const currentHandle = dragState.handle === 'in' ? point.inHandle : point.outHandle;
+						const changed =
+							!currentHandle ||
+							Math.abs(currentHandle.x - dragState.draggedValue.x) > 0.01 ||
+							Math.abs(currentHandle.y - dragState.draggedValue.y) > 0.01;
+						const commands: Command[] = [];
+						if (changed) {
+							commands.push({
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Set vector handle',
+								type: 'setVectorHandle',
+								payload: {
+									id: dragState.pathId,
+									pointId: dragState.pointId,
+									handle: dragState.handle,
+									value: dragState.draggedValue,
+								},
+							});
+						}
+						if (dragState.mirroredValue) {
+							const opposite: 'in' | 'out' = dragState.handle === 'in' ? 'out' : 'in';
+							commands.push({
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Mirror vector handle',
+								type: 'setVectorHandle',
+								payload: {
+									id: dragState.pathId,
+									pointId: dragState.pointId,
+									handle: opposite,
+									value: dragState.mirroredValue,
+								},
+							});
+						}
+						if (commands.length === 1) {
+							executeCommand(commands[0]);
+						} else if (commands.length > 1) {
+							executeCommand({
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Update vector handles',
+								type: 'batch',
+								payload: { commands },
+							} as Command);
+						}
+					}
+				}
+				setPreviewDocument(null);
+				setDragState(null);
+				setSnapGuides([]);
+				return;
+			}
+
+			if (dragState.mode === 'penHandle') {
+				const dragDistance = Math.hypot(info.screenX - dragState.startScreen.x, info.screenY - dragState.startScreen.y);
+				if (dragDistance >= VECTOR_DRAG_SLOP_PX) {
+					const commands: Command[] = [
+						{
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Set pen handle',
+							type: 'setVectorHandle',
+							payload: {
+								id: dragState.pathId,
+								pointId: dragState.pointId,
+								handle: 'out',
+								value: dragState.currentOut,
+							},
+						},
+					];
+					if (dragState.currentIn) {
+						commands.push({
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Set pen mirror handle',
+							type: 'setVectorHandle',
+							payload: {
+								id: dragState.pathId,
+								pointId: dragState.pointId,
+								handle: 'in',
+								value: dragState.currentIn,
+							},
+						});
+					}
+					if (commands.length === 1) {
+						executeCommand(commands[0] as Command);
+					} else {
+						executeCommand({
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Create curve handles',
+							type: 'batch',
+							payload: { commands: commands as Command[] },
+						} as Command);
+					}
+				}
+				setPreviewDocument(null);
+				setDragState(null);
+				setSnapGuides([]);
+				return;
+			}
 
 			if (dragState.mode === 'marquee') {
 				setDragState(null);
@@ -4239,6 +4896,7 @@ export const App: React.FC = () => {
 			snapDisabled,
 			zoom,
 			executeCommand,
+			document,
 			parentMap,
 			boundsMap,
 			documentParentMap,
@@ -4812,7 +5470,18 @@ export const App: React.FC = () => {
 		setHoverHandle(null);
 		setHoverHit(null);
 		setHitCycle(null);
+		setVectorHover(null);
 	}, [selectionIds]);
+
+	useEffect(() => {
+		if (activeTool !== 'pen') {
+			setPenSession(null);
+		}
+		if (activeTool !== 'select') {
+			setVectorEditSession(null);
+			setVectorHover(null);
+		}
+	}, [activeTool]);
 
 	useEffect(() => {
 		const title = `${fileName}${isDirty ? ' *' : ''} - Galileo`;
@@ -5181,6 +5850,33 @@ export const App: React.FC = () => {
 					setHoverHit(null);
 					return;
 				}
+				if (activeTool === 'pen' && penSession) {
+					e.preventDefault();
+					const path = document.nodes[penSession.pathId];
+					const pointCount = path?.type === 'path' ? path.vector?.points.length ?? 0 : 0;
+					if (pointCount < 2) {
+						executeCommand({
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Delete short path',
+							type: 'deleteNode',
+							payload: { id: penSession.pathId },
+						} as Command);
+						setSelection([]);
+					}
+					setPenSession(null);
+					setPreviewDocument(null);
+					setDragState(null);
+					setVectorHover(null);
+					return;
+				}
+				if (vectorEditSession) {
+					e.preventDefault();
+					setVectorEditSession(null);
+					setVectorHover(null);
+					return;
+				}
 				if (containerFocusId) {
 					e.preventDefault();
 					const parent = findParentNode(displayDocument, containerFocusId);
@@ -5245,6 +5941,14 @@ export const App: React.FC = () => {
 				}
 
 				if (e.key === 'Enter') {
+					if (activeTool === 'pen' && penSession) {
+						e.preventDefault();
+						setPenSession(null);
+						setPreviewDocument(null);
+						setDragState((current) => (current?.mode === 'penHandle' ? null : current));
+						setVectorHover(null);
+						return;
+					}
 					if (selectionIds.length !== 1) return;
 					const target = document.nodes[selectionIds[0]];
 					if (target && (target.type === 'group' || target.type === 'frame')) {
@@ -5258,6 +5962,22 @@ export const App: React.FC = () => {
 				}
 
 				if (e.key === 'Delete' || e.key === 'Backspace') {
+					if (vectorEditSession?.selectedPointId) {
+						e.preventDefault();
+						executeCommand({
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Delete vector point',
+							type: 'deleteVectorPoint',
+							payload: {
+								id: vectorEditSession.pathId,
+								pointId: vectorEditSession.selectedPointId,
+							},
+						} as Command);
+						setVectorEditSession((current) => (current ? { ...current, selectedPointId: null } : current));
+						return;
+					}
 					if (!hasSelection) return;
 					e.preventDefault();
 					dispatchEditorAction({ type: 'delete' });
@@ -5381,6 +6101,7 @@ export const App: React.FC = () => {
 		handleSave,
 		handleLoad,
 		handleImportImage,
+		executeCommand,
 		copySelectionToClipboard,
 		copyEffects,
 		pasteEffects,
@@ -5396,6 +6117,8 @@ export const App: React.FC = () => {
 		spaceKeyHeld,
 		toolBeforeSpace,
 		activeTool,
+		penSession,
+		vectorEditSession,
 	]);
 
 	// Persist panel collapse state
@@ -5417,6 +6140,13 @@ export const App: React.FC = () => {
 
 	// Handle tool change including 'hand' tool
 	const handleToolChange = useCallback((tool: Tool) => {
+		if (tool !== 'pen') {
+			setPenSession(null);
+		}
+		if (tool !== 'select') {
+			setVectorEditSession(null);
+		}
+		setVectorHover(null);
 		setActiveTool(tool as 'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen');
 	}, []);
 
@@ -5601,10 +6331,14 @@ export const App: React.FC = () => {
 								layoutGuides={layoutGuideState.lines}
 								layoutGuideBounds={layoutGuideState.bounds}
 								marqueeRect={marqueeRect}
+								vectorAnchors={vectorAnchors}
+								vectorBezierHandles={vectorBezierHandles}
+								vectorSegmentPreview={vectorSegmentPreview}
 								cursor={cursor}
 								onMouseLeave={() => {
 									setHoverHandle(null);
 									setHoverHit(null);
+									setVectorHover(null);
 								}}
 								onMouseDown={handleCanvasMouseDown}
 								onMouseMove={handleCanvasMouseMove}
@@ -5638,6 +6372,17 @@ export const App: React.FC = () => {
 							onCopyEffects={(nodeId) => copyEffects(nodeId)}
 							onPasteEffects={(nodeId) => pasteEffects([nodeId])}
 							canPasteEffects={Boolean(effectsClipboardRef.current?.length)}
+							vectorTarget={
+								editablePathNode?.type === 'path'
+									? {
+											pathId: editablePathNode.id,
+											closed: editablePathNode.vector?.closed ?? false,
+											pointCount: editablePathPointCount,
+											selectedPointId: vectorEditSession?.selectedPointId ?? null,
+										}
+									: null
+							}
+							onToggleVectorClosed={toggleVectorClosed}
 						/>
 					</div>
 				</>

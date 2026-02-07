@@ -49,6 +49,13 @@ interface PropertiesPanelProps {
 	onCopyEffects?: (nodeId: string) => void;
 	onPasteEffects?: (nodeId: string) => void;
 	canPasteEffects?: boolean;
+	vectorTarget?: {
+		pathId: string;
+		closed: boolean;
+		pointCount: number;
+		selectedPointId: string | null;
+	} | null;
+	onToggleVectorClosed?: (pathId: string, closed: boolean) => void;
 }
 
 const defaultLayout: Layout = {
@@ -142,6 +149,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	onCopyEffects,
 	onPasteEffects,
 	canPasteEffects = false,
+	vectorTarget = null,
+	onToggleVectorClosed,
 }) => {
 	const [draggedEffectIndex, setDraggedEffectIndex] = React.useState<number | null>(null);
 
@@ -745,6 +754,73 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					>
 						Status: {booleanData.status === 'ok' ? 'Valid' : `Invalid (${booleanData.lastErrorCode ?? 'engine_error'})`}
 					</div>
+				</div>
+			)}
+
+			{vectorTarget && (
+				<div style={{ marginBottom: spacing.lg }}>
+					<h4
+						style={{
+							margin: `0 0 ${spacing.sm} 0`,
+							fontSize: typography.fontSize.sm,
+							color: colors.text.secondary,
+							fontWeight: typography.fontWeight.medium,
+						}}
+					>
+						Vector Path
+					</h4>
+					<div
+						style={{
+							display: 'grid',
+							gridTemplateColumns: '1fr 1fr',
+							gap: spacing.sm,
+							marginBottom: spacing.sm,
+						}}
+					>
+						<div
+							style={{
+								padding: spacing.sm,
+								borderRadius: radii.sm,
+								backgroundColor: colors.bg.tertiary,
+								fontSize: typography.fontSize.sm,
+								color: colors.text.secondary,
+							}}
+						>
+							Points: {vectorTarget.pointCount}
+						</div>
+						<div
+							style={{
+								padding: spacing.sm,
+								borderRadius: radii.sm,
+								backgroundColor: colors.bg.tertiary,
+								fontSize: typography.fontSize.sm,
+								color: colors.text.secondary,
+								whiteSpace: 'nowrap',
+								textOverflow: 'ellipsis',
+								overflow: 'hidden',
+							}}
+						>
+							Selected: {vectorTarget.selectedPointId ?? 'None'}
+						</div>
+					</div>
+					<button
+						type="button"
+						onClick={() => onToggleVectorClosed?.(vectorTarget.pathId, !vectorTarget.closed)}
+						disabled={vectorTarget.closed ? vectorTarget.pointCount < 3 : false}
+						style={{
+							width: '100%',
+							padding: `${spacing.xs} ${spacing.sm}`,
+							borderRadius: radii.sm,
+							border: `1px solid ${colors.border.default}`,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.primary,
+							cursor: vectorTarget.closed || vectorTarget.pointCount >= 3 ? 'pointer' : 'not-allowed',
+							opacity: vectorTarget.closed || vectorTarget.pointCount >= 3 ? 1 : 0.5,
+							fontSize: typography.fontSize.md,
+						}}
+					>
+						{vectorTarget.closed ? 'Open Path' : 'Close Path'}
+					</button>
 				</div>
 			)}
 

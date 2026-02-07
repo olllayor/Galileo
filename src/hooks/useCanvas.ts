@@ -14,6 +14,7 @@ export interface CanvasPointerInfo {
   screenY: number;
   worldX: number;
   worldY: number;
+  detail: number;
   button: number;
   buttons: number;
   ctrlKey: boolean;
@@ -105,6 +106,7 @@ export const useCanvas = ({
         screenY,
         worldX: x,
         worldY: y,
+        detail: event.detail,
         button: event.button,
         buttons: event.buttons,
         ctrlKey: event.ctrlKey,
@@ -133,6 +135,7 @@ export const useCanvas = ({
         screenY,
         worldX: x,
         worldY: y,
+        detail: event.detail,
         button: event.button,
         buttons: event.buttons,
         ctrlKey: event.ctrlKey,
@@ -161,6 +164,7 @@ export const useCanvas = ({
         screenY,
         worldX: x,
         worldY: y,
+        detail: event.detail,
         button: event.button,
         buttons: event.buttons,
         ctrlKey: event.ctrlKey,

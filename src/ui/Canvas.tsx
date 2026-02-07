@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { useCanvas } from '../hooks/useCanvas';
 import type { CanvasPointerInfo, CanvasView, CanvasWheelInfo } from '../hooks/useCanvas';
 import type { Bounds, WorldBoundsMap } from '../core/doc';
-import type { ResizeHandle } from '../interaction/handles';
+import type { ResizeHandle, VectorAnchorHandle, VectorBezierHandle, VectorSegmentPreview } from '../interaction/handles';
 import { getHandleScreenRects } from '../interaction/handles';
 import type { SnapGuide } from '../interaction/snapping';
 import { buildDrawList } from '../render/draw-list';
@@ -22,6 +22,9 @@ interface CanvasProps {
 	layoutGuides?: SnapGuide[];
 	layoutGuideBounds?: Bounds | null;
 	marqueeRect?: { x: number; y: number; width: number; height: number } | null;
+	vectorAnchors?: VectorAnchorHandle[];
+	vectorBezierHandles?: VectorBezierHandle[];
+	vectorSegmentPreview?: VectorSegmentPreview | null;
 	cursor?: string;
 	onMouseLeave?: () => void;
 	onMouseDown?: (info: CanvasPointerInfo) => void;
@@ -45,6 +48,9 @@ export const Canvas: React.FC<CanvasProps> = ({
 	layoutGuides = [],
 	layoutGuideBounds = null,
 	marqueeRect,
+	vectorAnchors = [],
+	vectorBezierHandles = [],
+	vectorSegmentPreview = null,
 	cursor,
 	onMouseLeave,
 	onMouseDown,
@@ -240,6 +246,85 @@ export const Canvas: React.FC<CanvasProps> = ({
 							height: marqueeRect.height,
 							border: '1px dashed #4a9eff',
 							backgroundColor: 'rgba(74, 158, 255, 0.12)',
+							boxSizing: 'border-box',
+							pointerEvents: 'none',
+						}}
+					/>
+				)}
+
+				{vectorBezierHandles.map((handle) => {
+					const anchorX = handle.anchorX * view.zoom + view.pan.x;
+					const anchorY = handle.anchorY * view.zoom + view.pan.y;
+					const x = handle.x * view.zoom + view.pan.x;
+					const y = handle.y * view.zoom + view.pan.y;
+					const angle = Math.atan2(y - anchorY, x - anchorX);
+					const length = Math.hypot(x - anchorX, y - anchorY);
+					return (
+						<React.Fragment key={handle.id}>
+							<div
+								style={{
+									position: 'absolute',
+									left: anchorX,
+									top: anchorY,
+									width: Math.max(1, length),
+									height: 1,
+									backgroundColor: 'rgba(74, 158, 255, 0.45)',
+									transformOrigin: 'top left',
+									transform: `rotate(${angle}rad)`,
+									pointerEvents: 'none',
+								}}
+							/>
+							<div
+								style={{
+									position: 'absolute',
+									left: x - 4,
+									top: y - 4,
+									width: 8,
+									height: 8,
+									borderRadius: '50%',
+									border: `1px solid ${handle.isHovered ? '#ffffff' : '#4a9eff'}`,
+									backgroundColor: handle.isHovered ? '#4a9eff' : '#ffffff',
+									boxSizing: 'border-box',
+									pointerEvents: 'none',
+								}}
+							/>
+						</React.Fragment>
+					);
+				})}
+
+				{vectorAnchors.map((anchor) => {
+					const x = anchor.x * view.zoom + view.pan.x;
+					const y = anchor.y * view.zoom + view.pan.y;
+					return (
+						<div
+							key={anchor.id}
+							style={{
+								position: 'absolute',
+								left: x - 5,
+								top: y - 5,
+								width: 10,
+								height: 10,
+								borderRadius: anchor.isFirst ? '3px' : '50%',
+								border: `1px solid ${anchor.isSelected || anchor.isHovered ? '#ffffff' : '#4a9eff'}`,
+								backgroundColor: anchor.isSelected || anchor.isHovered ? '#4a9eff' : '#ffffff',
+								boxSizing: 'border-box',
+								pointerEvents: 'none',
+							}}
+						/>
+					);
+				})}
+
+				{vectorSegmentPreview && (
+					<div
+						style={{
+							position: 'absolute',
+							left: vectorSegmentPreview.x * view.zoom + view.pan.x - 4,
+							top: vectorSegmentPreview.y * view.zoom + view.pan.y - 4,
+							width: 8,
+							height: 8,
+							borderRadius: '50%',
+							border: '1px solid #4a9eff',
+							backgroundColor: '#9fd0ff',
 							boxSizing: 'border-box',
 							pointerEvents: 'none',
 						}}
