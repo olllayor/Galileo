@@ -8,6 +8,8 @@ export * from './serialization';
 export * from './constraints';
 export * from './layout-guides';
 export * from './effects';
+export * from './vector';
+export * from './boolean/solve';
 export * from '../feature-flags';
 
 export const createNode = (

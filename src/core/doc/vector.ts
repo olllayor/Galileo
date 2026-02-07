@@ -1,23 +1,83 @@
 import type { Bounds } from './geometry';
-import type { Node, VectorData, VectorPoint } from './types';
+import { resolveBooleanNodePath } from './boolean/solve';
+import type { Document, Node, VectorData, VectorPoint, VectorSegment } from './types';
 
 export const buildVectorPathData = (vector: VectorData): string => {
 	if (!vector.points || vector.points.length === 0) {
 		return '';
 	}
-	const parts: string[] = [];
-	const [first, ...rest] = vector.points;
-	parts.push(`M ${first.x} ${first.y}`);
-	for (const point of rest) {
-		parts.push(`L ${point.x} ${point.y}`);
+
+	const pointById = new Map(vector.points.map((point) => [point.id, point]));
+	const segments =
+		vector.segments && vector.segments.length > 0
+			? vector.segments
+			: buildSequentialSegments(vector.points.map((point) => point.id), vector.closed);
+	if (segments.length === 0) {
+		return '';
 	}
+
+	const outgoingById = new Map<string, VectorSegment[]>();
+	for (const segment of segments) {
+		const list = outgoingById.get(segment.fromId) ?? [];
+		list.push(segment);
+		outgoingById.set(segment.fromId, list);
+	}
+
+	const parts: string[] = [];
+	const visited = new Set<string>();
+	let currentSegment = segments[0];
+	let guard = 0;
+	while (currentSegment && guard < segments.length * 2) {
+		guard++;
+		if (visited.has(currentSegment.id)) break;
+		visited.add(currentSegment.id);
+
+		const from = pointById.get(currentSegment.fromId);
+		const to = pointById.get(currentSegment.toId);
+		if (!from || !to) break;
+
+		if (parts.length === 0) {
+			parts.push(`M ${from.x} ${from.y}`);
+		}
+
+		const hasCurve = Boolean(from.outHandle || to.inHandle);
+		if (hasCurve) {
+			const c1 = from.outHandle ?? { x: from.x, y: from.y };
+			const c2 = to.inHandle ?? { x: to.x, y: to.y };
+			parts.push(`C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${to.x} ${to.y}`);
+		} else {
+			parts.push(`L ${to.x} ${to.y}`);
+		}
+
+		const nextCandidates = outgoingById.get(currentSegment.toId) ?? [];
+		const next = nextCandidates.find((candidate) => !visited.has(candidate.id));
+		if (!next) {
+			break;
+		}
+		currentSegment = next;
+	}
+
 	if (vector.closed) {
 		parts.push('Z');
 	}
 	return parts.join(' ');
 };
 
-export const getNodePathData = (node: Node): { d: string; fillRule?: 'nonzero' | 'evenodd' } | null => {
+export const getNodePathData = (
+	node: Node,
+	doc?: Document,
+): { d: string; fillRule?: 'nonzero' | 'evenodd' } | null => {
+	if (node.type === 'boolean') {
+		if (!doc) return null;
+		const resolved = resolveBooleanNodePath(doc, node);
+		if (resolved.status !== 'ok') {
+			return null;
+		}
+		return {
+			d: resolved.d,
+			fillRule: resolved.fillRule,
+		};
+	}
 	if (node.vector && node.vector.points.length > 0) {
 		const d = buildVectorPathData(node.vector);
 		return d ? { d } : null;
@@ -65,10 +125,28 @@ export const normalizeVectorPoints = (points: VectorPoint[]): { points: VectorPo
 
 	const width = Math.max(1, maxX - minX);
 	const height = Math.max(1, maxY - minY);
-	const normalizedPoints = points.map((point) => ({ x: point.x - minX, y: point.y - minY }));
+	const normalizedPoints = points.map((point) => ({
+		...point,
+		x: point.x - minX,
+		y: point.y - minY,
+		...(point.inHandle ? { inHandle: { x: point.inHandle.x - minX, y: point.inHandle.y - minY } } : {}),
+		...(point.outHandle ? { outHandle: { x: point.outHandle.x - minX, y: point.outHandle.y - minY } } : {}),
+	}));
 
 	return {
 		points: normalizedPoints,
 		bounds: { x: minX, y: minY, width, height },
 	};
+};
+
+const buildSequentialSegments = (pointIds: string[], closed: boolean): VectorSegment[] => {
+	if (pointIds.length < 2) return [];
+	const segments: VectorSegment[] = [];
+	for (let i = 0; i < pointIds.length - 1; i++) {
+		segments.push({ id: `seg_${i}`, fromId: pointIds[i], toId: pointIds[i + 1] });
+	}
+	if (closed) {
+		segments.push({ id: `seg_${segments.length}`, fromId: pointIds[pointIds.length - 1], toId: pointIds[0] });
+	}
+	return segments;
 };

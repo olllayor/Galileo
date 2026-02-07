@@ -11,6 +11,7 @@ const TYPE_LABELS: Record<Node['type'], string> = {
 	componentInstance: 'Component',
 	ellipse: 'Ellipse',
 	path: 'Path',
+	boolean: 'Boolean',
 };
 
 type LayerRow = {
@@ -657,6 +658,11 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 								) : row.type === 'path' ? (
 									<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
 										<path d="M2 14C2 8 8 8 8 2S14 8 14 14" />
+									</svg>
+								) : row.type === 'boolean' ? (
+									<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+										<circle cx="6" cy="8" r="4" />
+										<circle cx="10" cy="8" r="4" />
 									</svg>
 								) : (
 									'*'

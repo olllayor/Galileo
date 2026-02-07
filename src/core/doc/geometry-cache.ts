@@ -303,3 +303,30 @@ export const getGeometryCache = (): GeometryCache => {
 export const resetGeometryCache = (): void => {
 	globalCache = null;
 };
+
+type BooleanGeometryCacheEntry = {
+	signature: string;
+	value: unknown;
+};
+
+const booleanGeometryCache = new Map<string, BooleanGeometryCacheEntry>();
+
+export const getBooleanGeometryCacheEntry = <T>(nodeId: string, signature: string): T | null => {
+	const cached = booleanGeometryCache.get(nodeId);
+	if (!cached || cached.signature !== signature) {
+		return null;
+	}
+	return cached.value as T;
+};
+
+export const setBooleanGeometryCacheEntry = <T>(nodeId: string, signature: string, value: T): void => {
+	booleanGeometryCache.set(nodeId, { signature, value });
+};
+
+export const invalidateBooleanGeometryCache = (nodeId?: string): void => {
+	if (nodeId) {
+		booleanGeometryCache.delete(nodeId);
+		return;
+	}
+	booleanGeometryCache.clear();
+};

@@ -218,24 +218,60 @@ export const layoutGuideSchema = z.object({
 export type LayoutGuideType = z.infer<typeof layoutGuideTypeSchema>;
 export type LayoutGuide = z.infer<typeof layoutGuideSchema>;
 
-export const vectorPointSchema = z.object({
+export const vectorHandleSchema = z.object({
 	x: z.number(),
 	y: z.number(),
+});
+
+export const vectorCornerModeSchema = z.enum(['sharp', 'mirrored', 'asymmetric', 'disconnected']);
+
+export const vectorPointSchema = z.object({
+	id: z.string(),
+	x: z.number(),
+	y: z.number(),
+	inHandle: vectorHandleSchema.optional(),
+	outHandle: vectorHandleSchema.optional(),
+	cornerMode: vectorCornerModeSchema.optional(),
+});
+
+export const vectorSegmentSchema = z.object({
+	id: z.string(),
+	fromId: z.string(),
+	toId: z.string(),
 });
 
 export const vectorDataSchema = z
 	.object({
 		points: vectorPointSchema.array(),
-		closed: z.boolean().optional(),
+		segments: vectorSegmentSchema.array(),
+		closed: z.boolean(),
 	})
 	.passthrough();
 
+export const booleanOpSchema = z.enum(['union', 'subtract', 'intersect', 'exclude']);
+export const booleanStatusSchema = z.enum(['ok', 'invalid']);
+export const booleanErrorCodeSchema = z.enum(['self_intersection', 'degenerate', 'empty_result', 'engine_error']);
+
+export const booleanDataSchema = z.object({
+	op: booleanOpSchema,
+	operandIds: z.string().array(),
+	isolationOperandId: z.string().optional(),
+	status: booleanStatusSchema,
+	lastErrorCode: booleanErrorCodeSchema.optional(),
+	tolerance: z.number(),
+});
+
 export type VectorPoint = z.infer<typeof vectorPointSchema>;
+export type VectorSegment = z.infer<typeof vectorSegmentSchema>;
 export type VectorData = z.infer<typeof vectorDataSchema>;
+export type BooleanOp = z.infer<typeof booleanOpSchema>;
+export type BooleanStatus = z.infer<typeof booleanStatusSchema>;
+export type BooleanErrorCode = z.infer<typeof booleanErrorCodeSchema>;
+export type BooleanData = z.infer<typeof booleanDataSchema>;
 
 export const nodeSchema = z.object({
 	id: z.string(),
-	type: z.enum(['frame', 'group', 'rectangle', 'text', 'image', 'componentInstance', 'ellipse', 'path']),
+	type: z.enum(['frame', 'group', 'rectangle', 'text', 'image', 'componentInstance', 'ellipse', 'path', 'boolean']),
 	name: z.string().optional(),
 	children: z.string().array().optional(),
 
@@ -283,6 +319,7 @@ export const nodeSchema = z.object({
 
 	pathData: z.string().optional(),
 	d: z.string().optional(),
+	booleanData: booleanDataSchema.optional(),
 
 	componentId: z.string().optional(),
 	variant: z.record(z.any()).optional(),
@@ -327,7 +364,7 @@ export const documentSchema = z.object({
 export type Document = z.infer<typeof documentSchema>;
 
 export const createDocument = (): Document => ({
-	version: 4,
+	version: 5,
 	rootId: 'root',
 	nodes: {
 		root: {

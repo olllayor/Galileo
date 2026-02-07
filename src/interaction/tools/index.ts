@@ -1,9 +1,10 @@
 import type { Document, Node } from '../../core/doc/types';
 import { createNode, findParentNode } from '../../core/doc';
 import type { WorldBoundsMap } from '../../core/doc';
+import { getNodePathData } from '../../core/doc/vector';
 
 export interface Tool {
-	type: 'select' | 'rectangle' | 'text' | 'frame';
+	type: 'select' | 'rectangle' | 'text' | 'frame' | 'pen';
 	handleMouseDown: (doc: Document, x: number, y: number, selectedIds: string[]) => Document | null;
 	handleMouseMove?: (doc: Document, x: number, y: number, selectedIds: string[]) => Document | null;
 	handleMouseUp?: (doc: Document, x: number, y: number, selectedIds: string[]) => Document | null;
@@ -55,6 +56,32 @@ export const createFrameTool = (parentId?: string): Tool => ({
 			fill: { type: 'solid', value: '#ffffff' },
 			clipContent: false,
 			shadowOverflow: 'visible',
+			visible: true,
+		};
+
+		return createNode(doc, parentId ?? doc.rootId, newNode);
+	},
+});
+
+export const createPenTool = (parentId?: string): Tool => ({
+	type: 'pen',
+	handleMouseDown: (doc, x, y) => {
+		const pointId = `pt_${Date.now().toString(36)}`;
+	const newNode: Partial<Node> & { type: Node['type'] } = {
+		type: 'path',
+		name: 'Path',
+		position: { x, y },
+		size: { width: 1, height: 1 },
+		stroke: {
+			color: { type: 'solid', value: '#111111' },
+			width: 1.5,
+			style: 'solid',
+		},
+		vector: {
+			points: [{ id: pointId, x: 0, y: 0, cornerMode: 'sharp' }],
+			segments: [],
+			closed: false,
+			},
 			visible: true,
 		};
 
@@ -167,9 +194,16 @@ const hitTestNodeRecursive = (
 
 	const nodeTransform = composeTransform(parentTransform, node, boundsMap);
 
-	if (node.children && node.children.length > 0) {
-		for (let i = node.children.length - 1; i >= 0; i--) {
-			const childId = node.children[i];
+	const childrenToTraverse =
+		node.type === 'boolean' && node.booleanData?.isolationOperandId
+			? [node.booleanData.isolationOperandId]
+			: node.type === 'boolean'
+				? []
+				: (node.children ?? []);
+
+	if (childrenToTraverse.length > 0) {
+		for (let i = childrenToTraverse.length - 1; i >= 0; i--) {
+			const childId = childrenToTraverse[i];
 			const child = doc.nodes[childId];
 			if (child) {
 				const childHit = hitTestNodeRecursive(doc, child, worldPoint, nodeTransform, context, boundsMap);
@@ -187,7 +221,7 @@ const hitTestNodeRecursive = (
 
 	const bounds = boundsMap?.[node.id];
 	const sizeOverride = bounds ? { width: bounds.width, height: bounds.height } : undefined;
-	const kind = hitTestNodeShape(node, localPoint, nodeTransform, context, sizeOverride);
+	const kind = hitTestNodeShape(doc, node, localPoint, nodeTransform, context, sizeOverride);
 	if (!kind) {
 		return null;
 	}
@@ -214,9 +248,16 @@ const hitTestNodeRecursiveStack = (
 
 	const nodeTransform = composeTransform(parentTransform, node, boundsMap);
 
-	if (node.children && node.children.length > 0) {
-		for (let i = node.children.length - 1; i >= 0; i--) {
-			const childId = node.children[i];
+	const childrenToTraverse =
+		node.type === 'boolean' && node.booleanData?.isolationOperandId
+			? [node.booleanData.isolationOperandId]
+			: node.type === 'boolean'
+				? []
+				: (node.children ?? []);
+
+	if (childrenToTraverse.length > 0) {
+		for (let i = childrenToTraverse.length - 1; i >= 0; i--) {
+			const childId = childrenToTraverse[i];
 			const child = doc.nodes[childId];
 			if (child) {
 				hitTestNodeRecursiveStack(doc, child, worldPoint, nodeTransform, context, results, boundsMap);
@@ -231,7 +272,7 @@ const hitTestNodeRecursiveStack = (
 
 	const bounds = boundsMap?.[node.id];
 	const sizeOverride = bounds ? { width: bounds.width, height: bounds.height } : undefined;
-	const kind = hitTestNodeShape(node, localPoint, nodeTransform, context, sizeOverride);
+	const kind = hitTestNodeShape(doc, node, localPoint, nodeTransform, context, sizeOverride);
 	if (!kind) {
 		return;
 	}
@@ -282,6 +323,7 @@ const toLocalPoint = (worldPoint: WorldPoint, transform: WorldTransform): WorldP
 };
 
 const hitTestNodeShape = (
+	doc: Document,
 	node: Node,
 	localPoint: WorldPoint,
 	transform: WorldTransform,
@@ -299,7 +341,9 @@ const hitTestNodeShape = (
 		case 'ellipse':
 			return hitTestEllipse(node, localPoint, transform, context, Boolean(node.fill), sizeOverride);
 		case 'path':
-			return hitTestPath(node, localPoint, transform, context, Boolean(node.fill), sizeOverride);
+			return hitTestPath(doc, node, localPoint, transform, context, Boolean(node.fill), sizeOverride);
+		case 'boolean':
+			return hitTestPath(doc, node, localPoint, transform, context, Boolean(node.fill), sizeOverride);
 		case 'text':
 			return hitTestText(node, localPoint, transform, context, sizeOverride);
 		default:
@@ -395,6 +439,7 @@ const hitTestEllipse = (
 };
 
 const hitTestPath = (
+	doc: Document,
 	node: Node,
 	localPoint: WorldPoint,
 	transform: WorldTransform,
@@ -412,7 +457,7 @@ const hitTestPath = (
 		return null;
 	}
 
-	const pathData = getNodePathData(node);
+	const pathData = getNodePathData(node, doc);
 	const ctx = getHitTestContext();
 	if (!pathData || !ctx || typeof Path2D !== 'function') {
 		return hitTestRect(node, localPoint, transform, context, true, sizeOverride);
@@ -499,32 +544,6 @@ const getHitTestContext = (): CanvasRenderingContext2D | null => {
 	const canvas = document.createElement('canvas');
 	cachedHitTestCtx = canvas.getContext('2d');
 	return cachedHitTestCtx;
-};
-
-const getNodePathData = (node: Node): { d: string; fillRule?: 'nonzero' | 'evenodd' } | null => {
-	if (typeof node.path === 'string') {
-		return { d: node.path };
-	}
-	if (node.path && typeof node.path === 'object') {
-		const obj = node.path as Record<string, unknown>;
-		const d =
-			(typeof obj.d === 'string' && obj.d) ||
-			(typeof obj.path === 'string' && obj.path) ||
-			(typeof obj.data === 'string' && obj.data);
-		if (d) {
-			const fillRule =
-				obj.fillRule === 'evenodd' || obj.fillRule === 'nonzero' ? (obj.fillRule as 'evenodd' | 'nonzero') : undefined;
-			return { d, fillRule };
-		}
-	}
-	const nodeAny = node as Node & { pathData?: unknown; d?: unknown };
-	if (typeof nodeAny.pathData === 'string') {
-		return { d: nodeAny.pathData };
-	}
-	if (typeof nodeAny.d === 'string') {
-		return { d: nodeAny.d };
-	}
-	return null;
 };
 
 /**

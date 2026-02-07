@@ -1,4 +1,4 @@
-import type { Asset, Node } from '../doc/types';
+import type { Asset, BooleanOp, Node } from '../doc/types';
 
 export interface BaseCommand {
 	id: string;
@@ -90,6 +90,91 @@ export interface BatchCommand extends BaseCommand {
 	};
 }
 
+export interface CreateBooleanNodeCommand extends BaseCommand {
+	type: 'createBooleanNode';
+	payload: {
+		id: string;
+		parentId: string;
+		operandIds: string[];
+		op: BooleanOp;
+		index?: number;
+		tolerance?: number;
+	};
+}
+
+export interface SetBooleanOpCommand extends BaseCommand {
+	type: 'setBooleanOp';
+	payload: {
+		id: string;
+		op: BooleanOp;
+	};
+}
+
+export interface SetBooleanIsolationCommand extends BaseCommand {
+	type: 'setBooleanIsolation';
+	payload: {
+		id: string;
+		isolationOperandId?: string;
+	};
+}
+
+export interface FlattenBooleanNodeCommand extends BaseCommand {
+	type: 'flattenBooleanNode';
+	payload: {
+		id: string;
+	};
+}
+
+export interface AddVectorPointCommand extends BaseCommand {
+	type: 'addVectorPoint';
+	payload: {
+		id: string;
+		point: {
+			id?: string;
+			x: number;
+			y: number;
+			cornerMode?: 'sharp' | 'mirrored' | 'asymmetric' | 'disconnected';
+		};
+		afterPointId?: string;
+	};
+}
+
+export interface MoveVectorPointCommand extends BaseCommand {
+	type: 'moveVectorPoint';
+	payload: {
+		id: string;
+		pointId: string;
+		x: number;
+		y: number;
+	};
+}
+
+export interface DeleteVectorPointCommand extends BaseCommand {
+	type: 'deleteVectorPoint';
+	payload: {
+		id: string;
+		pointId: string;
+	};
+}
+
+export interface SetVectorHandleCommand extends BaseCommand {
+	type: 'setVectorHandle';
+	payload: {
+		id: string;
+		pointId: string;
+		handle: 'in' | 'out';
+		value?: { x: number; y: number };
+	};
+}
+
+export interface ToggleVectorClosedCommand extends BaseCommand {
+	type: 'toggleVectorClosed';
+	payload: {
+		id: string;
+		closed: boolean;
+	};
+}
+
 export type Command =
 	| CreateNodeCommand
 	| DeleteNodeCommand
@@ -100,7 +185,16 @@ export type Command =
 	| CreateAssetCommand
 	| GroupNodesCommand
 	| UngroupNodesCommand
-	| BatchCommand;
+	| BatchCommand
+	| CreateBooleanNodeCommand
+	| SetBooleanOpCommand
+	| SetBooleanIsolationCommand
+	| FlattenBooleanNodeCommand
+	| AddVectorPointCommand
+	| MoveVectorPointCommand
+	| DeleteVectorPointCommand
+	| SetVectorHandleCommand
+	| ToggleVectorClosedCommand;
 
 export const isCommand = (value: unknown): value is Command => {
 	if (typeof value !== 'object' || value === null) {

@@ -7,6 +7,7 @@ import {
 	resolveShadowOverflow,
 	type WorldBoundsMap,
 } from '../../core/doc';
+import { getNodePathData } from '../../core/doc/vector';
 import type { Color, Document, Node, RenderableShadowEffect } from '../../core/doc/types';
 import type { DrawCommand, GradientPaint, GradientStop, ImageOutlineStyle, Paint } from './types';
 
@@ -224,8 +225,41 @@ const buildNodeCommandsFromBounds = (
 				effects: getRenderableEffects(node),
 			});
 		}
+	} else if (node.type === 'boolean') {
+		const isolationOperandId = node.booleanData?.isolationOperandId;
+		if (isolationOperandId) {
+			const isolatedChild = doc.nodes[isolationOperandId];
+			if (isolatedChild) {
+				buildNodeCommandsFromBounds(doc, isolatedChild, commands, boundsMap, base, rootId, includeRootFrameFill);
+			}
+			return;
+		}
+
+		const pathData = getNodePathData(node, doc);
+		const fallbackOperandId = node.children?.[0];
+		const fallbackOperand = fallbackOperandId ? doc.nodes[fallbackOperandId] : null;
+		const fill = node.fill ?? fallbackOperand?.fill;
+		const stroke = node.stroke ?? fallbackOperand?.stroke;
+		const strokeWidth = node.stroke?.width ?? fallbackOperand?.stroke?.width;
+		if (pathData && (fill || stroke)) {
+			commands.push({
+				type: 'path',
+				nodeId: node.id,
+				d: pathData.d,
+				x,
+				y,
+				width,
+				height,
+				fill: fill ? colorToPaint(fill) : undefined,
+				stroke: stroke ? colorToPaint(stroke.color) : undefined,
+				strokeWidth,
+				opacity: node.opacity,
+				fillRule: pathData.fillRule,
+				effects: getRenderableEffects(node),
+			});
+		}
 	} else if (node.type === 'path') {
-		const pathData = getNodePathData(node);
+		const pathData = getNodePathData(node, doc);
 		if (pathData && (node.fill || node.stroke)) {
 			commands.push({
 				type: 'path',
@@ -491,36 +525,6 @@ const clamp01 = (value: number): number => {
 		return 0;
 	}
 	return Math.max(0, Math.min(1, value));
-};
-
-const getNodePathData = (node: Node): { d: string; fillRule?: 'nonzero' | 'evenodd' } | null => {
-	const n = node as Node & {
-		path?: unknown;
-		pathData?: unknown;
-		d?: unknown;
-	};
-	if (typeof n.path === 'string') {
-		return { d: n.path };
-	}
-	if (n.path && typeof n.path === 'object') {
-		const obj = n.path as Record<string, unknown>;
-		const d =
-			(typeof obj.d === 'string' && obj.d) ||
-			(typeof obj.path === 'string' && obj.path) ||
-			(typeof obj.data === 'string' && obj.data);
-		if (d) {
-			const fillRule =
-				obj.fillRule === 'evenodd' || obj.fillRule === 'nonzero' ? (obj.fillRule as 'evenodd' | 'nonzero') : undefined;
-			return { d, fillRule };
-		}
-	}
-	if (typeof n.pathData === 'string') {
-		return { d: n.pathData };
-	}
-	if (typeof n.d === 'string') {
-		return { d: n.d };
-	}
-	return null;
 };
 
 const resolveImageSource = (doc: Document, node: Node): string | null => {

@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Cursor, Square, TextAlignLeft, Hand, Save, Folder, Image } from 'akar-icons';
 import { devicePresetGroups, type DevicePreset } from '../core/framePresets';
+import { ENABLE_VECTOR_EDIT_V1 } from '../core/feature-flags';
 
-export type Tool = 'select' | 'hand' | 'frame' | 'rectangle' | 'text';
+export type Tool = 'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen';
 
 interface ActionBarProps {
 	activeTool: Tool;
@@ -68,6 +69,21 @@ export const ActionBar: React.FC<ActionBarProps> = ({
 		},
 		{ id: 'rectangle' as const, label: 'Rectangle', shortcut: 'R', icon: <Square strokeWidth={2} size={16} /> },
 		{ id: 'text' as const, label: 'Text', shortcut: 'T', icon: <TextAlignLeft strokeWidth={2} size={16} /> },
+		...(ENABLE_VECTOR_EDIT_V1
+			? [
+					{
+						id: 'pen' as const,
+						label: 'Pen',
+						shortcut: 'P',
+						icon: (
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+								<path d="M7 16l10-10 3 3-10 10H7v-3z" />
+								<path d="M16 7l3 3" />
+							</svg>
+						),
+					},
+				]
+			: []),
 	];
 
 	return (

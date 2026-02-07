@@ -1,6 +1,6 @@
 import { documentSchema, type Document } from './types';
 
-export const CURRENT_DOCUMENT_VERSION = 4;
+export const CURRENT_DOCUMENT_VERSION = 5;
 
 export type DocumentParseResult =
   | { ok: true; doc: Document; warnings: string[] }
@@ -87,7 +87,115 @@ const migrateNode = (rawNode: unknown, version: number): unknown => {
 		node.shadowOverflow = node.clipContent === true ? 'clipped' : 'visible';
 	}
 
+	if (version < 5 && node.vector && typeof node.vector === 'object') {
+		node.vector = migrateLegacyVectorData(node.vector);
+	}
+
 	return node;
+};
+
+const migrateLegacyVectorData = (rawVector: unknown): unknown => {
+	if (!rawVector || typeof rawVector !== 'object') {
+		return rawVector;
+	}
+
+	const vector = { ...(rawVector as Record<string, unknown>) };
+	const rawPoints = Array.isArray(vector.points) ? vector.points : [];
+	const points = rawPoints
+		.map((point, index) => normalizeVectorPoint(point, index))
+		.filter((value): value is Record<string, unknown> => Boolean(value));
+	const pointIdSet = new Set(points.map((point) => point.id as string));
+	const closed = vector.closed === true;
+	const segments = normalizeVectorSegments(vector.segments, points, pointIdSet, closed);
+
+	return {
+		...vector,
+		points,
+		segments,
+		closed,
+	};
+};
+
+const normalizeVectorPoint = (rawPoint: unknown, index: number): Record<string, unknown> | null => {
+	if (!rawPoint || typeof rawPoint !== 'object') {
+		return null;
+	}
+	const point = rawPoint as Record<string, unknown>;
+	const x = typeof point.x === 'number' ? point.x : null;
+	const y = typeof point.y === 'number' ? point.y : null;
+	if (x === null || y === null) {
+		return null;
+	}
+
+	const normalizeHandle = (value: unknown): Record<string, number> | undefined => {
+		if (!value || typeof value !== 'object') return undefined;
+		const handle = value as Record<string, unknown>;
+		if (typeof handle.x !== 'number' || typeof handle.y !== 'number') return undefined;
+		return { x: handle.x, y: handle.y };
+	};
+
+	const cornerMode =
+		point.cornerMode === 'sharp' ||
+		point.cornerMode === 'mirrored' ||
+		point.cornerMode === 'asymmetric' ||
+		point.cornerMode === 'disconnected'
+			? point.cornerMode
+			: 'sharp';
+
+	return {
+		id: typeof point.id === 'string' && point.id.length > 0 ? point.id : `pt_${index}`,
+		x,
+		y,
+		cornerMode,
+		...(normalizeHandle(point.inHandle) ? { inHandle: normalizeHandle(point.inHandle) } : {}),
+		...(normalizeHandle(point.outHandle) ? { outHandle: normalizeHandle(point.outHandle) } : {}),
+	};
+};
+
+const normalizeVectorSegments = (
+	rawSegments: unknown,
+	points: Record<string, unknown>[],
+	pointIdSet: Set<string>,
+	closed: boolean,
+): Array<{ id: string; fromId: string; toId: string }> => {
+	const fallback = (): Array<{ id: string; fromId: string; toId: string }> => {
+		if (points.length < 2) return [];
+		const generated: Array<{ id: string; fromId: string; toId: string }> = [];
+		for (let i = 0; i < points.length - 1; i++) {
+			const fromId = points[i].id as string;
+			const toId = points[i + 1].id as string;
+			generated.push({ id: `seg_${i}`, fromId, toId });
+		}
+		if (closed) {
+			generated.push({
+				id: `seg_${generated.length}`,
+				fromId: points[points.length - 1].id as string,
+				toId: points[0].id as string,
+			});
+		}
+		return generated;
+	};
+
+	if (!Array.isArray(rawSegments)) {
+		return fallback();
+	}
+
+	const normalized = rawSegments
+		.map((raw, index) => {
+			if (!raw || typeof raw !== 'object') return null;
+			const segment = raw as Record<string, unknown>;
+			const fromId = typeof segment.fromId === 'string' ? segment.fromId : null;
+			const toId = typeof segment.toId === 'string' ? segment.toId : null;
+			if (!fromId || !toId || !pointIdSet.has(fromId) || !pointIdSet.has(toId)) return null;
+			return {
+				id: typeof segment.id === 'string' && segment.id.length > 0 ? segment.id : `seg_${index}`,
+				fromId,
+				toId,
+			};
+		})
+		.filter((value): value is { id: string; fromId: string; toId: string } => Boolean(value));
+
+	return normalized.length > 0 ? normalized : fallback();
 };
 
 export const parseDocumentText = (content: string): DocumentParseResult => {

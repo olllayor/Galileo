@@ -12,6 +12,59 @@ export type WorldBoundsMap = Record<string, Bounds>;
 export type BoundsOverrideMap = Record<string, Partial<Bounds>>;
 export type ParentMap = Record<string, string | null>;
 
+export const BOOLEAN_ELIGIBLE_NODE_TYPES = ['rectangle', 'ellipse', 'path'] as const;
+
+export const isBooleanOperandEligible = (node: Node | null | undefined): node is Node => {
+	if (!node) return false;
+	return BOOLEAN_ELIGIBLE_NODE_TYPES.includes(node.type as (typeof BOOLEAN_ELIGIBLE_NODE_TYPES)[number]);
+};
+
+export const validateBooleanOperandSet = (
+	doc: Document,
+	parentId: string,
+	operandIds: string[],
+): { ok: true; operands: Node[] } | { ok: false; reason: string } => {
+	if (operandIds.length < 2) {
+		return { ok: false, reason: 'at_least_two_operands_required' };
+	}
+
+	const parent = doc.nodes[parentId];
+	if (!parent?.children) {
+		return { ok: false, reason: 'parent_not_found' };
+	}
+
+	const uniqueOperandIds = Array.from(new Set(operandIds));
+	const parentChildren = new Set(parent.children);
+	const operands: Node[] = [];
+	for (const id of uniqueOperandIds) {
+		if (!parentChildren.has(id)) {
+			return { ok: false, reason: 'operands_must_share_parent' };
+		}
+		const node = doc.nodes[id];
+		if (!isBooleanOperandEligible(node)) {
+			return { ok: false, reason: 'invalid_operand_type' };
+		}
+		operands.push(node);
+	}
+
+	return { ok: true, operands };
+};
+
+export const isBooleanNodeTreeValid = (doc: Document, nodeId: string): boolean => {
+	const node = doc.nodes[nodeId];
+	if (!node || node.type !== 'boolean') {
+		return false;
+	}
+	if (!node.booleanData || !Array.isArray(node.children)) {
+		return false;
+	}
+	if (node.booleanData.operandIds.length !== node.children.length) {
+		return false;
+	}
+	const operandSet = new Set(node.children);
+	return node.booleanData.operandIds.every((operandId) => operandSet.has(operandId));
+};
+
 export const computeGroupLocalBounds = (children: Node[]): Bounds => {
 	let minX = Number.POSITIVE_INFINITY;
 	let minY = Number.POSITIVE_INFINITY;

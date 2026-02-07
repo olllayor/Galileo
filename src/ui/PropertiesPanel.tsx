@@ -25,6 +25,7 @@ import type {
 } from '../core/doc/types';
 import {
 	ENABLE_AUTO_SHADOWS_V2,
+	ENABLE_BOOLEAN_V1,
 	ENABLE_SHADOWS_V1,
 	createDefaultLayoutGuides,
 	findParentNode,
@@ -303,6 +304,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	const hasBgMask = selectedNode.type === 'image' && Boolean(selectedNode.image?.maskAssetId);
 	const bgRemoveMeta = selectedNode.type === 'image' ? selectedNode.image?.bgRemoveMeta : undefined;
 	const imageOutline = selectedNode.type === 'image' ? selectedNode.image?.outline : undefined;
+	const booleanData = selectedNode.type === 'boolean' ? selectedNode.booleanData : undefined;
 	const outlineEnabled = imageOutline?.enabled === true;
 	const outlineColor = isHexColor(imageOutline?.color) ? (imageOutline?.color as string) : DEFAULT_IMAGE_OUTLINE.color;
 	const outlineWidth = safeNumber(imageOutline?.width, DEFAULT_IMAGE_OUTLINE.width);
@@ -641,6 +643,107 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						>
 							View photo on Unsplash
 						</a>
+					</div>
+				</div>
+			)}
+
+			{ENABLE_BOOLEAN_V1 && selectedNode.type === 'boolean' && booleanData && (
+				<div style={{ marginBottom: spacing.lg }}>
+					<h4
+						style={{
+							margin: `0 0 ${spacing.sm} 0`,
+							fontSize: typography.fontSize.sm,
+							color: colors.text.secondary,
+							fontWeight: typography.fontWeight.medium,
+						}}
+					>
+						Boolean
+					</h4>
+					<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm }}>
+						<div>
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								Operation
+							</label>
+							<select
+								value={booleanData.op}
+								onChange={(event) =>
+									onUpdateNode(selectedNode.id, {
+										booleanData: {
+											...booleanData,
+											op: event.target.value as typeof booleanData.op,
+										},
+									})
+								}
+								style={{
+									width: '100%',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
+								}}
+							>
+								<option value="union">Union</option>
+								<option value="subtract">Subtract</option>
+								<option value="intersect">Intersect</option>
+								<option value="exclude">Exclude</option>
+							</select>
+						</div>
+						<div>
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								Tolerance
+							</label>
+							<input
+								type="number"
+								step="0.0001"
+								min="0.0001"
+								value={booleanData.tolerance}
+								onChange={(event) =>
+									onUpdateNode(selectedNode.id, {
+										booleanData: {
+											...booleanData,
+											tolerance: Math.max(0.0001, Number(event.target.value) || 0.001),
+										},
+									})
+								}
+								style={{
+									width: '100%',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
+								}}
+							/>
+						</div>
+					</div>
+					<div
+						style={{
+							marginTop: spacing.sm,
+							padding: spacing.sm,
+							borderRadius: radii.sm,
+							backgroundColor: colors.bg.tertiary,
+							color: booleanData.status === 'ok' ? colors.text.secondary : '#ff8f8f',
+							fontSize: typography.fontSize.sm,
+						}}
+					>
+						Status: {booleanData.status === 'ok' ? 'Valid' : `Invalid (${booleanData.lastErrorCode ?? 'engine_error'})`}
 					</div>
 				</div>
 			)}

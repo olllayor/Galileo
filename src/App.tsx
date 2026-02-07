@@ -17,6 +17,7 @@ import {
 	createRectangleTool,
 	createFrameTool,
 	createTextTool,
+	createPenTool,
 	hitTestNodeAtPosition,
 	hitTestNodeStackAtPosition,
 	findSelectableNode,
@@ -25,6 +26,8 @@ import {
 	type HitKind,
 } from './interaction/tools';
 import {
+	ENABLE_BOOLEAN_V1,
+	ENABLE_VECTOR_EDIT_V1,
 	buildParentMap,
 	buildWorldBoundsMap,
 	buildLayoutGuideTargets,
@@ -33,6 +36,7 @@ import {
 	findParentNode,
 	getNodeWorldBounds,
 	getSelectionBounds,
+	isBooleanOperandEligible,
 	parseDocumentText,
 	resolveConstraints,
 	serializeDocument,
@@ -42,7 +46,16 @@ import {
 } from './core/doc';
 import { generateId } from './core/doc/id';
 import { createDocument } from './core/doc/types';
-import type { Constraints, Document, ImageMeta, ImageMetaUnsplash, ImageOutline, Node, ShadowEffect } from './core/doc/types';
+import type {
+	BooleanOp,
+	Constraints,
+	Document,
+	ImageMeta,
+	ImageMetaUnsplash,
+	ImageOutline,
+	Node,
+	ShadowEffect,
+} from './core/doc/types';
 import type { Command } from './core/commands/types';
 import {
 	createProjectMeta,
@@ -942,9 +955,11 @@ export const App: React.FC = () => {
 	const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 	const [missingPaths, setMissingPaths] = useState<Record<string, boolean>>({});
 
-	const [activeTool, setActiveTool] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text'>('select');
+	const [activeTool, setActiveTool] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen'>('select');
 	const [spaceKeyHeld, setSpaceKeyHeld] = useState(false);
-	const [toolBeforeSpace, setToolBeforeSpace] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text' | null>(null);
+	const [toolBeforeSpace, setToolBeforeSpace] = useState<
+		'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen' | null
+	>(null);
 	const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
 	const [zoom, setZoom] = useState(1);
 	const [previewDocument, setPreviewDocument] = useState<Document | null>(null);
@@ -1338,7 +1353,8 @@ export const App: React.FC = () => {
 		if (hoverHit?.locked) return 'not-allowed';
 		if (hoverHit?.kind === 'edge') return hoverHit.edgeCursor || 'move';
 		if (hoverHit?.kind === 'fill') return 'default';
-		if (activeTool === 'frame' || activeTool === 'rectangle' || activeTool === 'text') return 'crosshair';
+		if (activeTool === 'frame' || activeTool === 'rectangle' || activeTool === 'text' || activeTool === 'pen')
+			return 'crosshair';
 		return undefined; // Let CSS custom cursor apply
 	}, [dragState, transformSession, hoverHandle, hoverHit, activeTool, isInPanMode]);
 
@@ -2285,6 +2301,101 @@ export const App: React.FC = () => {
 		[document.nodes, executeCommand, setSelection],
 	);
 
+	const createBooleanFromSelection = useCallback(
+		(op: BooleanOp, ids: string[] = selectionIds) => {
+			if (!ENABLE_BOOLEAN_V1) return;
+			const validIds = ids.filter((id) => {
+				const node = document.nodes[id];
+				return Boolean(node) && isBooleanOperandEligible(node);
+			});
+			if (validIds.length < 2) {
+				return;
+			}
+
+			const parentIds = Array.from(new Set(validIds.map((id) => documentParentMap[id]).filter(Boolean)));
+			if (parentIds.length !== 1) {
+				return;
+			}
+			const parentId = parentIds[0] as string;
+			const parent = document.nodes[parentId];
+			if (!parent?.children) return;
+
+			const orderedIds = parent.children.filter((childId) => validIds.includes(childId));
+			if (orderedIds.length < 2) return;
+
+			const booleanId = generateId();
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: `Create boolean (${op})`,
+				type: 'createBooleanNode',
+				payload: {
+					id: booleanId,
+					parentId,
+					operandIds: orderedIds,
+					op,
+				},
+			} as Command);
+			setSelection([booleanId]);
+		},
+		[document.nodes, documentParentMap, executeCommand, selectionIds, setSelection],
+	);
+
+	const setBooleanOp = useCallback(
+		(nodeId: string, op: BooleanOp) => {
+			if (!ENABLE_BOOLEAN_V1) return;
+			const node = document.nodes[nodeId];
+			if (!node || node.type !== 'boolean') return;
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: `Set boolean op (${op})`,
+				type: 'setBooleanOp',
+				payload: { id: nodeId, op },
+			} as Command);
+		},
+		[document.nodes, executeCommand],
+	);
+
+	const flattenBoolean = useCallback(
+		(nodeId: string) => {
+			if (!ENABLE_BOOLEAN_V1) return;
+			const node = document.nodes[nodeId];
+			if (!node || node.type !== 'boolean') return;
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Flatten boolean',
+				type: 'flattenBooleanNode',
+				payload: { id: nodeId },
+			} as Command);
+		},
+		[document.nodes, executeCommand],
+	);
+
+	const setBooleanIsolation = useCallback(
+		(nodeId: string, isolationOperandId?: string) => {
+			if (!ENABLE_BOOLEAN_V1) return;
+			const node = document.nodes[nodeId];
+			if (!node || node.type !== 'boolean') return;
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: isolationOperandId ? 'Set boolean isolation' : 'Clear boolean isolation',
+				type: 'setBooleanIsolation',
+				payload: {
+					id: nodeId,
+					isolationOperandId,
+				},
+			} as Command);
+		},
+		[document.nodes, executeCommand],
+	);
+
 	const dispatchEditorAction = useCallback(
 		(action: EditorAction, targetIds: string[] = selectionIds) => {
 			console.log('dispatchEditorAction called:', action.type, 'targetIds:', targetIds);
@@ -2373,6 +2484,7 @@ export const App: React.FC = () => {
 		const canRename = selectionIds.length === 1;
 		const primaryId = selectionIds[0];
 		const primaryNode = primaryId ? document.nodes[primaryId] : null;
+		const isSingleBoolean = selectionIds.length === 1 && primaryNode?.type === 'boolean';
 		const isSingleImage = selectionIds.length === 1 && primaryNode?.type === 'image';
 		const hasBgMask = Boolean(primaryNode?.image?.maskAssetId);
 		const anyVisible = selectionIds.some((id) => document.nodes[id]?.visible !== false);
@@ -2396,6 +2508,15 @@ export const App: React.FC = () => {
 			selectionIds.length >= 2 &&
 			(() => {
 				const parentIds = new Set(selectionIds.map((id) => documentParentMap[id]));
+				return parentIds.size === 1;
+			})();
+
+		const canCreateBoolean =
+			ENABLE_BOOLEAN_V1 &&
+			selectionIds.length >= 2 &&
+			selectionIds.every((id) => isBooleanOperandEligible(document.nodes[id] ?? null)) &&
+			(() => {
+				const parentIds = new Set(selectionIds.map((id) => documentParentMap[id]).filter(Boolean));
 				return parentIds.size === 1;
 			})();
 
@@ -2453,6 +2574,77 @@ export const App: React.FC = () => {
 				enabled: canGroup,
 				onSelect: () => dispatchEditorAction({ type: 'group' }),
 			},
+			...(ENABLE_BOOLEAN_V1
+				? [
+						{
+							icon: 'B',
+							label: 'Boolean',
+							enabled: canCreateBoolean || isSingleBoolean,
+							submenu: [
+								{
+									label: 'Union',
+									enabled: canCreateBoolean || isSingleBoolean,
+									onSelect: () =>
+										isSingleBoolean && primaryId
+											? setBooleanOp(primaryId, 'union')
+											: createBooleanFromSelection('union'),
+								},
+								{
+									label: 'Subtract',
+									enabled: canCreateBoolean || isSingleBoolean,
+									onSelect: () =>
+										isSingleBoolean && primaryId
+											? setBooleanOp(primaryId, 'subtract')
+											: createBooleanFromSelection('subtract'),
+								},
+								{
+									label: 'Intersect',
+									enabled: canCreateBoolean || isSingleBoolean,
+									onSelect: () =>
+										isSingleBoolean && primaryId
+											? setBooleanOp(primaryId, 'intersect')
+											: createBooleanFromSelection('intersect'),
+								},
+								{
+									label: 'Exclude',
+									enabled: canCreateBoolean || isSingleBoolean,
+									onSelect: () =>
+										isSingleBoolean && primaryId
+											? setBooleanOp(primaryId, 'exclude')
+											: createBooleanFromSelection('exclude'),
+								},
+								...(isSingleBoolean
+									? [
+											{ separator: true } as ContextMenuItem,
+											{
+												label: 'Isolation',
+												submenu: [
+													{
+														label: 'Off',
+														onSelect: () => primaryId && setBooleanIsolation(primaryId),
+													},
+													...((primaryNode?.children ?? []).map((operandId) => {
+														const operand = document.nodes[operandId];
+														const isActive =
+															primaryNode?.type === 'boolean' &&
+															primaryNode.booleanData?.isolationOperandId === operandId;
+														return {
+															label: `${isActive ? '• ' : ''}${operand?.name ?? operand?.type ?? 'Operand'}`,
+															onSelect: () => primaryId && setBooleanIsolation(primaryId, operandId),
+														};
+													}) as ContextMenuItem[]),
+												],
+											},
+											{
+												label: 'Flatten',
+												onSelect: () => primaryId && flattenBoolean(primaryId),
+											},
+										]
+									: []),
+							],
+						},
+					]
+				: []),
 			{
 				icon: 'U',
 				label: 'Ungroup',
@@ -2513,10 +2705,12 @@ export const App: React.FC = () => {
 	}, [
 		contextMenu?.target,
 		clearBackgroundRemoval,
+		createBooleanFromSelection,
 		devPlugins,
 		dispatchEditorAction,
 		document.nodes,
 		documentParentMap,
+		flattenBoolean,
 		handleLoadDevPlugin,
 		isDev,
 		isRemovingBackground,
@@ -2524,6 +2718,8 @@ export const App: React.FC = () => {
 		plugins,
 		removeBackgroundForImage,
 		runPlugin,
+		setBooleanOp,
+		setBooleanIsolation,
 		selectionIds,
 	]);
 
@@ -3521,6 +3717,58 @@ export const App: React.FC = () => {
 					selectNode(newId);
 					setActiveTool('select');
 				}
+				return;
+			}
+
+			if (activeTool === 'pen' && ENABLE_VECTOR_EDIT_V1) {
+				const activeSelectionId = selectionIds.length === 1 ? selectionIds[0] : null;
+				const selectedNode = activeSelectionId ? document.nodes[activeSelectionId] : null;
+				if (selectedNode?.type === 'path') {
+					const nodeBounds = boundsMap[selectedNode.id];
+					const localPoint = nodeBounds
+						? { x: worldX - nodeBounds.x, y: worldY - nodeBounds.y }
+						: { x: worldX - selectedNode.position.x, y: worldY - selectedNode.position.y };
+					const points = selectedNode.vector?.points ?? [];
+					const lastPointId = points.length > 0 ? points[points.length - 1].id : undefined;
+					executeCommand({
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'user',
+						description: 'Add vector point',
+						type: 'addVectorPoint',
+						payload: {
+							id: selectedNode.id,
+							point: { x: localPoint.x, y: localPoint.y, cornerMode: 'sharp' },
+							afterPointId: lastPointId,
+						},
+					} as Command);
+					selectNode(selectedNode.id);
+					return;
+				}
+
+				const parentId = getInsertionParentId(worldX, worldY);
+				const localPoint = getLocalPointForParent(parentId, worldX, worldY);
+				const tool = createPenTool(parentId);
+				const result = tool.handleMouseDown(document, localPoint.x, localPoint.y, []);
+				if (!result) return;
+				const newIds = Object.keys(result.nodes).filter((id) => !(id in document.nodes));
+				const newId = newIds[0];
+				const newNode = newId ? result.nodes[newId] : null;
+				if (!newId || !newNode) return;
+				executeCommand({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Create path',
+					type: 'createNode',
+					payload: {
+						id: newId,
+						parentId,
+						node: newNode,
+					},
+				} as Command);
+				selectNode(newId);
+				return;
 			}
 		},
 		[
@@ -3540,6 +3788,7 @@ export const App: React.FC = () => {
 			panOffset,
 			getInsertionParentId,
 			getLocalPointForParent,
+			boundsMap,
 		],
 	);
 
@@ -5034,11 +5283,12 @@ export const App: React.FC = () => {
 			}
 
 			if (!editable) {
-				if (e.key === 'v') setActiveTool('select');
-				if (e.key === 'h') setActiveTool('hand');
-				if (e.key === 'f') setActiveTool('frame');
-				if (e.key === 'r') setActiveTool('rectangle');
-				if (e.key === 't') setActiveTool('text');
+				if (key === 'v') setActiveTool('select');
+				if (key === 'h') setActiveTool('hand');
+				if (key === 'f') setActiveTool('frame');
+				if (key === 'r') setActiveTool('rectangle');
+				if (key === 't') setActiveTool('text');
+				if (ENABLE_VECTOR_EDIT_V1 && key === 'p') setActiveTool('pen');
 
 				// Space key for temporary pan mode (Figma-style)
 				if (e.code === 'Space' && !spaceKeyHeld && !dragState) {
@@ -5167,7 +5417,7 @@ export const App: React.FC = () => {
 
 	// Handle tool change including 'hand' tool
 	const handleToolChange = useCallback((tool: Tool) => {
-		setActiveTool(tool as 'select' | 'hand' | 'frame' | 'rectangle' | 'text');
+		setActiveTool(tool as 'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen');
 	}, []);
 
 	const commandItems = useMemo<CommandPaletteItem[]>(() => {
