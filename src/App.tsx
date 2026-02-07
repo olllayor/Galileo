@@ -5259,6 +5259,7 @@ export const App: React.FC = () => {
 			`}</style>
 			{/* Spacer for native macOS traffic lights */}
 			<div
+				data-tauri-drag-region
 				style={{
 					height: '28px',
 					width: '100%',
