@@ -3201,6 +3201,11 @@ export const App: React.FC = () => {
 						return { rpc: 1, id: request.id, ok: true, result: { shown: true } };
 					}
 
+					case 'host.close': {
+						setActivePlugin(null);
+						return { rpc: 1, id: request.id, ok: true, result: { closed: true } };
+					}
+
 					case 'selection.get': {
 						if (!hasPermission(plugin.manifest, 'selection:read')) {
 							return fail('permission_denied', 'selection:read is required');
@@ -3916,7 +3921,7 @@ export const App: React.FC = () => {
 				return fail('internal_error', error instanceof Error ? error.message : 'Unknown error');
 			}
 		},
-		[document, executeCommand, getDefaultInsertPosition, insertImageNode, isDev, selectionIds],
+		[document, executeCommand, getDefaultInsertPosition, insertImageNode, isDev, selectionIds, setActivePlugin],
 	);
 
 	useEffect(() => {

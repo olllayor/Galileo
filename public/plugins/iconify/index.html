@@ -635,7 +635,33 @@
       recentIcons: 'galileo.iconify.recent.icons.v1',
     };
 
-    const preset = new URLSearchParams(window.location.search).get('preset');
+    const PRESET_CONFIGS = {
+      default: {
+        key: 'default',
+        defaultPrefix: '',
+        lockedPrefix: '',
+        startView: 'sets',
+        allowSetBrowsing: true,
+      },
+      material: {
+        key: 'material',
+        defaultPrefix: 'mdi',
+        lockedPrefix: '',
+        startView: 'sets',
+        allowSetBrowsing: true,
+      },
+      feather: {
+        key: 'feather',
+        defaultPrefix: 'fe',
+        lockedPrefix: 'fe',
+        startView: 'library',
+        allowSetBrowsing: false,
+      },
+    };
+    const presetKeyRaw = new URLSearchParams(window.location.search).get('preset');
+    const presetKey = Object.prototype.hasOwnProperty.call(PRESET_CONFIGS, presetKeyRaw || '') ? presetKeyRaw : 'default';
+    const presetConfig = PRESET_CONFIGS[presetKey];
+    const isSetBrowsingAllowed = () => presetConfig.allowSetBrowsing !== false;
 
     const globalSearchInput = document.getElementById('globalSearch');
     const setFiltersRow = document.getElementById('setFiltersRow');
@@ -791,15 +817,30 @@
       statusEl.className = `status${kind ? ` ${kind}` : ''}`;
     }
 
+    function applyPresetUi() {
+      if (isSetBrowsingAllowed()) return;
+      setFiltersRow.classList.add('hidden');
+      categoryChips.classList.add('hidden');
+      backToSetsBtn.classList.add('hidden');
+      backToSetsBtn.disabled = true;
+      prevSetBtn.classList.add('hidden');
+      prevSetBtn.disabled = true;
+      nextSetBtn.classList.add('hidden');
+      nextSetBtn.disabled = true;
+      setSearchInput.classList.add('hidden');
+      setSearchInput.disabled = true;
+      globalSearchInput.placeholder = 'Search Feather icons...';
+    }
+
     const state = {
-      viewMode: 'sets',
+      viewMode: presetConfig.startView === 'library' ? 'library' : 'sets',
       globalQuery: '',
       setSearch: '',
       iconFilter: '',
       selectedCategory: '',
       selectedPalette: 'all',
       selectedLicense: '',
-      selectedPrefix: preset === 'material' ? 'mdi' : '',
+      selectedPrefix: presetConfig.lockedPrefix || presetConfig.defaultPrefix || '',
       collections: {},
       collectionDetails: {},
       librarySourceIcons: [],
@@ -1130,6 +1171,7 @@
     }
 
     function renderSetsView() {
+      if (!isSetBrowsingAllowed()) return;
       const entries = getFilteredSetEntries();
       syncSetFilterControlVisibility();
       renderCategoryChips(entries);
@@ -1359,10 +1401,15 @@
       pageLabel.textContent = `${state.libraryPage} / ${paging.totalPages}`;
       prevPageBtn.disabled = state.libraryPage <= 1;
       nextPageBtn.disabled = state.libraryPage >= paging.totalPages;
-      const navEntries = getCurrentSetEntriesForNav();
-      const selectedIndex = navEntries.findIndex((entry) => entry[0] === state.selectedPrefix);
-      prevSetBtn.disabled = selectedIndex <= 0;
-      nextSetBtn.disabled = selectedIndex < 0 || selectedIndex >= navEntries.length - 1;
+      if (isSetBrowsingAllowed()) {
+        const navEntries = getCurrentSetEntriesForNav();
+        const selectedIndex = navEntries.findIndex((entry) => entry[0] === state.selectedPrefix);
+        prevSetBtn.disabled = selectedIndex <= 0;
+        nextSetBtn.disabled = selectedIndex < 0 || selectedIndex >= navEntries.length - 1;
+      } else {
+        prevSetBtn.disabled = true;
+        nextSetBtn.disabled = true;
+      }
       replaceActionBtn.disabled = !state.selection.canReplace;
     }
 
@@ -1372,20 +1419,24 @@
     }
 
     function syncViewMode() {
-      const library = state.viewMode === 'library';
+      if (!isSetBrowsingAllowed()) {
+        state.viewMode = 'library';
+      }
+      const library = !isSetBrowsingAllowed() || state.viewMode === 'library';
       setsView.classList.toggle('hidden', library);
       libraryView.classList.toggle('hidden', !library);
     }
 
     async function openLibrary(prefix) {
-      if (!prefix) return;
-      state.selectedPrefix = prefix;
+      const nextPrefix = presetConfig.lockedPrefix || prefix;
+      if (!nextPrefix) return;
+      state.selectedPrefix = nextPrefix;
       state.viewMode = 'library';
       state.iconFilter = '';
       iconFilterInput.value = '';
       syncViewMode();
-      pushRecentSet(prefix);
-      await ensureCollectionInfo(prefix);
+      pushRecentSet(nextPrefix);
+      await ensureCollectionInfo(nextPrefix);
       await refreshLibrarySource();
     }
 
@@ -1529,10 +1580,11 @@
         const payload = await rpc.call('iconify.collections', {});
         state.collections = payload && typeof payload === 'object' ? payload : {};
         renderFilters();
-        renderSetsView();
-
-        if (preset === 'material' && state.collections.mdi) {
-          await openLibrary('mdi');
+        if (isSetBrowsingAllowed()) {
+          renderSetsView();
+        }
+        if (presetConfig.lockedPrefix) {
+          await openLibrary(presetConfig.lockedPrefix);
         }
       } catch (error) {
         setStatus(parseRpcError(error), 'error');
@@ -1582,6 +1634,7 @@
     });
 
     setSections.addEventListener('click', (event) => {
+      if (!isSetBrowsingAllowed()) return;
       const card = event.target.closest('[data-open-prefix]');
       if (!card) return;
       const prefix = card.getAttribute('data-open-prefix');
@@ -1590,6 +1643,7 @@
     });
 
     backToSetsBtn.addEventListener('click', () => {
+      if (!isSetBrowsingAllowed()) return;
       state.viewMode = 'sets';
       syncViewMode();
       renderSetsView();
@@ -1597,10 +1651,12 @@
     });
 
     prevSetBtn.addEventListener('click', () => {
+      if (!isSetBrowsingAllowed()) return;
       goToAdjacentSet(-1);
     });
 
     nextSetBtn.addEventListener('click', () => {
+      if (!isSetBrowsingAllowed()) return;
       goToAdjacentSet(1);
     });
 
@@ -1674,6 +1730,7 @@
     });
 
     async function bootstrap() {
+      applyPresetUi();
       syncViewMode();
       setStatus('Loading Iconify collections...', 'default');
       await loadCollections();

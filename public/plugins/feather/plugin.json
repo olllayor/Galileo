@@ -1,0 +1,8 @@
+{
+  "id": "com.galileo.feather",
+  "name": "Feather Icons",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "permissions": ["selection:read", "document:write", "iconify:search", "iconify:browse", "iconify:render"],
+  "ui": { "width": 520, "height": 740 }
+}

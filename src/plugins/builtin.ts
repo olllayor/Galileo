@@ -10,7 +10,7 @@ const iconifyBuiltinPlugins: PluginRegistration[] = [
 			permissions: ['selection:read', 'document:write', 'iconify:search', 'iconify:browse', 'iconify:render'],
 			ui: { width: 520, height: 740 },
 		},
-    entryUrl: '/plugins/iconify/index.html?v=10',
+		entryUrl: '/plugins/iconify/index.html?v=11',
 		source: 'builtin',
 	},
 	{
@@ -22,7 +22,19 @@ const iconifyBuiltinPlugins: PluginRegistration[] = [
 			permissions: ['selection:read', 'document:write', 'iconify:search', 'iconify:browse', 'iconify:render'],
 			ui: { width: 520, height: 740 },
 		},
-    entryUrl: '/plugins/iconify/index.html?v=10&preset=material',
+		entryUrl: '/plugins/iconify/index.html?v=11&preset=material',
+		source: 'builtin',
+	},
+	{
+		manifest: {
+			id: 'com.galileo.feather',
+			name: 'Feather Icons',
+			version: '0.1.0',
+			entry: 'index.html',
+			permissions: ['selection:read', 'document:write', 'iconify:search', 'iconify:browse', 'iconify:render'],
+			ui: { width: 520, height: 740 },
+		},
+		entryUrl: '/plugins/feather/index.html?v=1',
 		source: 'builtin',
 	},
 ];

@@ -1,0 +1,660 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Feather Icons</title>
+  <style>
+    :root {
+      --bg: #ececee;
+      --panel: #2b2c30;
+      --panel-2: #313238;
+      --line: #d2d3d7;
+      --text: #24262b;
+      --text-soft: #6a6e77;
+      --icon: #3d3f45;
+      --active: #dbe6fb;
+      --active-line: #8ea6d5;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Text', Helvetica, Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    .app {
+      height: 100%;
+      display: grid;
+      grid-template-rows: 58px 82px minmax(0, 1fr) 24px;
+      background: var(--bg);
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      background: linear-gradient(180deg, var(--panel) 0%, #26272b 100%);
+      color: #f2f4f8;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+    }
+
+    .title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .brand-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: #1c6ef2;
+      color: #f7f8fb;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 700;
+      flex: 0 0 auto;
+    }
+
+    .title {
+      font-size: 35px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .close-btn {
+      width: 30px;
+      height: 30px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: #eff2f7;
+      font-size: 30px;
+      line-height: 1;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+
+    .close-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+
+    .search-shell {
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      background: #efeff1;
+    }
+
+    .search-wrap {
+      width: 100%;
+      position: relative;
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 13px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #6c7078;
+      font-size: 24px;
+      pointer-events: none;
+    }
+
+    .search {
+      width: 100%;
+      height: 48px;
+      border-radius: 12px;
+      border: 1px solid #c9cad0;
+      background: #f8f8fa;
+      color: #3a3d44;
+      padding: 0 14px 0 44px;
+      font-size: 16px;
+      outline: none;
+    }
+
+    .search:focus {
+      border-color: #8aa8de;
+      box-shadow: 0 0 0 3px rgba(21, 98, 212, 0.14);
+    }
+
+    .grid-wrap {
+      overflow: auto;
+      padding: 10px 8px 12px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .icon-cell {
+      aspect-ratio: 1 / 1;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      background: transparent;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      padding: 7px;
+    }
+
+    .icon-cell:hover {
+      background: #e6e7eb;
+      border-color: #c7cad1;
+    }
+
+    .icon-cell.active {
+      background: var(--active);
+      border-color: var(--active-line);
+    }
+
+    .icon-cell img {
+      width: 90%;
+      height: 90%;
+      object-fit: contain;
+      filter: contrast(0.98);
+    }
+
+    .placeholder {
+      color: #9aa0aa;
+      font-size: 11px;
+      user-select: none;
+    }
+
+    .status {
+      padding: 4px 10px 8px;
+      font-size: 11px;
+      color: var(--text-soft);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      border-top: 1px solid #dbdde2;
+      background: #f1f2f4;
+    }
+
+    .status.error {
+      color: #ac2d2d;
+    }
+
+    .status.ok {
+      color: #1f7f42;
+    }
+
+    .empty {
+      color: #717784;
+      font-size: 13px;
+      padding: 16px;
+      text-align: center;
+    }
+
+    @media (max-width: 420px) {
+      .grid {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="title-wrap">
+        <div class="brand-icon">⌁</div>
+        <div class="title">Feather Icons</div>
+      </div>
+      <button id="closeButton" class="close-btn" type="button" aria-label="Close">×</button>
+    </header>
+
+    <div class="search-shell">
+      <div class="search-wrap">
+        <span class="search-icon">⌕</span>
+        <input id="searchInput" class="search" type="search" placeholder="Search icons" />
+      </div>
+    </div>
+
+    <div id="gridWrap" class="grid-wrap">
+      <div id="grid" class="grid"></div>
+    </div>
+
+    <div id="status" class="status">Loading Feather icons...</div>
+  </div>
+
+  <script>
+    const PREFIX = 'fe';
+    const PAGE_LIMIT = 200;
+
+    const searchInput = document.getElementById('searchInput');
+    const closeButton = document.getElementById('closeButton');
+    const gridWrap = document.getElementById('gridWrap');
+    const grid = document.getElementById('grid');
+    const statusEl = document.getElementById('status');
+
+    const pending = new Map();
+
+    function createRpcId() {
+      try {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+          return window.crypto.randomUUID();
+        }
+      } catch (_error) {}
+      return `rpc_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    }
+
+    const rpc = {
+      call(method, params) {
+        const id = createRpcId();
+        window.parent.postMessage({ rpc: 1, id, method, params }, '*');
+        return new Promise((resolve, reject) => {
+          pending.set(id, { resolve, reject });
+          setTimeout(() => {
+            if (!pending.has(id)) return;
+            pending.delete(id);
+            reject(new Error('RPC timeout'));
+          }, 30000);
+        });
+      },
+    };
+
+    window.addEventListener('message', (event) => {
+      const data = event.data;
+      if (!data || data.rpc !== 1 || !data.id) return;
+      const req = pending.get(data.id);
+      if (!req) return;
+      pending.delete(data.id);
+      if (data.ok) {
+        req.resolve(data.result);
+        return;
+      }
+      const error = new Error(data.error?.message || 'RPC error');
+      error.code = data.error?.code || 'rpc_error';
+      req.reject(error);
+    });
+
+    const state = {
+      query: '',
+      allIcons: [],
+      visibleIcons: [],
+      previewCache: new Map(),
+      previewLoading: new Set(),
+      selectedIconId: null,
+      loading: false,
+      selection: {
+        canReplace: false,
+        targetNodeId: null,
+        currentColor: null,
+      },
+      collectionInfo: null,
+    };
+
+    function setStatus(message, kind = '') {
+      statusEl.textContent = message;
+      statusEl.className = `status${kind ? ` ${kind}` : ''}`;
+    }
+
+    function encodeSvgToBase64(svg) {
+      return btoa(unescape(encodeURIComponent(svg)));
+    }
+
+    function parseSvgSize(svg) {
+      const widthMatch = svg.match(/\bwidth="([\d.]+)"/i);
+      const heightMatch = svg.match(/\bheight="([\d.]+)"/i);
+      const viewBoxMatch = svg.match(/\bviewBox="([^"]+)"/i);
+
+      if (widthMatch && heightMatch) {
+        const width = Number(widthMatch[1]);
+        const height = Number(heightMatch[1]);
+        if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+          return { width, height };
+        }
+      }
+
+      if (viewBoxMatch) {
+        const values = viewBoxMatch[1].trim().split(/\s+/).map(Number);
+        if (values.length === 4 && values.every((value) => Number.isFinite(value)) && values[2] > 0 && values[3] > 0) {
+          return { width: values[2], height: values[3] };
+        }
+      }
+
+      return { width: 24, height: 24 };
+    }
+
+    function parseCollectionIconNames(collection) {
+      const names = new Set();
+
+      if (Array.isArray(collection?.uncategorized)) {
+        collection.uncategorized.forEach((entry) => {
+          if (typeof entry === 'string' && entry.trim()) names.add(entry.trim());
+        });
+      }
+
+      if (collection?.categories && typeof collection.categories === 'object') {
+        Object.values(collection.categories).forEach((list) => {
+          if (!Array.isArray(list)) return;
+          list.forEach((entry) => {
+            if (typeof entry === 'string' && entry.trim()) names.add(entry.trim());
+          });
+        });
+      }
+
+      if (names.size === 0 && Array.isArray(collection?.icons)) {
+        collection.icons.forEach((entry) => {
+          if (typeof entry === 'string' && entry.trim()) names.add(entry.trim());
+        });
+      }
+
+      if (Array.isArray(collection?.hidden)) {
+        collection.hidden.forEach((entry) => {
+          if (typeof entry === 'string' && entry.trim()) names.delete(entry.trim());
+        });
+      }
+
+      return Array.from(names).sort();
+    }
+
+    async function fetchAllBySearchFallback() {
+      const resultNames = [];
+      let start = 0;
+      let total = Infinity;
+
+      while (start < total && start < 2000) {
+        const response = await rpc.call('iconify.search', {
+          query: PREFIX,
+          prefix: PREFIX,
+          limit: PAGE_LIMIT,
+          start,
+        });
+
+        const rawIcons = Array.isArray(response?.icons) ? response.icons : [];
+        if (rawIcons.length === 0) break;
+
+        rawIcons.forEach((entry) => {
+          const text = String(entry || '');
+          if (!text.startsWith(`${PREFIX}:`)) return;
+          const name = text.slice(PREFIX.length + 1).trim();
+          if (name) resultNames.push(name);
+        });
+
+        const parsedTotal = Number(response?.total);
+        if (Number.isFinite(parsedTotal) && parsedTotal > 0) {
+          total = parsedTotal;
+        } else {
+          total = start + rawIcons.length;
+        }
+
+        start += rawIcons.length;
+        if (rawIcons.length < PAGE_LIMIT) break;
+      }
+
+      return Array.from(new Set(resultNames)).sort();
+    }
+
+    async function loadFeatherCatalog() {
+      state.loading = true;
+      setStatus('Loading Feather icons...');
+
+      try {
+        const collection = await rpc.call('iconify.collection', {
+          prefix: PREFIX,
+          info: true,
+          chars: false,
+        });
+        const names = parseCollectionIconNames(collection);
+        state.collectionInfo = collection?.info || null;
+
+        const finalNames = names.length > 0 ? names : await fetchAllBySearchFallback();
+        state.allIcons = finalNames.map((name) => ({
+          id: `${PREFIX}:${name}`,
+          name,
+          prefix: PREFIX,
+        }));
+
+        state.visibleIcons = [...state.allIcons];
+        state.selectedIconId = state.visibleIcons[0]?.id || null;
+
+        const total = state.allIcons.length;
+        searchInput.placeholder = `Search ${total} icons`;
+        setStatus(`${total} Feather icons loaded`, 'ok');
+        renderGrid();
+      } catch (error) {
+        setStatus(error && error.message ? error.message : 'Failed to load Feather icons', 'error');
+        grid.innerHTML = '<div class="empty">Could not load Feather icons.</div>';
+      } finally {
+        state.loading = false;
+      }
+    }
+
+    function renderGrid() {
+      if (state.visibleIcons.length === 0) {
+        grid.innerHTML = '<div class="empty">No matching Feather icons.</div>';
+        return;
+      }
+
+      grid.innerHTML = state.visibleIcons
+        .map((icon) => {
+          const active = icon.id === state.selectedIconId ? ' active' : '';
+          const preview = state.previewCache.get(icon.id);
+          return `
+            <button class="icon-cell${active}" type="button" data-icon-id="${icon.id}" title="${icon.name}">
+              ${preview ? `<img src="${preview}" alt="${icon.name}" />` : '<span class="placeholder">...</span>'}
+            </button>
+          `;
+        })
+        .join('');
+
+      hydratePreviews();
+    }
+
+    async function ensurePreview(icon) {
+      if (!icon) return;
+      if (state.previewCache.has(icon.id) || state.previewLoading.has(icon.id)) return;
+
+      state.previewLoading.add(icon.id);
+      try {
+        const response = await rpc.call('iconify.svg', { icon: icon.id });
+        const svg = response && typeof response.svg === 'string' ? response.svg : '';
+        if (!svg) return;
+        const dataUrl = `data:image/svg+xml;base64,${encodeSvgToBase64(svg)}`;
+        state.previewCache.set(icon.id, dataUrl);
+
+        const img = grid.querySelector(`[data-icon-id="${icon.id}"] img`);
+        if (!img) {
+          const cell = grid.querySelector(`[data-icon-id="${icon.id}"]`);
+          if (cell) {
+            cell.innerHTML = `<img src="${dataUrl}" alt="${icon.name}" />`;
+          }
+        }
+      } catch (_error) {
+      } finally {
+        state.previewLoading.delete(icon.id);
+      }
+    }
+
+    function hydratePreviews() {
+      const cards = Array.from(grid.querySelectorAll('[data-icon-id]'));
+      const max = Math.min(cards.length, 140);
+      for (let i = 0; i < max; i += 1) {
+        const card = cards[i];
+        const iconId = card.getAttribute('data-icon-id');
+        const icon = state.visibleIcons.find((entry) => entry.id === iconId);
+        if (!icon) continue;
+        setTimeout(() => {
+          void ensurePreview(icon);
+        }, i * 8);
+      }
+    }
+
+    async function refreshSelection() {
+      try {
+        const selection = await rpc.call('selection.get');
+        const nodes = Array.isArray(selection?.nodes) ? selection.nodes : [];
+        const ids = Array.isArray(selection?.ids) ? selection.ids : [];
+        const node = nodes.length === 1 ? nodes[0] : null;
+        const canReplace = Boolean(ids.length === 1 && node && node.type === 'image' && selection?.primaryId);
+
+        state.selection.canReplace = canReplace;
+        state.selection.targetNodeId = canReplace ? selection.primaryId : null;
+        state.selection.currentColor =
+          node &&
+          node.imageMeta &&
+          node.imageMeta.kind === 'iconify-icon' &&
+          node.imageMeta.customizations &&
+          typeof node.imageMeta.customizations.color === 'string'
+            ? node.imageMeta.customizations.color
+            : null;
+      } catch (_error) {
+        state.selection.canReplace = false;
+        state.selection.targetNodeId = null;
+        state.selection.currentColor = null;
+      }
+    }
+
+    function getInsertColor() {
+      if (state.selection.canReplace && state.selection.currentColor) {
+        return state.selection.currentColor;
+      }
+      return undefined;
+    }
+
+    async function applyIcon(iconId) {
+      const icon = state.visibleIcons.find((entry) => entry.id === iconId);
+      if (!icon) return;
+
+      try {
+        const color = getInsertColor();
+        const rendered = await rpc.call('iconify.svg', {
+          icon: icon.id,
+          customizations: color ? { color } : undefined,
+        });
+        const svg = rendered && typeof rendered.svg === 'string' ? rendered.svg : '';
+        if (!svg) throw new Error('SVG payload missing');
+
+        const dimensions = parseSvgSize(svg);
+        const dataBase64 = encodeSvgToBase64(svg);
+        const info = state.collectionInfo || {};
+        const mode = state.selection.canReplace ? 'replace' : 'insert';
+
+        const meta = {
+          kind: 'iconify-icon',
+          icon: icon.id,
+          prefix: PREFIX,
+          name: icon.name,
+          providerHost: rendered.host || '',
+          customizations: color ? { color } : undefined,
+          license: info.license
+            ? {
+                title: info.license.title || undefined,
+                spdx: info.license.spdx || undefined,
+                url: info.license.url || undefined,
+              }
+            : undefined,
+          author: info.author
+            ? {
+                name: info.author.name || undefined,
+                url: info.author.url || undefined,
+              }
+            : undefined,
+          insertedAt: Date.now(),
+        };
+
+        if (mode === 'replace') {
+          await rpc.call('document.updateImage', {
+            nodeId: state.selection.targetNodeId,
+            dataBase64,
+            mime: 'image/svg+xml',
+            width: dimensions.width,
+            height: dimensions.height,
+            name: icon.id,
+            meta,
+            resize: false,
+          });
+          await rpc.call('host.toast', { message: 'Feather icon replaced' });
+          setStatus('Replaced selected image.', 'ok');
+        } else {
+          await rpc.call('document.insertImage', {
+            dataBase64,
+            mime: 'image/svg+xml',
+            width: dimensions.width,
+            height: dimensions.height,
+            name: icon.id,
+            meta,
+          });
+          await rpc.call('host.toast', { message: 'Feather icon inserted' });
+          setStatus('Inserted icon.', 'ok');
+        }
+
+        await refreshSelection();
+      } catch (error) {
+        setStatus(error && error.message ? error.message : 'Failed to apply icon', 'error');
+      }
+    }
+
+    searchInput.addEventListener('input', () => {
+      const query = searchInput.value.trim().toLowerCase();
+      state.query = query;
+      state.visibleIcons = query
+        ? state.allIcons.filter((icon) => icon.name.toLowerCase().includes(query))
+        : [...state.allIcons];
+      state.selectedIconId = state.visibleIcons[0]?.id || null;
+      renderGrid();
+      const shown = state.visibleIcons.length;
+      const total = state.allIcons.length;
+      setStatus(`${shown} / ${total} icons`, '');
+    });
+
+    grid.addEventListener('click', (event) => {
+      const cell = event.target.closest('[data-icon-id]');
+      if (!cell) return;
+      const iconId = cell.getAttribute('data-icon-id');
+      if (!iconId) return;
+      state.selectedIconId = iconId;
+      renderGrid();
+      void applyIcon(iconId);
+    });
+
+    closeButton.addEventListener('click', async () => {
+      try {
+        await rpc.call('host.close');
+      } catch (_error) {
+        // Ignore close failures.
+      }
+    });
+
+    gridWrap.addEventListener('scroll', () => {
+      hydratePreviews();
+    });
+
+    window.addEventListener('focus', () => {
+      void refreshSelection();
+    });
+
+    async function bootstrap() {
+      await refreshSelection();
+      await loadFeatherCatalog();
+    }
+
+    void bootstrap();
+  </script>
+</body>
+</html>
