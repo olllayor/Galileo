@@ -338,6 +338,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	const imageMeta = selectedNode.type === 'image' ? selectedNode.image?.meta : undefined;
 	const is3dIcon = imageMeta?.kind === '3d-icon';
 	const isUnsplashPhoto = imageMeta?.kind === 'unsplash';
+	const isIconifyIcon = imageMeta?.kind === 'iconify-icon';
 	const hasBgMask = selectedNode.type === 'image' && Boolean(selectedNode.image?.maskAssetId);
 	const bgRemoveMeta = selectedNode.type === 'image' ? selectedNode.image?.bgRemoveMeta : undefined;
 	const imageOutline = selectedNode.type === 'image' ? selectedNode.image?.outline : undefined;
@@ -680,6 +681,76 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						>
 							View photo on Unsplash
 						</a>
+					</div>
+				</div>
+			)}
+
+			{isIconifyIcon && imageMeta && (
+				<div style={{ marginBottom: spacing.lg }}>
+					<h4
+						style={{
+							margin: `0 0 ${spacing.sm} 0`,
+							fontSize: typography.fontSize.sm,
+							color: colors.text.secondary,
+							fontWeight: typography.fontWeight.medium,
+						}}
+					>
+						Iconify Icon
+					</h4>
+					<div
+						style={{
+							display: 'grid',
+							gap: spacing.xs,
+							fontSize: typography.fontSize.sm,
+							color: colors.text.secondary,
+							marginBottom: spacing.sm,
+						}}
+					>
+						<div>Icon: {imageMeta.icon}</div>
+						<div>Set: {imageMeta.prefix}</div>
+						{imageMeta.customizations?.color ? <div>Color: {imageMeta.customizations.color}</div> : null}
+						{imageMeta.license?.title ? <div>License: {imageMeta.license.title}</div> : null}
+						{imageMeta.author?.name ? <div>Author: {imageMeta.author.name}</div> : null}
+					</div>
+					<div style={{ display: 'grid', gap: spacing.xs }}>
+						<button
+							type="button"
+							onClick={() => onOpenPlugin?.('com.galileo.iconify')}
+							style={{
+								width: '100%',
+								padding: `${spacing.xs} ${spacing.sm}`,
+								backgroundColor: colors.accent.primary,
+								color: colors.text.primary,
+								border: 'none',
+								borderRadius: radii.sm,
+								cursor: 'pointer',
+								fontSize: typography.fontSize.sm,
+								fontWeight: typography.fontWeight.medium,
+								transition: `background-color ${transitions.fast}`,
+							}}
+						>
+							Edit in Iconify
+						</button>
+						{imageMeta.license?.url ? (
+							<a
+								href={imageMeta.license.url}
+								target="_blank"
+								rel="noreferrer noopener"
+								style={{ color: colors.accent.primary, textDecoration: 'none', fontSize: typography.fontSize.sm }}
+							>
+								View license
+							</a>
+						) : null}
+						{imageMeta.author?.url ? (
+							<a
+								href={imageMeta.author.url}
+								target="_blank"
+								rel="noreferrer noopener"
+								style={{ color: colors.accent.primary, textDecoration: 'none', fontSize: typography.fontSize.sm }}
+							>
+								View author
+							</a>
+						) : null}
 					</div>
 				</div>
 			)}

@@ -1,0 +1,1532 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Iconify</title>
+  <style>
+    :root {
+      --bg: #ebebec;
+      --panel: #f3f3f4;
+      --panel-alt: #e6e6e8;
+      --stroke: #babcc0;
+      --stroke-strong: #8f9298;
+      --text: #26292f;
+      --muted: #5b6069;
+      --link: #075fc8;
+      --tab-blue: #20a8ff;
+      --header: #242528;
+      --header-line: #41444a;
+      --green: #bef25a;
+      --green-stroke: #9dcf39;
+      --radius: 12px;
+      --radius-sm: 10px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Text', Helvetica, Arial, sans-serif;
+    }
+
+    .modal-shell {
+      height: 100%;
+      border-radius: 18px;
+      overflow: hidden;
+      background: var(--bg);
+      border: 1px solid #4a4d53;
+      display: grid;
+      grid-template-rows: 52px 44px minmax(0, 1fr);
+    }
+
+    .topbar {
+      background: var(--header);
+      border-bottom: 1px solid var(--header-line);
+      color: #f5f6f8;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      line-height: 1;
+    }
+
+    .brand-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: linear-gradient(180deg, #f7f8f9, #d3d8df);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      color: #1f232b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .icon-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: inherit;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      cursor: pointer;
+    }
+
+    .icon-btn:hover {
+      border-color: rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .subbar {
+      background: #1f2024;
+      border-bottom: 1px solid #2f3238;
+      color: #c9ced7;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px;
+    }
+
+    .tabs {
+      height: 100%;
+      display: flex;
+      align-items: stretch;
+    }
+
+    .tab {
+      border: none;
+      min-width: 86px;
+      padding: 0 16px;
+      background: transparent;
+      color: #8e95a1;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: default;
+    }
+
+    .tab.active {
+      color: var(--tab-blue);
+      background: #17181b;
+    }
+
+    .subbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: #b5bbc5;
+    }
+
+    .body {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      background: var(--bg);
+    }
+
+    .global-controls {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 36%;
+      gap: 10px;
+      padding: 10px 12px 8px;
+      align-items: center;
+    }
+
+    .input,
+    .select,
+    .ghost-btn,
+    .chip,
+    .small-btn {
+      height: 42px;
+      border-radius: 8px;
+      border: 2px solid var(--stroke);
+      background: var(--panel);
+      color: #494e57;
+      font-size: 14px;
+      line-height: 1;
+      padding: 0 12px;
+      outline: none;
+    }
+
+    .input:focus,
+    .select:focus {
+      border-color: var(--stroke-strong);
+      box-shadow: 0 0 0 3px rgba(7, 95, 200, 0.15);
+    }
+
+    .input.search {
+      padding-left: 42px;
+      background-image: radial-gradient(circle at 20px 20px, transparent 5px, #666 5px, #666 7px, transparent 7px), linear-gradient(#666, #666);
+      background-size: 14px 14px, 9px 2px;
+      background-position: 12px 10px, 24px 24px;
+      background-repeat: no-repeat;
+    }
+
+    .promo {
+      height: 44px;
+      border-radius: 0;
+      border: 2px solid var(--green-stroke);
+      background: var(--green);
+      color: #111;
+      font-size: 14px;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .view {
+      min-height: 0;
+      overflow: auto;
+      padding: 0 12px 8px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .sets-filters {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 130px 120px 210px;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .chip {
+      height: 34px;
+      border-radius: 999px;
+      padding: 0 12px;
+      background: #f1f1f2;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .chip.active {
+      color: #003d88;
+      border-color: #7ca6d6;
+      background: #e4f0ff;
+    }
+
+    .set-section {
+      margin-bottom: 12px;
+    }
+
+    .set-heading {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin: 0 0 8px;
+      font-size: 16px;
+      color: #17191f;
+    }
+
+    .set-heading .count {
+      color: #80858f;
+      font-weight: 500;
+      font-size: 12px;
+    }
+
+    .set-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .set-card {
+      min-height: 98px;
+      border-radius: 8px;
+      border: 1px solid #d6d8dc;
+      background: #e5e5e7;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      cursor: pointer;
+    }
+
+    .set-card:hover {
+      border-color: #8caed8;
+      background: #eceff4;
+    }
+
+    .set-name {
+      color: var(--link);
+      font-size: 15px;
+      font-weight: 500;
+      margin: 0 0 5px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .set-meta {
+      margin: 0;
+      color: #5e626a;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .set-preview {
+      width: 102px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .set-preview span {
+      height: 17px;
+      border-radius: 5px;
+      background: linear-gradient(180deg, #70737a, #53565d);
+      opacity: 0.88;
+    }
+
+    .library-head {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .library-nav {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    .ghost-btn,
+    .small-btn {
+      height: 40px;
+      padding: 0 10px;
+      font-size: 14px;
+      color: #035fbc;
+      background: #f1f1f2;
+      cursor: pointer;
+    }
+
+    .small-btn {
+      width: 42px;
+      padding: 0;
+      font-size: 14px;
+      color: #0f5fb9;
+    }
+
+    .meta-block {
+      margin-bottom: 8px;
+      font-size: 14px;
+      color: #20242c;
+      line-height: 1.3;
+    }
+
+    .meta-block a {
+      color: var(--link);
+    }
+
+    .library-filters {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 6px;
+      margin-bottom: 10px;
+      align-items: center;
+    }
+
+    .library-filters .input,
+    .library-filters .select {
+      height: 40px;
+      font-size: 13px;
+    }
+
+    .icon-grid {
+      display: grid;
+      grid-template-columns: repeat(10, minmax(0, 1fr));
+      gap: 8px;
+      min-height: 200px;
+    }
+
+    .icon-card {
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      aspect-ratio: 1 / 1;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      padding: 5px;
+      position: relative;
+    }
+
+    .icon-card:hover,
+    .icon-card.active {
+      background: #eceff4;
+      border-color: #c9d1db;
+    }
+
+    .icon-card img {
+      width: 90%;
+      height: 90%;
+      object-fit: contain;
+    }
+
+    .icon-name-overlay {
+      position: absolute;
+      inset-inline: 4px;
+      bottom: 4px;
+      border-radius: 6px;
+      background: rgba(30, 32, 36, 0.72);
+      color: #f2f4f8;
+      font-size: 10px;
+      padding: 2px 5px;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0;
+      transition: opacity 120ms ease;
+      pointer-events: none;
+    }
+
+    .icon-card:hover .icon-name-overlay,
+    .icon-card.active .icon-name-overlay {
+      opacity: 1;
+    }
+
+    .library-footer {
+      border-top: 1px solid #cbced4;
+      margin-top: 8px;
+      padding-top: 8px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 10px;
+      align-items: center;
+      font-size: 12px;
+      color: #272b32;
+    }
+
+    .pager {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .pager button {
+      border: none;
+      background: transparent;
+      color: #0259bc;
+      font-size: 20px;
+      cursor: pointer;
+      padding: 0 4px;
+    }
+
+    .pager button[disabled] {
+      color: #80858f;
+      cursor: not-allowed;
+    }
+
+    .check {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .check input {
+      width: 16px;
+      height: 16px;
+    }
+
+    .status {
+      height: 24px;
+      padding: 2px 12px 8px;
+      font-size: 11px;
+      color: #5d626b;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .status.warn {
+      color: #915c00;
+    }
+
+    .status.error {
+      color: #b42323;
+    }
+
+    .status.ok {
+      color: #0b7e34;
+    }
+
+    .empty {
+      color: #6a7079;
+      font-size: 12px;
+      padding: 12px 8px;
+    }
+
+    @media (max-width: 1100px) {
+      .global-controls {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .sets-filters {
+        grid-template-columns: minmax(0, 1fr) 1fr;
+      }
+
+      .set-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .icon-grid {
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+      }
+
+      .library-footer {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="modal-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-icon">I</div>
+        <div>Iconify</div>
+      </div>
+    </header>
+
+    <div class="subbar">
+      <div class="tabs">
+        <button class="tab active" type="button">Import</button>
+      </div>
+      <div class="subbar-actions">
+        <button class="icon-btn" aria-label="Info">&#9432;</button>
+        <button class="icon-btn" aria-label="Compact">&#9638;</button>
+      </div>
+    </div>
+
+    <section class="body">
+      <div class="global-controls">
+        <input id="globalSearch" class="input search" placeholder="Search icons..." />
+        <a class="promo" href="https://iconify.design" target="_blank" rel="noopener noreferrer">Access 170,000 more icons &nbsp; &#8594;</a>
+      </div>
+
+      <div id="setsView" class="view">
+        <div class="sets-filters">
+          <input id="setSearch" class="input" placeholder="Filter icon sets..." />
+          <select id="categoryFilter" class="select"><option value="">Tag</option></select>
+          <select id="paletteFilter" class="select">
+            <option value="all">Grid</option>
+            <option value="monotone">Monotone</option>
+            <option value="colored">Multicolor</option>
+          </select>
+          <select id="licenseFilter" class="select"><option value="">Palette and license</option></select>
+        </div>
+        <div id="categoryChips" class="chip-row"></div>
+        <div id="setSections"></div>
+      </div>
+
+      <div id="libraryView" class="view hidden">
+        <div class="library-head">
+          <button id="backToSets" class="small-btn" type="button" title="Back to sets">&#8249;</button>
+          <div class="library-nav">
+            <button id="prevSet" class="ghost-btn" type="button">&#8249; Previous</button>
+            <button id="nextSet" class="ghost-btn" type="button">Next &#8250;</button>
+          </div>
+          <div class="library-nav">
+            <button id="favoriteSet" class="small-btn" type="button" title="Favorite set">&#9734;</button>
+            <button id="replaceAction" class="small-btn" type="button" title="Replace selected image">&#8645;</button>
+            <button id="insertAction" class="small-btn" type="button" title="Insert icon">&#8681;</button>
+          </div>
+        </div>
+
+        <div id="libraryMeta" class="meta-block"></div>
+
+        <div class="library-filters">
+          <input id="iconFilter" class="input" placeholder="Filter icons..." />
+          <input id="colorPicker" type="color" class="select" value="#4d4f56" title="Monotone icon color" />
+          <label class="check"><input id="preserveColor" type="checkbox" checked /> Preserve color</label>
+        </div>
+
+        <div id="iconGrid" class="icon-grid"></div>
+
+        <div class="library-footer">
+          <div id="librarySummary">Displaying 0 icons</div>
+          <div class="pager">
+            <button id="prevPage" type="button">&#8249;</button>
+            <span id="pageLabel">1 / 1</span>
+            <button id="nextPage" type="button">&#8250;</button>
+          </div>
+          <label class="check"><input type="checkbox" disabled /> Select multiple icons</label>
+        </div>
+      </div>
+
+      <div id="status" class="status">Loading Iconify collections...</div>
+    </section>
+  </div>
+
+  <script>
+    const PAGE_SIZE = 56;
+    const RECENT_LIMIT = 16;
+    const FAVORITE_LIMIT = 200;
+    const STORAGE_KEYS = {
+      favoriteSets: 'galileo.iconify.favorite.sets.v1',
+      favoriteIcons: 'galileo.iconify.favorite.icons.v1',
+      recentSets: 'galileo.iconify.recent.sets.v1',
+      recentIcons: 'galileo.iconify.recent.icons.v1',
+    };
+
+    const preset = new URLSearchParams(window.location.search).get('preset');
+
+    const globalSearchInput = document.getElementById('globalSearch');
+    const setSearchInput = document.getElementById('setSearch');
+    const categoryFilter = document.getElementById('categoryFilter');
+    const paletteFilter = document.getElementById('paletteFilter');
+    const licenseFilter = document.getElementById('licenseFilter');
+    const categoryChips = document.getElementById('categoryChips');
+    const setSections = document.getElementById('setSections');
+    const setsView = document.getElementById('setsView');
+    const libraryView = document.getElementById('libraryView');
+    const backToSetsBtn = document.getElementById('backToSets');
+    const prevSetBtn = document.getElementById('prevSet');
+    const nextSetBtn = document.getElementById('nextSet');
+    const favoriteSetBtn = document.getElementById('favoriteSet');
+    const replaceActionBtn = document.getElementById('replaceAction');
+    const insertActionBtn = document.getElementById('insertAction');
+    const libraryMeta = document.getElementById('libraryMeta');
+    const iconFilterInput = document.getElementById('iconFilter');
+    const colorPicker = document.getElementById('colorPicker');
+    const preserveColorCheckbox = document.getElementById('preserveColor');
+    const iconGrid = document.getElementById('iconGrid');
+    const librarySummary = document.getElementById('librarySummary');
+    const pageLabel = document.getElementById('pageLabel');
+    const prevPageBtn = document.getElementById('prevPage');
+    const nextPageBtn = document.getElementById('nextPage');
+    const statusEl = document.getElementById('status');
+
+    const pending = new Map();
+    let warnedStorageUnavailable = false;
+
+    function createRpcId() {
+      try {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+          return window.crypto.randomUUID();
+        }
+      } catch (error) {
+        console.warn('[Iconify] randomUUID unavailable, fallback id is used', error);
+      }
+      return `rpc_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    }
+
+    const rpc = {
+      call(method, params) {
+        const id = createRpcId();
+        window.parent.postMessage({ rpc: 1, id, method, params }, '*');
+        return new Promise((resolve, reject) => {
+          pending.set(id, { resolve, reject });
+          setTimeout(() => {
+            if (!pending.has(id)) return;
+            pending.delete(id);
+            reject(new Error('RPC timeout'));
+          }, 30000);
+        });
+      },
+    };
+
+    window.addEventListener('message', (event) => {
+      const data = event.data;
+      if (!data || data.rpc !== 1 || !data.id) return;
+      const request = pending.get(data.id);
+      if (!request) return;
+      pending.delete(data.id);
+      if (data.ok) {
+        request.resolve(data.result);
+      } else {
+        const error = new Error(data.error?.message || 'RPC error');
+        error.code = data.error?.code || 'rpc_error';
+        request.reject(error);
+      }
+    });
+
+    function loadStoredArray(key) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter((entry) => typeof entry === 'string' && entry.trim().length > 0);
+      } catch {
+        return [];
+      }
+    }
+
+    function saveStoredArray(key, values) {
+      try {
+        localStorage.setItem(key, JSON.stringify(values));
+      } catch (error) {
+        if (!warnedStorageUnavailable) {
+          warnedStorageUnavailable = true;
+          console.warn('[Iconify] localStorage unavailable; favorites/recents will be session only', error);
+        }
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function encodeSvgToBase64(svg) {
+      return btoa(unescape(encodeURIComponent(svg)));
+    }
+
+    function parseSvgSize(svg) {
+      const widthMatch = svg.match(/\bwidth="([\d.]+)"/i);
+      const heightMatch = svg.match(/\bheight="([\d.]+)"/i);
+      const viewBoxMatch = svg.match(/\bviewBox="([^"]+)"/i);
+      if (widthMatch && heightMatch) {
+        const width = Number(widthMatch[1]);
+        const height = Number(heightMatch[1]);
+        if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+          return { width, height };
+        }
+      }
+      if (viewBoxMatch) {
+        const values = viewBoxMatch[1].trim().split(/\s+/).map(Number);
+        if (values.length === 4 && values.every((entry) => Number.isFinite(entry))) {
+          if (values[2] > 0 && values[3] > 0) {
+            return { width: values[2], height: values[3] };
+          }
+        }
+      }
+      return { width: 24, height: 24 };
+    }
+
+    function normalizeIconId(iconId) {
+      const [prefix, name] = String(iconId || '').split(':');
+      if (!prefix || !name) return null;
+      return {
+        id: `${prefix}:${name}`,
+        prefix,
+        name,
+      };
+    }
+
+    function parseRpcError(error) {
+      const code = error && typeof error.code === 'string' ? error.code : '';
+      if (code === 'iconify_timeout') return 'Iconify timed out. Please retry.';
+      if (code === 'iconify_unavailable') return 'Iconify API unavailable. Check network.';
+      if (code === 'iconify_not_found') return 'Iconify item not found.';
+      if (code === 'iconify_invalid_params') return 'Invalid Iconify request.';
+      if (code === 'permission_denied') return 'Plugin permission denied by host.';
+      return error && error.message ? error.message : 'Unexpected error';
+    }
+
+    function setStatus(text, kind) {
+      statusEl.textContent = text;
+      statusEl.className = `status${kind ? ` ${kind}` : ''}`;
+    }
+
+    const state = {
+      viewMode: 'sets',
+      globalQuery: '',
+      setSearch: '',
+      iconFilter: '',
+      selectedCategory: '',
+      selectedPalette: 'all',
+      selectedLicense: '',
+      selectedPrefix: preset === 'material' ? 'mdi' : '',
+      collections: {},
+      collectionDetails: {},
+      librarySourceIcons: [],
+      selectedIconId: null,
+      libraryPage: 1,
+      libraryRequestToken: 0,
+      previewCache: new Map(),
+      previewLoading: new Set(),
+      favorites: {
+        sets: loadStoredArray(STORAGE_KEYS.favoriteSets),
+        icons: loadStoredArray(STORAGE_KEYS.favoriteIcons),
+      },
+      recents: {
+        sets: loadStoredArray(STORAGE_KEYS.recentSets),
+        icons: loadStoredArray(STORAGE_KEYS.recentIcons),
+      },
+      selection: {
+        canReplace: false,
+        targetNodeId: null,
+        currentColor: null,
+      },
+      color: '#4d4f56',
+      preserveColorOnReplace: true,
+      loadingLibrary: false,
+    };
+
+    function isFavoriteSet(prefix) {
+      return state.favorites.sets.includes(prefix);
+    }
+
+    function isFavoriteIcon(iconId) {
+      return state.favorites.icons.includes(iconId);
+    }
+
+    function toggleFavoriteSet(prefix) {
+      const next = isFavoriteSet(prefix)
+        ? state.favorites.sets.filter((entry) => entry !== prefix)
+        : [prefix, ...state.favorites.sets].slice(0, FAVORITE_LIMIT);
+      state.favorites.sets = next;
+      saveStoredArray(STORAGE_KEYS.favoriteSets, next);
+      renderSetsView();
+      renderLibraryMeta();
+    }
+
+    function toggleFavoriteIcon(iconId) {
+      const next = isFavoriteIcon(iconId)
+        ? state.favorites.icons.filter((entry) => entry !== iconId)
+        : [iconId, ...state.favorites.icons].slice(0, FAVORITE_LIMIT);
+      state.favorites.icons = next;
+      saveStoredArray(STORAGE_KEYS.favoriteIcons, next);
+      renderLibraryGrid();
+    }
+
+    function pushRecentSet(prefix) {
+      const next = [prefix, ...state.recents.sets.filter((entry) => entry !== prefix)].slice(0, RECENT_LIMIT);
+      state.recents.sets = next;
+      saveStoredArray(STORAGE_KEYS.recentSets, next);
+    }
+
+    function pushRecentIcon(iconId) {
+      const next = [iconId, ...state.recents.icons.filter((entry) => entry !== iconId)].slice(0, RECENT_LIMIT);
+      state.recents.icons = next;
+      saveStoredArray(STORAGE_KEYS.recentIcons, next);
+    }
+
+    function getCollectionInfo(prefix) {
+      const fromCollections = state.collections[prefix];
+      if (fromCollections) return fromCollections;
+      const detail = state.collectionDetails[prefix];
+      if (detail && detail.info) return detail.info;
+      return null;
+    }
+
+    function isMonotone(prefix) {
+      const info = getCollectionInfo(prefix);
+      return info ? info.palette === false : false;
+    }
+
+    async function ensureCollectionInfo(prefix) {
+      if (!prefix) return null;
+      if (state.collectionDetails[prefix]) return state.collectionDetails[prefix];
+      try {
+        const detail = await rpc.call('iconify.collection', { prefix, info: true, chars: false });
+        if (detail && detail.prefix) {
+          state.collectionDetails[prefix] = detail;
+          return detail;
+        }
+      } catch (error) {
+        console.warn('[Iconify] collection info failed', prefix, error);
+      }
+      return null;
+    }
+
+    function fillSelect(selectEl, values, placeholder) {
+      const current = selectEl.value;
+      const html = [`<option value="">${escapeHtml(placeholder)}</option>`]
+        .concat(values.map((entry) => `<option value="${escapeHtml(entry)}">${escapeHtml(entry)}</option>`))
+        .join('');
+      selectEl.innerHTML = html;
+      if (values.includes(current)) {
+        selectEl.value = current;
+      }
+    }
+
+    function getFilteredSetEntries() {
+      const global = state.globalQuery.trim().toLowerCase();
+      const local = state.setSearch.trim().toLowerCase();
+      const all = Object.entries(state.collections)
+        .filter(([prefix, info]) => {
+          if (state.selectedCategory && (info.category || 'General') !== state.selectedCategory) return false;
+          if (state.selectedPalette === 'monotone' && info.palette !== false) return false;
+          if (state.selectedPalette === 'colored' && info.palette !== true) return false;
+          if (state.selectedLicense) {
+            const license = (info.license?.spdx || info.license?.title || '').toLowerCase();
+            if (!license.includes(state.selectedLicense.toLowerCase())) return false;
+          }
+          if (global) {
+            const hay = `${prefix} ${info.name || ''} ${info.category || ''}`.toLowerCase();
+            if (!hay.includes(global)) return false;
+          }
+          if (local) {
+            const hay = `${prefix} ${info.name || ''} ${info.category || ''}`.toLowerCase();
+            if (!hay.includes(local)) return false;
+          }
+          return true;
+        })
+        .sort((a, b) => {
+          const aFav = isFavoriteSet(a[0]) ? 0 : 1;
+          const bFav = isFavoriteSet(b[0]) ? 0 : 1;
+          if (aFav !== bFav) return aFav - bFav;
+          return a[0].localeCompare(b[0]);
+        });
+      return all;
+    }
+
+    function buildSetGroups(entries) {
+      const groups = new Map();
+      for (const entry of entries) {
+        const label = entry[1].category || 'General';
+        if (!groups.has(label)) groups.set(label, []);
+        groups.get(label).push(entry);
+      }
+      return Array.from(groups.entries()).sort((a, b) => {
+        if (b[1].length !== a[1].length) return b[1].length - a[1].length;
+        return a[0].localeCompare(b[0]);
+      });
+    }
+
+    function renderCategoryChips(entries) {
+      const categories = Array.from(
+        new Set(entries.map((entry) => entry[1].category || 'General'))
+      ).slice(0, 14);
+
+      if (categories.length === 0) {
+        categoryChips.innerHTML = '<div class="empty">No tags available.</div>';
+        return;
+      }
+
+      categoryChips.innerHTML = categories
+        .map((entry) => {
+          const active = state.selectedCategory === entry ? ' active' : '';
+          return `<button type="button" class="chip${active}" data-chip-category="${escapeHtml(entry)}">${escapeHtml(entry)}</button>`;
+        })
+        .join('');
+    }
+
+    function renderSetSections(entries) {
+      const groups = buildSetGroups(entries);
+      if (groups.length === 0) {
+        setSections.innerHTML = '<div class="empty">No icon sets match your filters.</div>';
+        return;
+      }
+
+      setSections.innerHTML = groups
+        .map(([groupName, groupEntries]) => {
+          const cards = groupEntries
+            .map(([prefix, info]) => {
+              const license = info.license?.spdx || info.license?.title || 'Unknown';
+              const totalIcons = Number.isFinite(info.total) ? info.total : 'Unknown';
+              return `
+                <article class="set-card" data-open-prefix="${escapeHtml(prefix)}" title="${escapeHtml(prefix)}">
+                  <div>
+                    <h3 class="set-name">${escapeHtml(info.name || prefix)}</h3>
+                    <p class="set-meta">${escapeHtml(license)}</p>
+                    <p class="set-meta">${escapeHtml(String(totalIcons))} icons</p>
+                  </div>
+                  <div class="set-preview" aria-hidden="true">
+                    <span></span><span></span><span></span>
+                    <span></span><span></span><span></span>
+                  </div>
+                </article>
+              `;
+            })
+            .join('');
+
+          return `
+            <section class="set-section">
+              <h2 class="set-heading">${escapeHtml(groupName)} <span class="count">(${groupEntries.length} icon sets)</span></h2>
+              <div class="set-grid">${cards}</div>
+            </section>
+          `;
+        })
+        .join('');
+    }
+
+    function renderSetsView() {
+      const entries = getFilteredSetEntries();
+      renderCategoryChips(entries);
+      renderSetSections(entries);
+      setStatus(`${entries.length} icon sets available`, 'ok');
+    }
+
+    function getCurrentSetEntriesForNav() {
+      return getFilteredSetEntries();
+    }
+
+    function parseCollectionIconNames(collection) {
+      const names = new Set();
+
+      if (Array.isArray(collection?.uncategorized)) {
+        collection.uncategorized.forEach((entry) => {
+          if (typeof entry === 'string' && entry.trim()) names.add(entry.trim());
+        });
+      }
+
+      if (collection?.categories && typeof collection.categories === 'object') {
+        Object.values(collection.categories).forEach((list) => {
+          if (!Array.isArray(list)) return;
+          list.forEach((entry) => {
+            if (typeof entry === 'string' && entry.trim()) names.add(entry.trim());
+          });
+        });
+      }
+
+      if (names.size === 0 && Array.isArray(collection?.icons)) {
+        collection.icons.forEach((entry) => {
+          if (typeof entry === 'string' && entry.trim()) names.add(entry.trim());
+        });
+      }
+
+      if (Array.isArray(collection?.hidden)) {
+        collection.hidden.forEach((entry) => {
+          if (typeof entry === 'string' && entry.trim()) names.delete(entry.trim());
+        });
+      }
+
+      return Array.from(names).sort();
+    }
+
+    async function refreshLibrarySource() {
+      if (!state.selectedPrefix) return;
+      const token = ++state.libraryRequestToken;
+      state.loadingLibrary = true;
+      setStatus('Loading icons...', 'default');
+
+      try {
+        let icons = [];
+        const query = state.globalQuery.trim();
+
+        if (query) {
+          const response = await rpc.call('iconify.search', {
+            query,
+            prefix: state.selectedPrefix,
+            limit: 200,
+            start: 0,
+          });
+          if (token !== state.libraryRequestToken) return;
+          const raw = Array.isArray(response?.icons) ? response.icons : [];
+          icons = raw
+            .map((entry) => normalizeIconId(entry))
+            .filter(Boolean);
+        } else {
+          const collection = await rpc.call('iconify.collection', {
+            prefix: state.selectedPrefix,
+            info: false,
+            chars: false,
+          });
+          if (token !== state.libraryRequestToken) return;
+          const iconNames = parseCollectionIconNames(collection);
+
+          if (iconNames.length === 0) {
+            console.warn('[Iconify] Empty collection icon list, fallback search by prefix', {
+              prefix: state.selectedPrefix,
+              keys: collection && typeof collection === 'object' ? Object.keys(collection) : [],
+            });
+            const fallback = await rpc.call('iconify.search', {
+              query: state.selectedPrefix,
+              prefix: state.selectedPrefix,
+              limit: 200,
+              start: 0,
+            });
+            if (token !== state.libraryRequestToken) return;
+            const fallbackRaw = Array.isArray(fallback?.icons) ? fallback.icons : [];
+            icons = fallbackRaw
+              .map((entry) => normalizeIconId(entry))
+              .filter(Boolean);
+          } else {
+            icons = iconNames
+              .map((name) => normalizeIconId(`${state.selectedPrefix}:${name}`))
+              .filter(Boolean);
+          }
+        }
+
+        state.librarySourceIcons = icons;
+        state.libraryPage = 1;
+        if (!icons.find((entry) => entry.id === state.selectedIconId)) {
+          state.selectedIconId = icons.length ? icons[0].id : null;
+        }
+        renderLibraryView();
+        setStatus(`${icons.length} icons loaded`, icons.length ? 'ok' : 'warn');
+      } catch (error) {
+        if (token !== state.libraryRequestToken) return;
+        state.librarySourceIcons = [];
+        renderLibraryView();
+        setStatus(parseRpcError(error), 'error');
+      } finally {
+        if (token === state.libraryRequestToken) {
+          state.loadingLibrary = false;
+        }
+      }
+    }
+
+    function getFilteredLibraryIcons() {
+      const term = state.iconFilter.trim().toLowerCase();
+      if (!term) return state.librarySourceIcons;
+      return state.librarySourceIcons.filter((entry) => entry.name.toLowerCase().includes(term));
+    }
+
+    function getPagedIcons(filteredIcons) {
+      const totalPages = Math.max(1, Math.ceil(filteredIcons.length / PAGE_SIZE));
+      if (state.libraryPage > totalPages) state.libraryPage = totalPages;
+      const start = (state.libraryPage - 1) * PAGE_SIZE;
+      const end = start + PAGE_SIZE;
+      return {
+        totalPages,
+        pageIcons: filteredIcons.slice(start, end),
+        start,
+      };
+    }
+
+    function getCurrentColorForIcon(icon) {
+      if (!icon) return undefined;
+      if (!isMonotone(icon.prefix)) return undefined;
+      if (state.selection.canReplace && state.preserveColorOnReplace && state.selection.currentColor) {
+        return state.selection.currentColor;
+      }
+      return state.color;
+    }
+
+    async function ensurePreview(icon) {
+      if (!icon) return;
+      if (state.previewCache.has(icon.id) || state.previewLoading.has(icon.id)) return;
+      state.previewLoading.add(icon.id);
+      try {
+        const color = getCurrentColorForIcon(icon);
+        const response = await rpc.call('iconify.svg', {
+          icon: icon.id,
+          customizations: color ? { color } : undefined,
+        });
+        const svg = response && typeof response.svg === 'string' ? response.svg : '';
+        if (!svg) return;
+        const dataUrl = `data:image/svg+xml;base64,${encodeSvgToBase64(svg)}`;
+        state.previewCache.set(icon.id, dataUrl);
+        renderLibraryGrid();
+      } catch (error) {
+        console.warn('[Iconify] preview failed', icon.id, error);
+      } finally {
+        state.previewLoading.delete(icon.id);
+      }
+    }
+
+    function renderLibraryMeta() {
+      const info = getCollectionInfo(state.selectedPrefix) || {};
+      const name = info.name || state.selectedPrefix || 'Unknown Set';
+      const authorName = info.author?.name || 'Unknown contributors';
+      const authorUrl = info.author?.url || '';
+      const license = info.license?.spdx || info.license?.title || 'Unknown';
+      const licenseUrl = info.license?.url || '';
+      const favIcon = isFavoriteSet(state.selectedPrefix) ? '&#9733;' : '&#9734;';
+
+      favoriteSetBtn.innerHTML = favIcon;
+
+      const authorMarkup = authorUrl
+        ? `<a href="${escapeHtml(authorUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(authorName)}</a>`
+        : escapeHtml(authorName);
+      const licenseMarkup = licenseUrl
+        ? `<a href="${escapeHtml(licenseUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(license)}</a>`
+        : escapeHtml(license);
+
+      libraryMeta.innerHTML = `
+        <div><strong>${escapeHtml(name)}</strong> by ${authorMarkup}</div>
+        <div>License: ${licenseMarkup}</div>
+      `;
+    }
+
+    function renderLibraryGrid() {
+      const filtered = getFilteredLibraryIcons();
+      const paging = getPagedIcons(filtered);
+      const pageIcons = paging.pageIcons;
+
+      if (pageIcons.length === 0) {
+        iconGrid.innerHTML = '<div class="empty">No icons found for this filter.</div>';
+      } else {
+        iconGrid.innerHTML = pageIcons
+          .map((icon) => {
+            const active = state.selectedIconId === icon.id ? ' active' : '';
+            const preview = state.previewCache.get(icon.id);
+            const name = escapeHtml(icon.name);
+            const star = isFavoriteIcon(icon.id) ? '&#9733;' : '&#9734;';
+            return `
+              <article class="icon-card${active}" data-icon-id="${escapeHtml(icon.id)}" title="${escapeHtml(icon.id)}">
+                ${preview ? `<img src="${preview}" alt="${escapeHtml(icon.id)}" />` : '<div style="font-size:14px;color:#7a7f88;">...</div>'}
+                <div class="icon-name-overlay">${name} ${star}</div>
+              </article>
+            `;
+          })
+          .join('');
+
+        pageIcons.forEach((icon, index) => {
+          setTimeout(() => void ensurePreview(icon), index * 10);
+        });
+      }
+
+      const total = filtered.length;
+      const start = total === 0 ? 0 : (state.libraryPage - 1) * PAGE_SIZE + 1;
+      const end = Math.min(total, state.libraryPage * PAGE_SIZE);
+      librarySummary.textContent = `Displaying ${total} icons | # ${start}-${end}`;
+      pageLabel.textContent = `${state.libraryPage} / ${paging.totalPages}`;
+      prevPageBtn.disabled = state.libraryPage <= 1;
+      nextPageBtn.disabled = state.libraryPage >= paging.totalPages;
+      const navEntries = getCurrentSetEntriesForNav();
+      const selectedIndex = navEntries.findIndex((entry) => entry[0] === state.selectedPrefix);
+      prevSetBtn.disabled = selectedIndex <= 0;
+      nextSetBtn.disabled = selectedIndex < 0 || selectedIndex >= navEntries.length - 1;
+      replaceActionBtn.disabled = !state.selection.canReplace;
+    }
+
+    function renderLibraryView() {
+      renderLibraryMeta();
+      renderLibraryGrid();
+    }
+
+    function syncViewMode() {
+      const library = state.viewMode === 'library';
+      setsView.classList.toggle('hidden', library);
+      libraryView.classList.toggle('hidden', !library);
+    }
+
+    async function openLibrary(prefix) {
+      if (!prefix) return;
+      state.selectedPrefix = prefix;
+      state.viewMode = 'library';
+      state.iconFilter = '';
+      iconFilterInput.value = '';
+      syncViewMode();
+      pushRecentSet(prefix);
+      await ensureCollectionInfo(prefix);
+      await refreshLibrarySource();
+    }
+
+    function goToAdjacentSet(direction) {
+      const entries = getCurrentSetEntriesForNav();
+      if (!entries.length || !state.selectedPrefix) return;
+      const currentIndex = entries.findIndex((entry) => entry[0] === state.selectedPrefix);
+      if (currentIndex < 0) return;
+      const nextIndex = currentIndex + direction;
+      if (nextIndex < 0 || nextIndex >= entries.length) return;
+      void openLibrary(entries[nextIndex][0]);
+    }
+
+    async function refreshSelection() {
+      try {
+        const selection = await rpc.call('selection.get');
+        const nodes = Array.isArray(selection?.nodes) ? selection.nodes : [];
+        const ids = Array.isArray(selection?.ids) ? selection.ids : [];
+        const node = nodes.length === 1 ? nodes[0] : null;
+        const canReplace = Boolean(ids.length === 1 && node && node.type === 'image' && selection?.primaryId);
+        state.selection.canReplace = canReplace;
+        state.selection.targetNodeId = canReplace ? selection.primaryId : null;
+        state.selection.currentColor =
+          node && node.imageMeta && node.imageMeta.kind === 'iconify-icon' && node.imageMeta.customizations && typeof node.imageMeta.customizations.color === 'string'
+            ? node.imageMeta.customizations.color
+            : null;
+      } catch {
+        state.selection.canReplace = false;
+        state.selection.targetNodeId = null;
+        state.selection.currentColor = null;
+      }
+      renderLibraryGrid();
+    }
+
+    async function applyIcon(mode) {
+      const icon = state.librarySourceIcons.find((entry) => entry.id === state.selectedIconId) || null;
+      if (!icon) {
+        setStatus('Select an icon first.', 'warn');
+        return;
+      }
+      if (mode === 'replace' && (!state.selection.canReplace || !state.selection.targetNodeId)) {
+        setStatus('Select exactly one image layer to replace.', 'warn');
+        return;
+      }
+
+      const color = getCurrentColorForIcon(icon);
+      const customizations = color ? { color } : undefined;
+
+      try {
+        const rendered = await rpc.call('iconify.svg', {
+          icon: icon.id,
+          customizations,
+        });
+        const svg = rendered && typeof rendered.svg === 'string' ? rendered.svg : '';
+        if (!svg) throw new Error('SVG payload missing');
+
+        const size = parseSvgSize(svg);
+        const dataBase64 = encodeSvgToBase64(svg);
+        const info = (await ensureCollectionInfo(icon.prefix))?.info || getCollectionInfo(icon.prefix) || {};
+
+        const meta = {
+          kind: 'iconify-icon',
+          icon: icon.id,
+          prefix: icon.prefix,
+          name: icon.name,
+          providerHost: rendered.host || '',
+          customizations: customizations || undefined,
+          license: info.license
+            ? {
+                title: info.license.title || undefined,
+                spdx: info.license.spdx || undefined,
+                url: info.license.url || undefined,
+              }
+            : undefined,
+          author: info.author
+            ? {
+                name: info.author.name || undefined,
+                url: info.author.url || undefined,
+              }
+            : undefined,
+          insertedAt: Date.now(),
+        };
+
+        if (mode === 'replace') {
+          await rpc.call('document.updateImage', {
+            nodeId: state.selection.targetNodeId,
+            dataBase64,
+            mime: 'image/svg+xml',
+            width: size.width,
+            height: size.height,
+            name: icon.id,
+            meta,
+            resize: false,
+          });
+          await rpc.call('host.toast', { message: 'Icon replaced from Iconify' });
+        } else {
+          await rpc.call('document.insertImage', {
+            dataBase64,
+            mime: 'image/svg+xml',
+            width: size.width,
+            height: size.height,
+            name: icon.id,
+            meta,
+          });
+          await rpc.call('host.toast', { message: 'Icon inserted from Iconify' });
+        }
+
+        pushRecentIcon(icon.id);
+        setStatus(mode === 'replace' ? 'Icon replaced successfully.' : 'Icon inserted successfully.', 'ok');
+        await refreshSelection();
+      } catch (error) {
+        setStatus(parseRpcError(error), 'error');
+      }
+    }
+
+    function renderFilters() {
+      const categories = Array.from(
+        new Set(
+          Object.values(state.collections)
+            .map((entry) => entry.category || 'General')
+            .filter((entry) => typeof entry === 'string' && entry.trim().length > 0)
+        )
+      ).sort();
+      const licenses = Array.from(
+        new Set(
+          Object.values(state.collections)
+            .map((entry) => entry.license?.spdx || entry.license?.title)
+            .filter((entry) => typeof entry === 'string' && entry.trim().length > 0)
+        )
+      ).sort();
+
+      fillSelect(categoryFilter, categories, 'Tag');
+      fillSelect(licenseFilter, licenses, 'Palette and license');
+      categoryFilter.value = state.selectedCategory || '';
+      licenseFilter.value = state.selectedLicense || '';
+      paletteFilter.value = state.selectedPalette;
+    }
+
+    async function loadCollections() {
+      try {
+        const payload = await rpc.call('iconify.collections', {});
+        state.collections = payload && typeof payload === 'object' ? payload : {};
+        renderFilters();
+        renderSetsView();
+
+        if (preset === 'material' && state.collections.mdi) {
+          await openLibrary('mdi');
+        }
+      } catch (error) {
+        setStatus(parseRpcError(error), 'error');
+      }
+    }
+
+    let searchDebounce = null;
+    globalSearchInput.addEventListener('input', () => {
+      state.globalQuery = globalSearchInput.value;
+      if (searchDebounce) clearTimeout(searchDebounce);
+      searchDebounce = setTimeout(() => {
+        if (state.viewMode === 'sets') {
+          renderSetsView();
+        } else {
+          void refreshLibrarySource();
+        }
+      }, 220);
+    });
+
+    setSearchInput.addEventListener('input', () => {
+      state.setSearch = setSearchInput.value;
+      renderSetsView();
+    });
+
+    categoryFilter.addEventListener('change', () => {
+      state.selectedCategory = categoryFilter.value;
+      renderSetsView();
+    });
+
+    paletteFilter.addEventListener('change', () => {
+      state.selectedPalette = paletteFilter.value || 'all';
+      renderSetsView();
+    });
+
+    licenseFilter.addEventListener('change', () => {
+      state.selectedLicense = licenseFilter.value;
+      renderSetsView();
+    });
+
+    categoryChips.addEventListener('click', (event) => {
+      const chip = event.target.closest('[data-chip-category]');
+      if (!chip) return;
+      const value = chip.getAttribute('data-chip-category') || '';
+      state.selectedCategory = state.selectedCategory === value ? '' : value;
+      categoryFilter.value = state.selectedCategory;
+      renderSetsView();
+    });
+
+    setSections.addEventListener('click', (event) => {
+      const card = event.target.closest('[data-open-prefix]');
+      if (!card) return;
+      const prefix = card.getAttribute('data-open-prefix');
+      if (!prefix) return;
+      void openLibrary(prefix);
+    });
+
+    backToSetsBtn.addEventListener('click', () => {
+      state.viewMode = 'sets';
+      syncViewMode();
+      renderSetsView();
+      setStatus('Browse icon sets.', 'default');
+    });
+
+    prevSetBtn.addEventListener('click', () => {
+      goToAdjacentSet(-1);
+    });
+
+    nextSetBtn.addEventListener('click', () => {
+      goToAdjacentSet(1);
+    });
+
+    favoriteSetBtn.addEventListener('click', () => {
+      if (!state.selectedPrefix) return;
+      toggleFavoriteSet(state.selectedPrefix);
+    });
+
+    iconFilterInput.addEventListener('input', () => {
+      state.iconFilter = iconFilterInput.value;
+      state.libraryPage = 1;
+      renderLibraryGrid();
+    });
+
+    colorPicker.addEventListener('input', () => {
+      state.color = colorPicker.value;
+      const visible = getPagedIcons(getFilteredLibraryIcons()).pageIcons;
+      visible.forEach((icon) => state.previewCache.delete(icon.id));
+      renderLibraryGrid();
+    });
+
+    preserveColorCheckbox.addEventListener('change', () => {
+      state.preserveColorOnReplace = Boolean(preserveColorCheckbox.checked);
+      const visible = getPagedIcons(getFilteredLibraryIcons()).pageIcons;
+      visible.forEach((icon) => state.previewCache.delete(icon.id));
+      renderLibraryGrid();
+    });
+
+    iconGrid.addEventListener('click', (event) => {
+      const card = event.target.closest('[data-icon-id]');
+      if (!card) return;
+      const iconId = card.getAttribute('data-icon-id');
+      if (!iconId) return;
+      state.selectedIconId = iconId;
+      renderLibraryGrid();
+    });
+
+    iconGrid.addEventListener('dblclick', (event) => {
+      const card = event.target.closest('[data-icon-id]');
+      if (!card) return;
+      const iconId = card.getAttribute('data-icon-id');
+      if (!iconId) return;
+      state.selectedIconId = iconId;
+      void applyIcon(state.selection.canReplace ? 'replace' : 'insert');
+    });
+
+    insertActionBtn.addEventListener('click', () => {
+      void applyIcon('insert');
+    });
+
+    replaceActionBtn.addEventListener('click', () => {
+      void applyIcon('replace');
+    });
+
+    prevPageBtn.addEventListener('click', () => {
+      if (state.libraryPage <= 1) return;
+      state.libraryPage -= 1;
+      renderLibraryGrid();
+    });
+
+    nextPageBtn.addEventListener('click', () => {
+      const total = getFilteredLibraryIcons().length;
+      const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+      if (state.libraryPage >= pages) return;
+      state.libraryPage += 1;
+      renderLibraryGrid();
+    });
+
+    window.addEventListener('focus', () => {
+      void refreshSelection();
+    });
+
+    async function bootstrap() {
+      syncViewMode();
+      setStatus('Loading Iconify collections...', 'default');
+      await loadCollections();
+      await refreshSelection();
+      if (state.viewMode === 'sets') {
+        renderSetsView();
+      } else {
+        renderLibraryView();
+      }
+    }
+
+    void bootstrap();
+  </script>
+</body>
+</html>

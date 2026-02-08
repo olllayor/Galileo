@@ -1,5 +1,32 @@
 import type { PluginRegistration } from './types';
 
+const iconifyBuiltinPlugins: PluginRegistration[] = [
+  {
+    manifest: {
+      id: 'com.galileo.iconify',
+      name: 'Iconify Icons',
+      version: '0.1.0',
+      entry: 'index.html',
+      permissions: ['selection:read', 'document:write', 'iconify:search', 'iconify:browse', 'iconify:render'],
+      ui: { width: 800, height: 600 },
+    },
+    entryUrl: '/plugins/iconify/index.html?v=6',
+    source: 'builtin',
+  },
+  {
+    manifest: {
+      id: 'com.galileo.iconify.material',
+      name: 'Material Icons (Iconify)',
+      version: '0.1.0',
+      entry: 'index.html',
+      permissions: ['selection:read', 'document:write', 'iconify:search', 'iconify:browse', 'iconify:render'],
+      ui: { width: 800, height: 600 },
+    },
+    entryUrl: '/plugins/iconify/index.html?v=6&preset=material',
+    source: 'builtin',
+  },
+];
+
 export const builtinPlugins: PluginRegistration[] = [
   {
     manifest: {
@@ -58,4 +85,5 @@ export const builtinPlugins: PluginRegistration[] = [
     entryUrl: '/plugins/unsplash/index.html?v=1',
     source: 'builtin',
   },
+  ...iconifyBuiltinPlugins,
 ];

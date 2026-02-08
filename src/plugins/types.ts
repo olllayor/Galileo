@@ -6,7 +6,10 @@ export type PluginPermission =
 	| 'asset:read'
 	| 'asset:read:shared'
 	| 'unsplash:search'
-	| 'unsplash:insert';
+	| 'unsplash:insert'
+	| 'iconify:search'
+	| 'iconify:browse'
+	| 'iconify:render';
 
 export type PluginManifest = {
 	id: string;

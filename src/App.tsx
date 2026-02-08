@@ -114,6 +114,8 @@ import {
 	type StoredPlugin,
 } from './plugins/storage';
 import type { DevicePreset } from './core/framePresets';
+import { iconifyClient } from './integrations/iconify/client';
+import { IconifyClientError } from './integrations/iconify/types';
 
 const clamp = (value: number, min: number, max: number): number => {
 	return Math.min(max, Math.max(min, value));
@@ -168,6 +170,40 @@ type UnsplashFetchImageResult = {
 	width: number;
 	height: number;
 };
+type IconifySearchResponse = {
+	icons: string[];
+	limit?: number;
+	start?: number;
+	total?: number;
+};
+type IconifyCollectionInfo = {
+	name?: string;
+	total?: number;
+	category?: string;
+	palette?: boolean;
+	license?: {
+		title?: string;
+		spdx?: string;
+		url?: string;
+	};
+	author?: {
+		name?: string;
+		url?: string;
+	};
+};
+type IconifyCollectionsResponse = Record<string, IconifyCollectionInfo>;
+type IconifyCollectionResponse = {
+	prefix: string;
+	icons?: string[];
+	aliases?: Record<string, unknown>;
+	chars?: Record<string, string | string[]>;
+	categories?: Record<string, string[]>;
+	info?: IconifyCollectionInfo;
+};
+type IconifyKeywordsResponse = {
+	keywords: string[];
+};
+type IconifyLastModifiedResponse = Record<string, number>;
 type DraftPayload = {
 	key: string;
 	path?: string | null;
@@ -1044,6 +1080,143 @@ const normalizeUnsplashSearchResponse = (payload: unknown): UnsplashSearchRespon
 		totalPages,
 		results,
 	};
+};
+
+const normalizeIconifyError = (error: unknown): { code: string; message: string } => {
+	if (error instanceof IconifyClientError) {
+		return {
+			code: error.code,
+			message: error.message,
+		};
+	}
+
+	const message = error instanceof Error ? error.message : String(error);
+	const lower = message.toLowerCase();
+	if (lower.includes('timeout')) {
+		return { code: 'iconify_timeout', message: 'Iconify request timed out' };
+	}
+	if (lower.includes('not found') || lower.includes('404')) {
+		return { code: 'iconify_not_found', message: 'Iconify resource not found' };
+	}
+	if (lower.includes('invalid')) {
+		return { code: 'iconify_invalid_params', message: 'Invalid Iconify request' };
+	}
+	return { code: 'iconify_unavailable', message: 'Iconify API unavailable' };
+};
+
+const normalizeIconifySearchResponse = (payload: unknown): IconifySearchResponse => {
+	if (!isRecord(payload)) {
+		return { icons: [] };
+	}
+	const rawIcons = Array.isArray(payload.icons) ? payload.icons : [];
+	const icons = rawIcons.filter((value): value is string => typeof value === 'string' && value.includes(':'));
+	const limit = getNumber(payload.limit) ?? undefined;
+	const start = getNumber(payload.start) ?? undefined;
+	const total = getNumber(payload.total) ?? undefined;
+	return { icons, ...(limit !== undefined ? { limit } : {}), ...(start !== undefined ? { start } : {}), ...(total !== undefined ? { total } : {}) };
+};
+
+const normalizeIconifyCollectionInfo = (payload: unknown): IconifyCollectionInfo | null => {
+	if (!isRecord(payload)) return null;
+	const name = getString(payload.name) ?? undefined;
+	const total = getNumber(payload.total) ?? undefined;
+	const category = getString(payload.category) ?? undefined;
+	const palette = typeof payload.palette === 'boolean' ? payload.palette : undefined;
+	const licenseRecord = isRecord(payload.license) ? payload.license : null;
+	const authorRecord = isRecord(payload.author) ? payload.author : null;
+	const license =
+		licenseRecord && (licenseRecord.title || licenseRecord.spdx || licenseRecord.url)
+			? {
+					title: getString(licenseRecord.title) ?? undefined,
+					spdx: getString(licenseRecord.spdx) ?? undefined,
+					url: getString(licenseRecord.url) ?? undefined,
+				}
+			: undefined;
+	const author =
+		authorRecord && (authorRecord.name || authorRecord.url)
+			? {
+					name: getString(authorRecord.name) ?? undefined,
+					url: getString(authorRecord.url) ?? undefined,
+				}
+			: undefined;
+
+	return {
+		...(name ? { name } : {}),
+		...(total !== undefined ? { total } : {}),
+		...(category ? { category } : {}),
+		...(palette !== undefined ? { palette } : {}),
+		...(license ? { license } : {}),
+		...(author ? { author } : {}),
+	};
+};
+
+const normalizeIconifyCollectionsResponse = (payload: unknown): IconifyCollectionsResponse => {
+	if (!isRecord(payload)) return {};
+	const entries = Object.entries(payload);
+	const out: IconifyCollectionsResponse = {};
+	for (const [prefix, value] of entries) {
+		if (!prefix || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(prefix)) continue;
+		const info = normalizeIconifyCollectionInfo(value);
+		if (!info) continue;
+		out[prefix] = info;
+	}
+	return out;
+};
+
+const normalizeIconifyCollectionResponse = (payload: unknown): IconifyCollectionResponse | null => {
+	if (!isRecord(payload)) return null;
+	const prefix = getString(payload.prefix);
+	if (!prefix) return null;
+
+	const icons = Array.isArray(payload.icons)
+		? payload.icons.filter((value): value is string => typeof value === 'string')
+		: undefined;
+	const uncategorized = Array.isArray(payload.uncategorized)
+		? payload.uncategorized.filter((value): value is string => typeof value === 'string')
+		: undefined;
+	const hidden = Array.isArray(payload.hidden)
+		? payload.hidden.filter((value): value is string => typeof value === 'string')
+		: undefined;
+	const aliases = isRecord(payload.aliases) ? payload.aliases : undefined;
+	const chars = isRecord(payload.chars) ? (payload.chars as Record<string, string | string[]>) : undefined;
+	const categories = isRecord(payload.categories)
+		? (Object.fromEntries(
+				Object.entries(payload.categories).map(([key, value]) => [
+					key,
+					Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [],
+				]),
+			) as Record<string, string[]>)
+		: undefined;
+	const info = normalizeIconifyCollectionInfo(payload.info) ?? undefined;
+
+	return {
+		prefix,
+		...(icons ? { icons } : {}),
+		...(uncategorized ? { uncategorized } : {}),
+		...(hidden ? { hidden } : {}),
+		...(aliases ? { aliases } : {}),
+		...(chars ? { chars } : {}),
+		...(categories ? { categories } : {}),
+		...(info ? { info } : {}),
+	};
+};
+
+const normalizeIconifyKeywordsResponse = (payload: unknown): IconifyKeywordsResponse => {
+	if (!isRecord(payload)) return { keywords: [] };
+	const keywords = Array.isArray(payload.keywords)
+		? payload.keywords.filter((value): value is string => typeof value === 'string')
+		: [];
+	return { keywords };
+};
+
+const normalizeIconifyLastModifiedResponse = (payload: unknown): IconifyLastModifiedResponse => {
+	if (!isRecord(payload)) return {};
+	const out: IconifyLastModifiedResponse = {};
+	for (const [key, value] of Object.entries(payload)) {
+		const parsed = getNumber(value);
+		if (parsed !== null) out[key] = parsed;
+	}
+	return out;
 };
 
 export const App: React.FC = () => {
@@ -3092,6 +3265,183 @@ export const App: React.FC = () => {
 							size: params.size,
 						});
 						return { rpc: 1, id: request.id, ok: true, result };
+					}
+
+					case 'iconify.search': {
+						if (!hasPermission(plugin.manifest, 'iconify:search')) {
+							return fail('permission_denied', 'iconify:search is required');
+						}
+						const params = (request.params || {}) as {
+							query?: string;
+							limit?: number;
+							start?: number;
+							prefix?: string;
+							prefixes?: string[];
+							category?: string;
+						};
+						try {
+							const raw = await iconifyClient.searchIcons(params.query ?? '', {
+								limit: params.limit,
+								start: params.start,
+								prefix: params.prefix,
+								prefixes: params.prefixes,
+								category: params.category,
+							});
+							return { rpc: 1, id: request.id, ok: true, result: normalizeIconifySearchResponse(raw) };
+						} catch (error) {
+							const mapped = normalizeIconifyError(error);
+							return fail(mapped.code, mapped.message);
+						}
+					}
+
+					case 'iconify.collections': {
+						if (!hasPermission(plugin.manifest, 'iconify:browse')) {
+							return fail('permission_denied', 'iconify:browse is required');
+						}
+						const params = (request.params || {}) as {
+							prefix?: string;
+							prefixes?: string[];
+						};
+						try {
+							const raw = await iconifyClient.listCollections({
+								prefix: params.prefix,
+								prefixes: params.prefixes,
+							});
+							return {
+								rpc: 1,
+								id: request.id,
+								ok: true,
+								result: normalizeIconifyCollectionsResponse(raw),
+							};
+						} catch (error) {
+							const mapped = normalizeIconifyError(error);
+							return fail(mapped.code, mapped.message);
+						}
+					}
+
+					case 'iconify.collection': {
+						if (!hasPermission(plugin.manifest, 'iconify:browse')) {
+							return fail('permission_denied', 'iconify:browse is required');
+						}
+						const params = (request.params || {}) as {
+							prefix?: string;
+							info?: boolean;
+							chars?: boolean;
+						};
+						const prefix = params.prefix?.trim();
+						if (!prefix) {
+							return fail('iconify_invalid_params', 'prefix is required');
+						}
+						try {
+							const raw = await iconifyClient.getCollection(prefix, {
+								info: params.info ?? true,
+								chars: params.chars ?? false,
+							});
+							const normalized = normalizeIconifyCollectionResponse(raw);
+							if (!normalized) {
+								return fail('iconify_unavailable', 'Iconify collection response invalid');
+							}
+							return { rpc: 1, id: request.id, ok: true, result: normalized };
+						} catch (error) {
+							const mapped = normalizeIconifyError(error);
+							return fail(mapped.code, mapped.message);
+						}
+					}
+
+					case 'iconify.keywords': {
+						if (!hasPermission(plugin.manifest, 'iconify:browse')) {
+							return fail('permission_denied', 'iconify:browse is required');
+						}
+						const params = (request.params || {}) as {
+							prefix?: string;
+							keyword?: string;
+						};
+						try {
+							const raw = await iconifyClient.getKeywords({
+								prefix: params.prefix,
+								keyword: params.keyword,
+							});
+							return {
+								rpc: 1,
+								id: request.id,
+								ok: true,
+								result: normalizeIconifyKeywordsResponse(raw),
+							};
+						} catch (error) {
+							const mapped = normalizeIconifyError(error);
+							return fail(mapped.code, mapped.message);
+						}
+					}
+
+					case 'iconify.svg': {
+						if (!hasPermission(plugin.manifest, 'iconify:render')) {
+							return fail('permission_denied', 'iconify:render is required');
+						}
+						const params = (request.params || {}) as {
+							icon?: string;
+							prefix?: string;
+							name?: string;
+							customizations?: {
+								color?: string;
+								width?: string | number;
+								height?: string | number;
+								rotate?: string | number;
+								flip?: string;
+								box?: boolean;
+							};
+						};
+
+						let prefix = params.prefix?.trim();
+						let name = params.name?.trim();
+						if (params.icon?.includes(':')) {
+							const [parsedPrefix, parsedName] = params.icon.split(':');
+							prefix = parsedPrefix;
+							name = parsedName;
+						}
+						if (!prefix || !name) {
+							return fail('iconify_invalid_params', 'icon or prefix/name is required');
+						}
+						try {
+							const rendered = await iconifyClient.renderSvg(prefix, name, params.customizations);
+							return {
+								rpc: 1,
+								id: request.id,
+								ok: true,
+								result: {
+									icon: `${prefix}:${name}`,
+									prefix,
+									name,
+									svg: rendered.svg,
+									host: rendered.host,
+									url: rendered.url,
+								},
+							};
+						} catch (error) {
+							const mapped = normalizeIconifyError(error);
+							return fail(mapped.code, mapped.message);
+						}
+					}
+
+					case 'iconify.lastModified': {
+						if (!hasPermission(plugin.manifest, 'iconify:browse')) {
+							return fail('permission_denied', 'iconify:browse is required');
+						}
+						const params = (request.params || {}) as {
+							prefixes?: string[];
+						};
+						const prefixes = Array.isArray(params.prefixes) ? params.prefixes : [];
+						try {
+							const raw = await iconifyClient.getLastModified(prefixes);
+							return {
+								rpc: 1,
+								id: request.id,
+								ok: true,
+								result: normalizeIconifyLastModifiedResponse(raw),
+							};
+						} catch (error) {
+							const mapped = normalizeIconifyError(error);
+							return fail(mapped.code, mapped.message);
+						}
 					}
 
 					case 'unsplash.search': {

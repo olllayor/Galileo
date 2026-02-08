@@ -133,10 +133,55 @@ export const imageMetaUnsplashSchema = z
 	})
 	.passthrough();
 
-export const imageMetaSchema = z.discriminatedUnion('kind', [imageMeta3dIconSchema, imageMetaUnsplashSchema]);
+export const imageMetaIconifyCustomizationsSchema = z
+	.object({
+		color: z.string().optional(),
+		width: z.union([z.string(), z.number()]).optional(),
+		height: z.union([z.string(), z.number()]).optional(),
+		rotate: z.union([z.string(), z.number()]).optional(),
+		flip: z.string().optional(),
+		box: z.boolean().optional(),
+	})
+	.passthrough();
+
+export const imageMetaIconifyLicenseSchema = z
+	.object({
+		title: z.string().optional(),
+		spdx: z.string().optional(),
+		url: z.string().optional(),
+	})
+	.passthrough();
+
+export const imageMetaIconifyAuthorSchema = z
+	.object({
+		name: z.string().optional(),
+		url: z.string().optional(),
+	})
+	.passthrough();
+
+export const imageMetaIconifyIconSchema = z
+	.object({
+		kind: z.literal('iconify-icon'),
+		icon: z.string(),
+		prefix: z.string(),
+		name: z.string(),
+		providerHost: z.string(),
+		customizations: imageMetaIconifyCustomizationsSchema.optional(),
+		license: imageMetaIconifyLicenseSchema.optional(),
+		author: imageMetaIconifyAuthorSchema.optional(),
+		insertedAt: z.number(),
+	})
+	.passthrough();
+
+export const imageMetaSchema = z.discriminatedUnion('kind', [
+	imageMeta3dIconSchema,
+	imageMetaUnsplashSchema,
+	imageMetaIconifyIconSchema,
+]);
 
 export type ImageMeta3dIcon = z.infer<typeof imageMeta3dIconSchema>;
 export type ImageMetaUnsplash = z.infer<typeof imageMetaUnsplashSchema>;
+export type ImageMetaIconifyIcon = z.infer<typeof imageMetaIconifyIconSchema>;
 export type ImageMeta = z.infer<typeof imageMetaSchema>;
 
 export const imageBgRemoveMetaSchema = z
