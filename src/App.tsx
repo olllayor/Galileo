@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef, useLayoutEffect } from 'react';
 import { flushSync } from 'react-dom';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { Canvas } from './ui/Canvas';
@@ -28,6 +28,7 @@ import {
 } from './interaction/tools';
 import {
 	ENABLE_BOOLEAN_V1,
+	ENABLE_TEXT_PARITY_V1,
 	ENABLE_VECTOR_EDIT_V1,
 	buildParentMap,
 	buildWorldBoundsMap,
@@ -59,6 +60,7 @@ import type {
 	VectorPoint,
 } from './core/doc/types';
 import type { Command } from './core/commands/types';
+import { layoutText } from './core/text/layout';
 import {
 	createProjectMeta,
 	deriveProjectNameFromPath,
@@ -124,11 +126,11 @@ const VECTOR_ANCHOR_HIT_SIZE = 9;
 const VECTOR_HANDLE_HIT_SIZE = 8;
 const VECTOR_SEGMENT_HIT_SIZE = 10;
 const VECTOR_DRAG_SLOP_PX = 3;
+const TEXT_CREATE_DRAG_SLOP_PX = 4;
 const LEGACY_AUTOSAVE_KEY = 'galileo.autosave.v1';
 const UNTITLED_DRAFT_KEY = 'untitled';
 const AUTOSAVE_DELAY_MS = 1500;
 const ZOOM_SENSITIVITY = 0.0035;
-const TEXT_PADDING = 4;
 const CLIPBOARD_PREFIX = 'GALILEO_CLIPBOARD_V1:';
 const DEFAULT_CANVAS_SIZE = { width: 1280, height: 800 } as const;
 const DEFAULT_IMAGE_OUTLINE = {
@@ -243,6 +245,26 @@ type PenSession = {
 type VectorEditSession = {
 	pathId: string;
 	selectedPointId: string | null;
+};
+
+type Point = {
+	x: number;
+	y: number;
+};
+
+type TextEditSession = {
+	nodeId: string;
+	draftText: string;
+	initialText: string;
+	isNewNode: boolean;
+	selectAllOnFocus: boolean;
+};
+
+type TextCreationDragState = {
+	startWorld: Point;
+	currentWorld: Point;
+	parentId: string;
+	active: boolean;
 };
 
 type VectorHover =
@@ -1062,6 +1084,8 @@ export const App: React.FC = () => {
 	const [previewDocument, setPreviewDocument] = useState<Document | null>(null);
 	const [dragState, setDragState] = useState<DragState | null>(null);
 	const [transformSession, setTransformSession] = useState<TransformSession | null>(null);
+	const [textEditSession, setTextEditSession] = useState<TextEditSession | null>(null);
+	const [textCreationDragState, setTextCreationDragState] = useState<TextCreationDragState | null>(null);
 	const [containerFocusId, setContainerFocusId] = useState<string | null>(null);
 	const [hitCycle, setHitCycle] = useState<{ key: string; index: number } | null>(null);
 	const [hoverHandle, setHoverHandle] = useState<ResizeHandle | null>(null);
@@ -1097,8 +1121,12 @@ export const App: React.FC = () => {
 		const stored = localStorage.getItem('galileo.ui.rightPanelCollapsed');
 		return stored === 'true';
 	});
+	const [canvasViewportOffset, setCanvasViewportOffset] = useState({ x: 0, y: 0 });
 	const pluginIframeRef = useRef<HTMLIFrameElement | null>(null);
 	const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+	const textEditorRef = useRef<HTMLInputElement | null>(null);
+	const textEditorIsComposingRef = useRef(false);
+	const suppressTextEditorBlurCommitRef = useRef(false);
 	const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
 	const clipboardRef = useRef<ClipboardPayload | null>(null);
 	const clipboardPasteCountRef = useRef(0);
@@ -1186,6 +1214,61 @@ export const App: React.FC = () => {
 		setProjectsSearch(value);
 		saveProjectsSearch(value);
 	}, []);
+
+	useLayoutEffect(() => {
+		const wrapper = canvasWrapperRef.current;
+		if (!wrapper) return;
+
+		let frameId: number | null = null;
+		let observer: ResizeObserver | null = null;
+
+		const updateOffset = () => {
+			const canvas = wrapper.querySelector('canvas');
+			if (!canvas) {
+				setCanvasViewportOffset((current) => (current.x === 0 && current.y === 0 ? current : { x: 0, y: 0 }));
+				return;
+			}
+
+			const wrapperRect = wrapper.getBoundingClientRect();
+			const canvasRect = canvas.getBoundingClientRect();
+			const next = {
+				x: canvasRect.left - wrapperRect.left,
+				y: canvasRect.top - wrapperRect.top,
+			};
+			setCanvasViewportOffset((current) =>
+				Math.abs(current.x - next.x) < 0.5 && Math.abs(current.y - next.y) < 0.5 ? current : next,
+			);
+		};
+
+		const schedule = () => {
+			if (frameId !== null) {
+				cancelAnimationFrame(frameId);
+			}
+			frameId = requestAnimationFrame(() => {
+				frameId = null;
+				updateOffset();
+			});
+		};
+
+		updateOffset();
+		observer = new ResizeObserver(() => schedule());
+		observer.observe(wrapper);
+		const canvas = wrapper.querySelector('canvas');
+		if (canvas) {
+			observer.observe(canvas);
+		}
+		window.addEventListener('resize', schedule);
+
+		return () => {
+			if (frameId !== null) {
+				cancelAnimationFrame(frameId);
+			}
+			if (observer) {
+				observer.disconnect();
+			}
+			window.removeEventListener('resize', schedule);
+		};
+	}, [appView, leftPanelCollapsed, rightPanelCollapsed, canvasSize.height, canvasSize.width]);
 
 	const displayDocument = previewDocument ?? document;
 	const selectedNode = selectedIds.length === 1 ? displayDocument.nodes[selectedIds[0]] : null;
@@ -1311,6 +1394,16 @@ export const App: React.FC = () => {
 			height: worldRect.height * view.zoom,
 		};
 	}, [dragState, view]);
+	const textCreationDraftRect = useMemo(() => {
+		if (!textCreationDragState?.active) return null;
+		const worldRect = rectFromPoints(textCreationDragState.startWorld, textCreationDragState.currentWorld);
+		return {
+			x: worldRect.x * view.zoom + view.pan.x,
+			y: worldRect.y * view.zoom + view.pan.y,
+			width: worldRect.width * view.zoom,
+			height: worldRect.height * view.zoom,
+		};
+	}, [textCreationDragState, view]);
 	const hitTestAtPoint = useCallback(
 		(worldX: number, worldY: number) =>
 			hitTestNodeAtPosition(displayDocument, worldX, worldY, zoom, {
@@ -3499,27 +3592,282 @@ export const App: React.FC = () => {
 		return () => window.removeEventListener('message', handler);
 	}, [activePlugin, handlePluginRpcRequest]);
 
-	const measureTextSize = useCallback((text: string, fontSize: number, fontFamily: string, fontWeight: string) => {
-		if (!measureCanvasRef.current) {
-			measureCanvasRef.current = window.document.createElement('canvas');
+	const measureTextSize = useCallback(
+		(options: {
+			text: string;
+			fontSize: number;
+			fontFamily: string;
+			fontWeight: string;
+			textAlign?: Node['textAlign'];
+			lineHeightPx?: number;
+			letterSpacingPx?: number;
+			textResizeMode?: Node['textResizeMode'];
+			width?: number;
+			height?: number;
+		}) => {
+			if (!measureCanvasRef.current) {
+				measureCanvasRef.current = window.document.createElement('canvas');
+			}
+			const ctx = measureCanvasRef.current.getContext('2d');
+			if (!ctx) {
+				return { width: 1, height: Math.max(1, Math.ceil(options.fontSize)) };
+			}
+
+			const fontSize = Number.isFinite(options.fontSize) ? Math.max(1, options.fontSize) : 16;
+			const fontFamily = options.fontFamily || 'Inter, sans-serif';
+			const fontWeight = options.fontWeight || 'normal';
+			const letterSpacingPx = Number.isFinite(options.letterSpacingPx) ? (options.letterSpacingPx as number) : 0;
+			const textResizeMode = options.textResizeMode ?? 'auto-width';
+
+			ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+			const layout = layoutText(
+				{
+					text: options.text ?? '',
+					width: typeof options.width === 'number' ? Math.max(1, options.width) : 200,
+					height: typeof options.height === 'number' ? Math.max(1, options.height) : Math.max(1, fontSize),
+					fontSize,
+					textAlign: options.textAlign ?? 'left',
+					lineHeightPx: options.lineHeightPx,
+					letterSpacingPx,
+					textResizeMode,
+				},
+				(line) => {
+					if (!line) return 0;
+					const baseWidth = Math.max(0, ctx.measureText(line).width);
+					const glyphCount = Array.from(line).length;
+					if (glyphCount <= 1 || letterSpacingPx === 0) {
+						return baseWidth;
+					}
+					return baseWidth + (glyphCount - 1) * letterSpacingPx;
+				},
+			);
+
+			return {
+				width: Math.max(1, Math.ceil(layout.boxWidth)),
+				height: Math.max(1, Math.ceil(layout.boxHeight)),
+			};
+		},
+		[],
+	);
+
+	const startTextEditing = useCallback(
+		(
+			nodeId: string,
+			options?: {
+				isNewNode?: boolean;
+				selectAll?: boolean;
+				initialText?: string;
+				draftText?: string;
+			},
+		) => {
+			if (!ENABLE_TEXT_PARITY_V1) return;
+			const node = document.nodes[nodeId];
+			if (node && (node.type !== 'text' || node.locked === true)) {
+				return;
+			}
+
+			const baseInitialText = typeof options?.initialText === 'string' ? options.initialText : node?.text ?? '';
+			const rawDraftText = typeof options?.draftText === 'string' ? options.draftText : baseInitialText;
+			const baseDraftText = rawDraftText.replace(/[\r\n]+/g, ' ');
+			textEditorIsComposingRef.current = false;
+			suppressTextEditorBlurCommitRef.current = false;
+			setTextEditSession({
+				nodeId,
+				draftText: baseDraftText,
+				initialText: baseInitialText,
+				isNewNode: Boolean(options?.isNewNode),
+				selectAllOnFocus: options?.selectAll !== false,
+			});
+			setSelection([nodeId]);
+			setActiveTool('select');
+		},
+		[document, setSelection],
+	);
+
+	const createTextNodeAndStartEditing = useCallback(
+		(options: { parentId: string; worldStart: Point; worldEnd: Point; asFixedBox: boolean }) => {
+			const startLocal = getLocalPointForParent(options.parentId, options.worldStart.x, options.worldStart.y);
+			const endLocal = getLocalPointForParent(options.parentId, options.worldEnd.x, options.worldEnd.y);
+			const tool = createTextTool(options.parentId);
+			const result = tool.handleMouseDown(document, startLocal.x, startLocal.y, []);
+			if (!result) return;
+
+			const newIds = Object.keys(result.nodes).filter((id) => !(id in document.nodes));
+			const newId = newIds[0];
+			const newNode = newId ? result.nodes[newId] : null;
+			if (!newId || !newNode || newNode.type !== 'text') {
+				return;
+			}
+
+			const nextText = newNode.text ?? '';
+			const nextFontSize = newNode.fontSize ?? 16;
+			const nextFontFamily = newNode.fontFamily ?? 'Inter, sans-serif';
+			const nextFontWeight = newNode.fontWeight ?? 'normal';
+			const lineHeightPx = newNode.lineHeightPx;
+			const defaultLineHeight = lineHeightPx ?? nextFontSize * 1.2;
+			const textResizeMode = options.asFixedBox ? 'fixed' : (newNode.textResizeMode ?? 'auto-width');
+
+			let createdNode: Node = newNode;
+			if (options.asFixedBox) {
+				const localRect = rectFromPoints(startLocal, endLocal);
+				createdNode = {
+					...newNode,
+					position: { x: localRect.x, y: localRect.y },
+					size: {
+						width: Math.max(20, localRect.width),
+						height: Math.max(Math.ceil(defaultLineHeight + 8), localRect.height),
+					},
+					textResizeMode,
+				};
+			} else {
+				const measured = measureTextSize({
+					text: nextText,
+					fontSize: nextFontSize,
+					fontFamily: nextFontFamily,
+					fontWeight: nextFontWeight,
+					textAlign: newNode.textAlign ?? 'left',
+					lineHeightPx: newNode.lineHeightPx,
+					letterSpacingPx: newNode.letterSpacingPx ?? 0,
+					textResizeMode,
+					width: newNode.size?.width,
+					height: newNode.size?.height,
+				});
+				createdNode = {
+					...newNode,
+					size: measured,
+					textResizeMode,
+				};
+			}
+
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Create text',
+				type: 'createNode',
+				payload: {
+					id: newId,
+					parentId: options.parentId,
+					node: createdNode,
+				},
+			} as Command);
+			selectNode(newId);
+			startTextEditing(newId, {
+				isNewNode: true,
+				selectAll: true,
+				initialText: nextText,
+				draftText: '',
+			});
+		},
+		[document, executeCommand, getLocalPointForParent, measureTextSize, selectNode, startTextEditing],
+	);
+
+	useEffect(() => {
+		if (!textEditSession) return;
+		const textarea = textEditorRef.current;
+		if (!textarea) return;
+		textarea.focus();
+		if (textEditSession.selectAllOnFocus) {
+			textarea.select();
+		} else {
+			const end = textarea.value.length;
+			textarea.setSelectionRange(end, end);
 		}
-		const ctx = measureCanvasRef.current.getContext('2d');
-		if (!ctx) {
-			return { width: 1, height: fontSize };
+	}, [textEditSession]);
+
+	useEffect(() => {
+		if (!textEditSession) return;
+		const node = document.nodes[textEditSession.nodeId];
+		if (!node || node.type !== 'text' || node.locked === true) {
+			setTextEditSession(null);
 		}
-		ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
-		const lines = text.split('\n');
-		let maxWidth = 0;
-		for (const line of lines) {
-			const sample = line.length > 0 ? line : ' ';
-			const metrics = ctx.measureText(sample);
-			maxWidth = Math.max(maxWidth, metrics.width);
+	}, [document, textEditSession]);
+
+	const editingTextNode = textEditSession ? document.nodes[textEditSession.nodeId] : null;
+	const hiddenCanvasNodeIds = useMemo(
+		() => (ENABLE_TEXT_PARITY_V1 && textEditSession ? [textEditSession.nodeId] : []),
+		[textEditSession],
+	);
+	const editingTextBounds = textEditSession ? boundsMap[textEditSession.nodeId] : null;
+	const editingTextSize = useMemo(() => {
+		if (!ENABLE_TEXT_PARITY_V1 || !textEditSession) return null;
+		if (!editingTextNode || editingTextNode.type !== 'text') return null;
+		const measured = measureTextSize({
+			text: textEditSession.draftText,
+			fontSize: editingTextNode.fontSize ?? 16,
+			fontFamily: editingTextNode.fontFamily ?? 'Inter, sans-serif',
+			fontWeight: editingTextNode.fontWeight ?? 'normal',
+			textAlign: editingTextNode.textAlign ?? 'left',
+			lineHeightPx: editingTextNode.lineHeightPx,
+			letterSpacingPx: editingTextNode.letterSpacingPx ?? 0,
+			textResizeMode: editingTextNode.textResizeMode ?? 'auto-width',
+			width: editingTextNode.size.width,
+			height: editingTextNode.size.height,
+		});
+		const mode = editingTextNode.textResizeMode ?? 'auto-width';
+		if (mode === 'fixed') {
+			return {
+				width: Math.max(1, editingTextNode.size.width),
+				height: Math.max(1, editingTextNode.size.height),
+			};
 		}
-		const lineHeight = Math.max(1, fontSize * 1.2);
-		const width = Math.max(20, Math.ceil(maxWidth + TEXT_PADDING * 2));
-		const height = Math.max(Math.ceil(lineHeight * lines.length + TEXT_PADDING * 2), Math.ceil(lineHeight));
-		return { width, height };
-	}, []);
+		if (mode === 'auto-height') {
+			return {
+				width: Math.max(1, editingTextNode.size.width),
+				height: Math.max(1, measured.height),
+			};
+		}
+		return measured;
+	}, [editingTextNode, measureTextSize, textEditSession]);
+	const editingTextScreenRect = useMemo(() => {
+		if (!editingTextBounds || !editingTextSize) return null;
+		return {
+			left: editingTextBounds.x * zoom + panOffset.x + canvasViewportOffset.x,
+			top: editingTextBounds.y * zoom + panOffset.y + canvasViewportOffset.y,
+			width: editingTextSize.width * zoom,
+			height: editingTextSize.height * zoom,
+		};
+	}, [canvasViewportOffset.x, canvasViewportOffset.y, editingTextBounds, editingTextSize, panOffset.x, panOffset.y, zoom]);
+	const activeTextEditSelectionBounds = useMemo(() => {
+		if (!ENABLE_TEXT_PARITY_V1 || !textEditSession) return null;
+		if (!editingTextBounds || !editingTextNode || editingTextNode.type !== 'text') return null;
+		const effectiveLineHeight = Math.max(1, editingTextNode.lineHeightPx ?? (editingTextNode.fontSize ?? 16) * 1.2);
+		return {
+			x: editingTextBounds.x,
+			y: editingTextBounds.y,
+			width: Math.max(1, editingTextSize?.width ?? editingTextNode.size.width),
+			height: Math.max(1, effectiveLineHeight + 8),
+		};
+	}, [editingTextBounds, editingTextNode, editingTextSize, textEditSession]);
+	const canvasSelectionBounds = activeTextEditSelectionBounds ?? selectionBounds;
+	const editingTextColor =
+		editingTextNode?.type === 'text' && editingTextNode.fill?.type === 'solid' ? editingTextNode.fill.value : '#000000';
+	const selectedTextOverflow = useMemo(() => {
+		if (!ENABLE_TEXT_PARITY_V1 || !selectedNode || selectedNode.type !== 'text') return null;
+		if ((selectedNode.textResizeMode ?? 'auto-width') !== 'fixed') {
+			return { isOverflowing: false };
+		}
+		const measured = measureTextSize({
+			text: selectedNode.text ?? '',
+			fontSize: selectedNode.fontSize ?? 16,
+			fontFamily: selectedNode.fontFamily ?? 'Inter, sans-serif',
+			fontWeight: selectedNode.fontWeight ?? 'normal',
+			textAlign: selectedNode.textAlign ?? 'left',
+			lineHeightPx: selectedNode.lineHeightPx,
+			letterSpacingPx: selectedNode.letterSpacingPx ?? 0,
+			textResizeMode: 'auto-height',
+			width: selectedNode.size.width,
+			height: selectedNode.size.height,
+		});
+		return {
+			isOverflowing: measured.height > selectedNode.size.height + 0.5,
+		};
+	}, [measureTextSize, selectedNode]);
+	const selectedTextOverflowIndicatorNodeIds = useMemo(() => {
+		if (!selectedNode || selectedNode.type !== 'text') return [];
+		if (!selectedTextOverflow?.isOverflowing) return [];
+		return [selectedNode.id];
+	}, [selectedNode, selectedTextOverflow]);
 
 	const handleSelectionPointerDown = useCallback(
 		(info: CanvasPointerInfo): boolean => {
@@ -3780,6 +4128,13 @@ export const App: React.FC = () => {
 						return;
 					}
 				}
+				if (ENABLE_TEXT_PARITY_V1 && info.detail >= 2) {
+					const hit = hitTestAtPoint(worldX, worldY);
+					if (hit?.node.type === 'text' && !hit.locked) {
+						startTextEditing(hit.node.id, { selectAll: false });
+						return;
+					}
+				}
 
 				if (isVectorEditActive && editablePathId) {
 					const pathNode = document.nodes[editablePathId];
@@ -3944,6 +4299,15 @@ export const App: React.FC = () => {
 			}
 
 			if (activeTool === 'text') {
+				if (ENABLE_TEXT_PARITY_V1 && info.detail >= 2) {
+					const hit = hitTestAtPoint(worldX, worldY);
+					if (hit?.node.type === 'text' && !hit.locked) {
+						setActiveTool('select');
+						startTextEditing(hit.node.id, { selectAll: false });
+						return;
+					}
+				}
+
 				if (selectionBounds && selectionIds.length === 1) {
 					const handle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
 					if (handle) {
@@ -3954,41 +4318,12 @@ export const App: React.FC = () => {
 				}
 
 				const parentId = getInsertionParentId(worldX, worldY);
-				const localPoint = getLocalPointForParent(parentId, worldX, worldY);
-				const tool = createTextTool(parentId);
-				const result = tool.handleMouseDown(document, localPoint.x, localPoint.y, []);
-				if (result) {
-					const newIds = Object.keys(result.nodes).filter((id) => !(id in document.nodes));
-					const newId = newIds[0];
-					const newNode = newId ? result.nodes[newId] : null;
-					if (!newId || !newNode) {
-						return;
-					}
-
-					const nextText = newNode.text ?? 'Text';
-					const nextFontSize = newNode.fontSize ?? 16;
-					const nextFontFamily = newNode.fontFamily ?? 'Inter, sans-serif';
-					const nextFontWeight = newNode.fontWeight ?? 'normal';
-					const measured = measureTextSize(nextText, nextFontSize, nextFontFamily, nextFontWeight);
-
-					executeCommand({
-						id: generateId(),
-						timestamp: Date.now(),
-						source: 'user',
-						description: 'Create text',
-						type: 'createNode',
-						payload: {
-							id: newId,
-							parentId,
-							node: {
-								...newNode,
-								size: measured,
-							},
-						},
-					} as Command);
-					selectNode(newId);
-					setActiveTool('select');
-				}
+				setTextCreationDragState({
+					startWorld: { x: worldX, y: worldY },
+					currentWorld: { x: worldX, y: worldY },
+					parentId,
+					active: true,
+				});
 				return;
 			}
 
@@ -4141,14 +4476,15 @@ export const App: React.FC = () => {
 			vectorBezierHandles,
 			selectNode,
 			setActiveTool,
+			startTextEditing,
 			view,
-			measureTextSize,
 			transformSession,
 			openContextMenuAt,
 			spaceKeyHeld,
 			panOffset,
 			getInsertionParentId,
 			getLocalPointForParent,
+			setTextCreationDragState,
 		],
 	);
 
@@ -4164,6 +4500,18 @@ export const App: React.FC = () => {
 	const handleCanvasMouseMove = useCallback(
 		(info: CanvasPointerInfo) => {
 			const { worldX, worldY, screenX, screenY } = info;
+
+			if (textCreationDragState?.active) {
+				setTextCreationDragState((current) =>
+					current
+						? {
+								...current,
+								currentWorld: { x: worldX, y: worldY },
+							}
+						: current,
+				);
+				return;
+			}
 
 			if (transformSession) {
 				const deltaX = worldX - transformSession.startPointerWorld.x;
@@ -4499,11 +4847,30 @@ export const App: React.FC = () => {
 			view,
 			zoom,
 			displayDocument,
+			textCreationDragState,
 		],
 	);
 
 	const handleCanvasMouseUp = useCallback(
 		(info: CanvasPointerInfo) => {
+			if (textCreationDragState?.active) {
+				const dx = info.worldX - textCreationDragState.startWorld.x;
+				const dy = info.worldY - textCreationDragState.startWorld.y;
+				const dragDistancePx = Math.hypot(dx, dy) * (zoom === 0 ? 1 : zoom);
+				const asFixedBox = dragDistancePx >= TEXT_CREATE_DRAG_SLOP_PX;
+				createTextNodeAndStartEditing({
+					parentId: textCreationDragState.parentId,
+					worldStart: textCreationDragState.startWorld,
+					worldEnd: { x: info.worldX, y: info.worldY },
+					asFixedBox,
+				});
+				setTextCreationDragState(null);
+				setSnapGuides([]);
+				setHoverHandle(null);
+				setHoverHit(null);
+				return;
+			}
+
 			if (transformSession) {
 				const deltaX = info.worldX - transformSession.startPointerWorld.x;
 				const deltaY = info.worldY - transformSession.startPointerWorld.y;
@@ -4893,14 +5260,17 @@ export const App: React.FC = () => {
 		[
 			dragState,
 			transformSession,
+			textCreationDragState,
 			snapDisabled,
 			zoom,
+			createTextNodeAndStartEditing,
 			executeCommand,
 			document,
 			parentMap,
 			boundsMap,
 			documentParentMap,
 			getLayoutGuideTargetsForParent,
+			setTextCreationDragState,
 		],
 	);
 
@@ -4935,18 +5305,74 @@ export const App: React.FC = () => {
 					typeof updates.fontFamily === 'string' ? updates.fontFamily : (current.fontFamily ?? 'Inter, sans-serif');
 				const nextFontWeight =
 					typeof updates.fontWeight === 'string' ? updates.fontWeight : (current.fontWeight ?? 'normal');
+				const hasLineHeightUpdate = Object.prototype.hasOwnProperty.call(updates, 'lineHeightPx');
+				const hasLetterSpacingUpdate = Object.prototype.hasOwnProperty.call(updates, 'letterSpacingPx');
+				const hasTextAlignUpdate = Object.prototype.hasOwnProperty.call(updates, 'textAlign');
+				const hasResizeModeUpdate = Object.prototype.hasOwnProperty.call(updates, 'textResizeMode');
+				const hasSizeUpdate = Object.prototype.hasOwnProperty.call(updates, 'size');
+
+				const nextLineHeightPx = hasLineHeightUpdate
+					? typeof updates.lineHeightPx === 'number'
+						? updates.lineHeightPx
+						: undefined
+					: current.lineHeightPx;
+				const nextLetterSpacingPx = hasLetterSpacingUpdate
+					? typeof updates.letterSpacingPx === 'number'
+						? updates.letterSpacingPx
+						: 0
+					: (current.letterSpacingPx ?? 0);
+				const nextTextAlign =
+					typeof updates.textAlign === 'string'
+						? (updates.textAlign as Node['textAlign'])
+						: (current.textAlign ?? 'left');
+				const nextResizeMode =
+					typeof updates.textResizeMode === 'string'
+						? (updates.textResizeMode as Node['textResizeMode'])
+						: (current.textResizeMode ?? 'auto-width');
+				const requestedSize =
+					(nextUpdates as Partial<Node>).size && typeof (nextUpdates as Partial<Node>).size === 'object'
+						? ((nextUpdates as Partial<Node>).size as Node['size'])
+						: undefined;
+				const baseWidth = typeof requestedSize?.width === 'number' ? requestedSize.width : current.size.width;
+				const baseHeight = typeof requestedSize?.height === 'number' ? requestedSize.height : current.size.height;
 
 				if (
 					Object.prototype.hasOwnProperty.call(updates, 'text') ||
 					Object.prototype.hasOwnProperty.call(updates, 'fontSize') ||
 					Object.prototype.hasOwnProperty.call(updates, 'fontFamily') ||
-					Object.prototype.hasOwnProperty.call(updates, 'fontWeight')
+					Object.prototype.hasOwnProperty.call(updates, 'fontWeight') ||
+					hasTextAlignUpdate ||
+					hasLineHeightUpdate ||
+					hasLetterSpacingUpdate ||
+					hasResizeModeUpdate ||
+					hasSizeUpdate
 				) {
-					const measured = measureTextSize(nextText, nextFontSize, nextFontFamily, nextFontWeight);
-					nextUpdates = {
-						...updates,
-						size: measured,
-					};
+					const measured = measureTextSize({
+						text: nextText,
+						fontSize: nextFontSize,
+						fontFamily: nextFontFamily,
+						fontWeight: nextFontWeight,
+						textAlign: nextTextAlign,
+						lineHeightPx: nextLineHeightPx,
+						letterSpacingPx: nextLetterSpacingPx,
+						textResizeMode: nextResizeMode,
+						width: baseWidth,
+						height: baseHeight,
+					});
+
+					let nextSize = requestedSize;
+					if (nextResizeMode === 'auto-width') {
+						nextSize = measured;
+					} else if (nextResizeMode === 'auto-height') {
+						nextSize = { width: Math.max(1, Math.ceil(baseWidth)), height: measured.height };
+					}
+
+					if (nextSize) {
+						nextUpdates = {
+							...updates,
+							size: nextSize,
+						};
+					}
 				}
 			}
 
@@ -5021,6 +5447,55 @@ export const App: React.FC = () => {
 		},
 		[document, boundsMap, executeCommand, measureTextSize],
 	);
+
+	const commitTextEditing = useCallback(() => {
+		if (!ENABLE_TEXT_PARITY_V1 || !textEditSession) return;
+		const session = textEditSession;
+		const node = document.nodes[session.nodeId];
+		textEditorIsComposingRef.current = false;
+		setTextEditSession(null);
+		if (!node || node.type !== 'text') {
+			return;
+		}
+
+		const nextText = session.draftText;
+		const isEmpty = nextText.trim().length === 0;
+		if (session.isNewNode && isEmpty) {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Delete empty text',
+				type: 'deleteNode',
+				payload: { id: node.id },
+			} as Command);
+			setSelection([]);
+			return;
+		}
+
+		if (nextText !== (node.text ?? '')) {
+			handleUpdateNode(node.id, { text: nextText });
+		}
+	}, [document, executeCommand, handleUpdateNode, setSelection, textEditSession]);
+
+	const cancelTextEditing = useCallback(() => {
+		if (!ENABLE_TEXT_PARITY_V1 || !textEditSession) return;
+		const session = textEditSession;
+		const node = document.nodes[session.nodeId];
+		textEditorIsComposingRef.current = false;
+		setTextEditSession(null);
+		if (session.isNewNode && node) {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Cancel text edit',
+				type: 'deleteNode',
+				payload: { id: session.nodeId },
+			} as Command);
+			setSelection([]);
+		}
+	}, [document, executeCommand, setSelection, textEditSession]);
 
 	const handleRenameNode = useCallback(
 		(id: string, name?: string) => {
@@ -5782,6 +6257,41 @@ export const App: React.FC = () => {
 			const isCmd = e.ctrlKey || e.metaKey;
 			const key = e.key.toLowerCase();
 			const isEditorView = appView === 'editor';
+			const isComposing = e.isComposing || textEditorIsComposingRef.current;
+
+			if (ENABLE_TEXT_PARITY_V1 && textCreationDragState?.active && e.key === 'Escape') {
+				e.preventDefault();
+				setTextCreationDragState(null);
+				setActiveTool('select');
+				return;
+			}
+
+			if (ENABLE_TEXT_PARITY_V1 && textEditSession) {
+				if (!isComposing && e.key === 'Escape') {
+					e.preventDefault();
+					suppressTextEditorBlurCommitRef.current = true;
+					cancelTextEditing();
+					return;
+				}
+				if (!isComposing && e.key === 'Enter') {
+					e.preventDefault();
+					suppressTextEditorBlurCommitRef.current = true;
+					commitTextEditing();
+					return;
+				}
+				if (!isComposing && isCmd && e.key === 'Enter') {
+					e.preventDefault();
+					suppressTextEditorBlurCommitRef.current = true;
+					commitTextEditing();
+					return;
+				}
+				if (isCmd && key === 's') {
+					e.preventDefault();
+					handleSave();
+					return;
+				}
+				return;
+			}
 
 			if (isCmd && key === 'k') {
 				e.preventDefault();
@@ -5916,6 +6426,24 @@ export const App: React.FC = () => {
 					return;
 				}
 
+				const singleSelectedNode = selectionIds.length === 1 ? document.nodes[selectionIds[0]] : null;
+				if (singleSelectedNode?.type === 'text') {
+					if (isCmd && key === 'b') {
+						e.preventDefault();
+						const nextWeight = singleSelectedNode.fontWeight === 'bold' ? 'normal' : 'bold';
+						handleUpdateNode(singleSelectedNode.id, { fontWeight: nextWeight });
+						return;
+					}
+					if (isCmd && e.shiftKey && (e.code === 'Period' || e.code === 'Comma')) {
+						e.preventDefault();
+						const currentFontSize = singleSelectedNode.fontSize ?? 16;
+						const delta = e.code === 'Period' ? 1 : -1;
+						const nextFontSize = Math.max(1, Math.round(currentFontSize + delta));
+						handleUpdateNode(singleSelectedNode.id, { fontSize: nextFontSize });
+						return;
+					}
+				}
+
 				// Cmd+G to group, Cmd+Shift+G to ungroup
 				if (isCmd && key === 'g') {
 					e.preventDefault();
@@ -5951,6 +6479,11 @@ export const App: React.FC = () => {
 					}
 					if (selectionIds.length !== 1) return;
 					const target = document.nodes[selectionIds[0]];
+					if (ENABLE_TEXT_PARITY_V1 && target?.type === 'text') {
+						e.preventDefault();
+						startTextEditing(target.id, { selectAll: false });
+						return;
+					}
 					if (target && (target.type === 'group' || target.type === 'frame')) {
 						e.preventDefault();
 						setContainerFocusId(target.id);
@@ -6105,6 +6638,10 @@ export const App: React.FC = () => {
 		copySelectionToClipboard,
 		copyEffects,
 		pasteEffects,
+		handleUpdateNode,
+		commitTextEditing,
+		cancelTextEditing,
+		startTextEditing,
 		transformSession,
 		contextMenu,
 		activePlugin,
@@ -6117,8 +6654,11 @@ export const App: React.FC = () => {
 		spaceKeyHeld,
 		toolBeforeSpace,
 		activeTool,
+		textEditSession,
+		textCreationDragState,
 		penSession,
 		vectorEditSession,
+		setTextCreationDragState,
 	]);
 
 	// Persist panel collapse state
@@ -6145,6 +6685,9 @@ export const App: React.FC = () => {
 		}
 		if (tool !== 'select') {
 			setVectorEditSession(null);
+		}
+		if (tool !== 'text') {
+			setTextCreationDragState(null);
 		}
 		setVectorHover(null);
 		setActiveTool(tool as 'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen');
@@ -6323,14 +6866,17 @@ export const App: React.FC = () => {
 								document={displayDocument}
 								boundsMap={boundsMap}
 								view={view}
-								selectionBounds={selectionBounds}
+								selectionBounds={canvasSelectionBounds}
 								hoverBounds={hoverBounds}
-								showHandles={selectionIds.length > 0}
+								showHandles={selectionIds.length > 0 && !textEditSession}
 								hoverHandle={hoverHandle}
 								snapGuides={snapGuides}
 								layoutGuides={layoutGuideState.lines}
 								layoutGuideBounds={layoutGuideState.bounds}
 								marqueeRect={marqueeRect}
+								textCreationDraftRect={textCreationDraftRect}
+								textOverflowIndicatorNodeIds={selectedTextOverflowIndicatorNodeIds}
+								hiddenNodeIds={hiddenCanvasNodeIds}
 								vectorAnchors={vectorAnchors}
 								vectorBezierHandles={vectorBezierHandles}
 								vectorSegmentPreview={vectorSegmentPreview}
@@ -6346,6 +6892,98 @@ export const App: React.FC = () => {
 								onWheel={handleCanvasWheel}
 								onContextMenu={handleCanvasContextMenu}
 							/>
+
+							{ENABLE_TEXT_PARITY_V1 &&
+								textEditSession &&
+								editingTextNode?.type === 'text' &&
+								editingTextScreenRect && (
+									<input
+										ref={textEditorRef}
+										type="text"
+										value={textEditSession.draftText}
+										spellCheck={false}
+										autoCorrect="off"
+										autoCapitalize="off"
+										onChange={(event) => {
+											const value = event.target.value.replace(/[\r\n]+/g, ' ');
+											setTextEditSession((current) =>
+												current
+													? {
+															...current,
+															draftText: value,
+															selectAllOnFocus: false,
+														}
+													: current,
+											);
+										}}
+										onBlur={() => {
+											if (suppressTextEditorBlurCommitRef.current) {
+												suppressTextEditorBlurCommitRef.current = false;
+												return;
+											}
+											commitTextEditing();
+										}}
+										onCompositionStart={() => {
+											textEditorIsComposingRef.current = true;
+										}}
+										onCompositionEnd={() => {
+											textEditorIsComposingRef.current = false;
+										}}
+										onKeyDown={(event) => {
+											if (event.defaultPrevented) {
+												return;
+											}
+											const isComposing = event.nativeEvent.isComposing || textEditorIsComposingRef.current;
+											if (!isComposing && event.key === 'Escape') {
+												event.preventDefault();
+												suppressTextEditorBlurCommitRef.current = true;
+												cancelTextEditing();
+												return;
+											}
+											if (!isComposing && event.key === 'Enter') {
+												event.preventDefault();
+												suppressTextEditorBlurCommitRef.current = true;
+												commitTextEditing();
+												return;
+											}
+											if (!isComposing && (event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+												event.preventDefault();
+												suppressTextEditorBlurCommitRef.current = true;
+												commitTextEditing();
+											}
+										}}
+										style={{
+											position: 'absolute',
+											left: `${editingTextScreenRect.left}px`,
+											top: `${editingTextScreenRect.top}px`,
+											width: `${Math.max(1, editingTextScreenRect.width)}px`,
+											height: `${Math.max(
+												1,
+												(editingTextNode.lineHeightPx ?? (editingTextNode.fontSize ?? 16) * 1.2) * zoom + Math.max(2, 4 * zoom) * 2,
+											)}px`,
+											padding: `${Math.max(2, 4 * zoom)}px`,
+											border: 'none',
+											borderRadius: 0,
+											outline: 'none',
+											background: 'transparent',
+											color: editingTextColor,
+											caretColor: editingTextColor,
+											fontFamily: editingTextNode.fontFamily ?? 'Inter, sans-serif',
+											fontWeight: editingTextNode.fontWeight ?? 'normal',
+											fontSize: `${Math.max(1, (editingTextNode.fontSize ?? 16) * zoom)}px`,
+											lineHeight: `${Math.max(
+												1,
+												(editingTextNode.lineHeightPx ?? (editingTextNode.fontSize ?? 16) * 1.2) * zoom,
+											)}px`,
+											letterSpacing: `${(editingTextNode.letterSpacingPx ?? 0) * zoom}px`,
+											textAlign: editingTextNode.textAlign ?? 'left',
+											overflow: 'hidden',
+											boxShadow: 'none',
+											margin: 0,
+											zIndex: 1200,
+										}}
+									/>
+								)}
 
 							<ActionBar
 								activeTool={activeTool}
@@ -6372,6 +7010,7 @@ export const App: React.FC = () => {
 							onCopyEffects={(nodeId) => copyEffects(nodeId)}
 							onPasteEffects={(nodeId) => pasteEffects([nodeId])}
 							canPasteEffects={Boolean(effectsClipboardRef.current?.length)}
+							textOverflow={selectedTextOverflow}
 							vectorTarget={
 								editablePathNode?.type === 'path'
 									? {

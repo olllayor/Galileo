@@ -22,6 +22,9 @@ interface CanvasProps {
 	layoutGuides?: SnapGuide[];
 	layoutGuideBounds?: Bounds | null;
 	marqueeRect?: { x: number; y: number; width: number; height: number } | null;
+	textCreationDraftRect?: { x: number; y: number; width: number; height: number } | null;
+	textOverflowIndicatorNodeIds?: string[];
+	hiddenNodeIds?: string[];
 	vectorAnchors?: VectorAnchorHandle[];
 	vectorBezierHandles?: VectorBezierHandle[];
 	vectorSegmentPreview?: VectorSegmentPreview | null;
@@ -48,6 +51,9 @@ export const Canvas: React.FC<CanvasProps> = ({
 	layoutGuides = [],
 	layoutGuideBounds = null,
 	marqueeRect,
+	textCreationDraftRect,
+	textOverflowIndicatorNodeIds = [],
+	hiddenNodeIds = [],
 	vectorAnchors = [],
 	vectorBezierHandles = [],
 	vectorSegmentPreview = null,
@@ -63,8 +69,8 @@ export const Canvas: React.FC<CanvasProps> = ({
 	const checkerColor = '#e1e1e1';
 	const baseColor = '#f7f7f7';
 	const drawCommands = useMemo(() => {
-		return buildDrawList(document, boundsMap);
-	}, [document, boundsMap]);
+		return buildDrawList(document, boundsMap, { textOverflowIndicatorNodeIds, hiddenNodeIds });
+	}, [document, boundsMap, textOverflowIndicatorNodeIds, hiddenNodeIds]);
 
 	const { canvasRef, handleMouseDown, handleMouseMove, handleMouseUp, handleWheel } = useCanvas({
 		width,
@@ -246,6 +252,22 @@ export const Canvas: React.FC<CanvasProps> = ({
 							height: marqueeRect.height,
 							border: '1px dashed #4a9eff',
 							backgroundColor: 'rgba(74, 158, 255, 0.12)',
+							boxSizing: 'border-box',
+							pointerEvents: 'none',
+						}}
+					/>
+				)}
+
+				{textCreationDraftRect && (
+					<div
+						style={{
+							position: 'absolute',
+							left: textCreationDraftRect.x,
+							top: textCreationDraftRect.y,
+							width: Math.max(1, textCreationDraftRect.width),
+							height: Math.max(1, textCreationDraftRect.height),
+							border: '1px dashed rgba(10, 132, 255, 0.9)',
+							backgroundColor: 'rgba(10, 132, 255, 0.08)',
 							boxSizing: 'border-box',
 							pointerEvents: 'none',
 						}}

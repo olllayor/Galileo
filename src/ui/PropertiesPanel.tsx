@@ -56,6 +56,9 @@ interface PropertiesPanelProps {
 		selectedPointId: string | null;
 	} | null;
 	onToggleVectorClosed?: (pathId: string, closed: boolean) => void;
+	textOverflow?: {
+		isOverflowing: boolean;
+	} | null;
 }
 
 const defaultLayout: Layout = {
@@ -151,6 +154,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	canPasteEffects = false,
 	vectorTarget = null,
 	onToggleVectorClosed,
+	textOverflow = null,
 }) => {
 	const [draggedEffectIndex, setDraggedEffectIndex] = React.useState<number | null>(null);
 
@@ -2967,6 +2971,94 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						/>
 					</div>
 
+					<div style={{ marginBottom: spacing.sm }}>
+						<label
+							style={{
+								display: 'block',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								marginBottom: '4px',
+							}}
+						>
+							Align
+						</label>
+						<div
+							style={{
+								display: 'flex',
+								gap: '1px',
+								backgroundColor: colors.border.subtle,
+								padding: '1px',
+								borderRadius: radii.md,
+							}}
+						>
+							{([
+								{ value: 'left', icon: <AlignLeft size={14} /> },
+								{ value: 'center', icon: <AlignHorizontalCenter size={14} /> },
+								{ value: 'right', icon: <AlignRight size={14} /> },
+							] as const).map((item) => {
+								const active = (selectedNode.textAlign ?? 'left') === item.value;
+								return (
+									<button
+										key={`text-align-${item.value}`}
+										type="button"
+										onClick={() => handleInputChange('textAlign', item.value)}
+										style={{
+											flex: 1,
+											display: 'flex',
+											alignItems: 'center',
+											justifyContent: 'center',
+											padding: spacing.xs,
+											backgroundColor: active ? colors.accent.subtle : colors.bg.tertiary,
+											border: 'none',
+											borderRadius: radii.sm,
+											fontSize: typography.fontSize.sm,
+											color: active ? colors.accent.primary : colors.text.secondary,
+											height: '26px',
+											cursor: 'pointer',
+										}}
+									>
+										{item.icon}
+									</button>
+								);
+							})}
+						</div>
+
+						{textOverflow?.isOverflowing && (selectedNode.textResizeMode ?? 'auto-width') === 'fixed' && (
+							<div
+								style={{
+									marginTop: spacing.xs,
+									padding: spacing.xs,
+									borderRadius: radii.sm,
+									border: `1px solid rgba(255, 159, 10, 0.5)`,
+									backgroundColor: 'rgba(255, 159, 10, 0.12)',
+									color: colors.text.secondary,
+									fontSize: typography.fontSize.xs,
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'space-between',
+									gap: spacing.sm,
+								}}
+							>
+								<span>Text is clipped in fixed mode.</span>
+								<button
+									type="button"
+									onClick={() => handleInputChange('textResizeMode', 'auto-height')}
+									style={{
+										padding: `2px ${spacing.xs}`,
+										borderRadius: radii.sm,
+										border: `1px solid ${colors.border.default}`,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+										fontSize: typography.fontSize.xs,
+										cursor: 'pointer',
+									}}
+								>
+									Auto-fit Height
+								</button>
+							</div>
+						)}
+					</div>
+
 					<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
 						<div>
 							<label
@@ -3027,6 +3119,185 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								<option value="600">Semibold</option>
 								<option value="bold">Bold</option>
 							</select>
+						</div>
+					</div>
+
+					<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
+						<div>
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								Line Height
+							</label>
+							<input
+								type="number"
+								value={safeNumber(selectedNode.lineHeightPx, Math.max(1, Math.round((selectedNode.fontSize ?? 16) * 1.2)))}
+								disabled={selectedNode.lineHeightPx === undefined}
+								onChange={(e) => {
+									const value = Number(e.target.value);
+									if (Number.isNaN(value)) return;
+									handleInputChange('lineHeightPx', Math.max(1, value));
+								}}
+								style={{
+									width: '100%',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: selectedNode.lineHeightPx === undefined ? colors.bg.secondary : colors.bg.tertiary,
+									color: selectedNode.lineHeightPx === undefined ? colors.text.tertiary : colors.text.primary,
+								}}
+							/>
+							<label
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									gap: '6px',
+									marginTop: '6px',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+								}}
+							>
+								<input
+									type="checkbox"
+									checked={selectedNode.lineHeightPx === undefined}
+									onChange={(e) =>
+										handleInputChange(
+											'lineHeightPx',
+											e.target.checked
+												? undefined
+												: Math.max(1, Math.round((selectedNode.fontSize ?? 16) * 1.2)),
+										)
+									}
+								/>
+								Auto
+							</label>
+							<div style={{ display: 'flex', gap: '4px', marginTop: '6px', flexWrap: 'wrap' }}>
+								{([1, 1.2, 1.4, 1.6] as const).map((ratio) => {
+									const target = Math.max(1, Math.round((selectedNode.fontSize ?? 16) * ratio));
+									const active =
+										selectedNode.lineHeightPx !== undefined &&
+										Math.abs((selectedNode.lineHeightPx ?? 0) - target) <= 0.5;
+									return (
+										<button
+											key={`line-height-preset-${ratio}`}
+											type="button"
+											onClick={() => handleInputChange('lineHeightPx', target)}
+											style={{
+												padding: `2px ${spacing.xs}`,
+												borderRadius: radii.sm,
+												border: `1px solid ${active ? colors.accent.primary : colors.border.default}`,
+												backgroundColor: active ? colors.accent.subtle : colors.bg.tertiary,
+												color: active ? colors.accent.primary : colors.text.secondary,
+												fontSize: typography.fontSize.xs,
+												cursor: 'pointer',
+											}}
+										>
+											{Math.round(ratio * 100)}%
+										</button>
+									);
+								})}
+							</div>
+						</div>
+
+						<div>
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								Letter Spacing
+							</label>
+							<input
+								type="number"
+								value={safeNumber(selectedNode.letterSpacingPx, 0)}
+								step="0.1"
+								onChange={(e) => {
+									const value = Number(e.target.value);
+									if (Number.isNaN(value)) return;
+									handleInputChange('letterSpacingPx', value);
+								}}
+								style={{
+									width: '100%',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
+								}}
+							/>
+						</div>
+					</div>
+
+					<div style={{ marginBottom: spacing.sm }}>
+						<label
+							style={{
+								display: 'block',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								marginBottom: '4px',
+							}}
+						>
+							Resize
+						</label>
+						<div
+							style={{
+								display: 'flex',
+								gap: '1px',
+								backgroundColor: colors.border.subtle,
+								padding: '1px',
+								borderRadius: radii.md,
+							}}
+						>
+							{([
+								{ value: 'auto-width', label: 'Auto W' },
+								{ value: 'auto-height', label: 'Auto H' },
+								{ value: 'fixed', label: 'Fixed' },
+							] as const).map((item) => {
+								const active = (selectedNode.textResizeMode ?? 'auto-width') === item.value;
+								return (
+									<button
+										key={`text-resize-${item.value}`}
+										type="button"
+										onClick={() => handleInputChange('textResizeMode', item.value)}
+										style={{
+											flex: 1,
+											padding: spacing.xs,
+											backgroundColor: active ? colors.accent.subtle : colors.bg.tertiary,
+											border: 'none',
+											borderRadius: radii.sm,
+											fontSize: typography.fontSize.xs,
+											color: active ? colors.accent.primary : colors.text.secondary,
+											height: '26px',
+											cursor: 'pointer',
+										}}
+									>
+										{item.label}
+									</button>
+								);
+							})}
+						</div>
+						<div
+							style={{
+								marginTop: '6px',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								display: 'grid',
+								gap: '2px',
+							}}
+						>
+							<div>Auto W: grows width with content.</div>
+							<div>Auto H: wraps by width, grows height.</div>
+							<div>Fixed: wraps and clips overflow.</div>
 						</div>
 					</div>
 

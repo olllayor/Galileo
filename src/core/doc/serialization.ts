@@ -1,6 +1,6 @@
 import { documentSchema, type Document } from './types';
 
-export const CURRENT_DOCUMENT_VERSION = 5;
+export const CURRENT_DOCUMENT_VERSION = 6;
 
 export type DocumentParseResult =
   | { ok: true; doc: Document; warnings: string[] }
@@ -89,6 +89,18 @@ const migrateNode = (rawNode: unknown, version: number): unknown => {
 
 	if (version < 5 && node.vector && typeof node.vector === 'object') {
 		node.vector = migrateLegacyVectorData(node.vector);
+	}
+
+	if (version < 6 && node.type === 'text') {
+		if (node.textAlign === undefined) {
+			node.textAlign = 'left';
+		}
+		if (node.letterSpacingPx === undefined) {
+			node.letterSpacingPx = 0;
+		}
+		if (node.textResizeMode === undefined) {
+			node.textResizeMode = 'auto-width';
+		}
 	}
 
 	return node;

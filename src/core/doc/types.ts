@@ -182,6 +182,12 @@ export const layoutSizingSchema = z.object({
 
 export type LayoutSizing = z.infer<typeof layoutSizingSchema>;
 
+export const textAlignSchema = z.enum(['left', 'center', 'right']);
+export const textResizeModeSchema = z.enum(['auto-width', 'auto-height', 'fixed']);
+
+export type TextAlign = z.infer<typeof textAlignSchema>;
+export type TextResizeMode = z.infer<typeof textResizeModeSchema>;
+
 export const constraintAxisXSchema = z.enum(['left', 'right', 'left-right', 'center']);
 export const constraintAxisYSchema = z.enum(['top', 'bottom', 'top-bottom', 'center']);
 export const constraintsSchema = z.object({
@@ -290,6 +296,10 @@ export const nodeSchema = z.object({
 	fontSize: z.number().optional(),
 	fontFamily: z.string().optional(),
 	fontWeight: z.enum(['normal', 'bold', '500', '600']).optional(),
+	textAlign: textAlignSchema.optional(),
+	lineHeightPx: z.number().optional(),
+	letterSpacingPx: z.number().optional(),
+	textResizeMode: textResizeModeSchema.optional(),
 
 	image: z
 		.object({
@@ -364,7 +374,7 @@ export const documentSchema = z.object({
 export type Document = z.infer<typeof documentSchema>;
 
 export const createDocument = (): Document => ({
-	version: 5,
+	version: 6,
 	rootId: 'root',
 	nodes: {
 		root: {

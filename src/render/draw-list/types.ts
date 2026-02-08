@@ -28,6 +28,7 @@ export interface ImageOutlineStyle {
 export type DrawCommand =
   | DrawRectCommand
   | DrawTextCommand
+  | DrawTextOverflowIndicatorCommand
   | DrawEllipseCommand
   | DrawImageCommand
   | DrawPathCommand
@@ -55,12 +56,28 @@ export interface DrawTextCommand {
   nodeId?: string;
   x: number;
   y: number;
+  width: number;
+  height: number;
   text: string;
   font: string;
   fontSize: number;
+  textAlign: 'left' | 'center' | 'right';
+  lineHeightPx?: number;
+  letterSpacingPx: number;
+  textResizeMode: 'auto-width' | 'auto-height' | 'fixed';
   fill?: string;
   opacity?: number;
   effects?: RenderableShadowEffect[];
+}
+
+export interface DrawTextOverflowIndicatorCommand {
+  type: 'textOverflowIndicator';
+  nodeId?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  opacity?: number;
 }
 
 export interface DrawEllipseCommand {

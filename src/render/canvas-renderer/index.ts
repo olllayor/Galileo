@@ -5,6 +5,7 @@ import {
 	recordShadowCacheMiss,
 	recordShadowRenderDuration,
 } from '../../core/doc';
+import { layoutText } from '../../core/text/layout';
 import type { RenderableShadowEffect } from '../../core/doc/types';
 import type { DrawCommand, GradientPaint, Paint } from '../draw-list';
 
@@ -78,6 +79,9 @@ export class CanvasRenderer {
 			case 'image':
 			case 'path':
 				this.drawCommandWithEffects(command);
+				break;
+			case 'textOverflowIndicator':
+				this.drawTextOverflowIndicator(command);
 				break;
 			case 'clip':
 				this.applyClip(command);
@@ -412,16 +416,7 @@ export class CanvasRenderer {
 		}
 
 		if (command.type === 'text') {
-			ctx.save();
-			ctx.font = command.font;
-			ctx.fillStyle = '#ffffff';
-			ctx.textBaseline = 'top';
-			const lines = command.text.split('\n');
-			const lineHeight = Math.max(1, (command.fontSize || 14) * 1.2);
-			for (let i = 0; i < lines.length; i += 1) {
-				ctx.fillText(lines[i], command.x - originX, command.y - originY + i * lineHeight);
-			}
-			ctx.restore();
+			this.drawTextWithLayout(ctx, command, command.x - originX, command.y - originY, '#ffffff', true);
 			return true;
 		}
 
@@ -477,7 +472,7 @@ export class CanvasRenderer {
 	}
 
 	private getCommandBounds(command: DrawableCommand): { x: number; y: number; width: number; height: number } | null {
-		if (command.type === 'rect' || command.type === 'image' || command.type === 'path') {
+		if (command.type === 'rect' || command.type === 'image' || command.type === 'path' || command.type === 'text') {
 			return {
 				x: command.x,
 				y: command.y,
@@ -493,27 +488,7 @@ export class CanvasRenderer {
 				height: command.radiusY * 2,
 			};
 		}
-		if (command.type === 'text') {
-			const metrics = this.measureTextBounds(command);
-			return { x: command.x, y: command.y, width: metrics.width, height: metrics.height };
-		}
 		return null;
-	}
-
-	private measureTextBounds(command: Extract<DrawCommand, { type: 'text' }>): { width: number; height: number } {
-		this.ctx.save();
-		this.ctx.font = command.font;
-		const lines = command.text.split('\n');
-		const lineHeight = Math.max(1, (command.fontSize || 14) * 1.2);
-		let width = 0;
-		for (const line of lines) {
-			width = Math.max(width, this.ctx.measureText(line).width);
-		}
-		this.ctx.restore();
-		return {
-			width: Math.max(1, width),
-			height: Math.max(1, lineHeight * Math.max(lines.length, 1)),
-		};
 	}
 
 	private buildShadowCacheKey(
@@ -574,6 +549,12 @@ export class CanvasRenderer {
 				text: command.text,
 				font: command.font,
 				fontSize: command.fontSize,
+				width: command.width,
+				height: command.height,
+				textAlign: command.textAlign,
+				lineHeightPx: command.lineHeightPx,
+				letterSpacingPx: command.letterSpacingPx,
+				textResizeMode: command.textResizeMode,
 			};
 		}
 		const sourceKey = command.src.length > 80 ? `${command.src.slice(0, 24)}:${command.src.length}` : command.src;
@@ -707,18 +688,120 @@ export class CanvasRenderer {
 		}
 	}
 
-	private drawText(command: Extract<DrawCommand, { type: 'text' }>): void {
-		const { x, y, text, font, fill } = command;
+	private measureTextWithSpacing(ctx: CanvasRenderingContext2D, text: string, letterSpacingPx: number): number {
+		if (!text) return 0;
+		const base = Math.max(0, ctx.measureText(text).width);
+		if (!Number.isFinite(letterSpacingPx) || letterSpacingPx === 0) {
+			return base;
+		}
+		const glyphCount = Array.from(text).length;
+		if (glyphCount <= 1) return base;
+		return base + (glyphCount - 1) * letterSpacingPx;
+	}
 
-		this.ctx.font = font;
-		this.ctx.fillStyle = fill || '#000000';
-		this.ctx.textBaseline = 'top';
-		const lines = text.split('\n');
-		const fontSize = command.fontSize || 14;
-		const lineHeight = Math.max(1, fontSize * 1.2);
-		lines.forEach((line, index) => {
-			this.ctx.fillText(line, x, y + index * lineHeight);
-		});
+	private buildTextLayout(ctx: CanvasRenderingContext2D, command: Extract<DrawCommand, { type: 'text' }>) {
+		ctx.save();
+		ctx.font = command.font;
+		const layout = layoutText(
+			{
+				text: command.text,
+				width: command.width,
+				height: command.height,
+				fontSize: command.fontSize,
+				textAlign: command.textAlign,
+				lineHeightPx: command.lineHeightPx,
+				letterSpacingPx: command.letterSpacingPx,
+				textResizeMode: command.textResizeMode,
+			},
+			(value) => this.measureTextWithSpacing(ctx, value, command.letterSpacingPx),
+		);
+		ctx.restore();
+		return layout;
+	}
+
+	private drawTextLine(
+		ctx: CanvasRenderingContext2D,
+		text: string,
+		x: number,
+		y: number,
+		letterSpacingPx: number,
+	): void {
+		if (!text) return;
+		if (!Number.isFinite(letterSpacingPx) || Math.abs(letterSpacingPx) < 0.001) {
+			ctx.fillText(text, x, y);
+			return;
+		}
+
+		let cursor = x;
+		const glyphs = Array.from(text);
+		for (let i = 0; i < glyphs.length; i += 1) {
+			const glyph = glyphs[i];
+			ctx.fillText(glyph, cursor, y);
+			if (i < glyphs.length - 1) {
+				cursor += ctx.measureText(glyph).width + letterSpacingPx;
+			}
+		}
+	}
+
+	private drawTextWithLayout(
+		ctx: CanvasRenderingContext2D,
+		command: Extract<DrawCommand, { type: 'text' }>,
+		x: number,
+		y: number,
+		fillStyle: string,
+		clipToFixedBounds: boolean,
+	): void {
+		const layout = this.buildTextLayout(ctx, command);
+
+		ctx.save();
+		ctx.font = command.font;
+		ctx.fillStyle = fillStyle;
+		ctx.textBaseline = 'top';
+
+		if (clipToFixedBounds && command.textResizeMode === 'fixed') {
+			ctx.beginPath();
+			ctx.rect(x, y, command.width, command.height);
+			ctx.clip();
+		}
+
+		for (const line of layout.lines) {
+			this.drawTextLine(ctx, line.text, x + line.x, y + line.y, command.letterSpacingPx);
+		}
+
+		ctx.restore();
+	}
+
+	private drawText(command: Extract<DrawCommand, { type: 'text' }>): void {
+		this.drawTextWithLayout(this.ctx, command, command.x, command.y, command.fill || '#000000', true);
+	}
+
+	private drawTextOverflowIndicator(command: Extract<DrawCommand, { type: 'textOverflowIndicator' }>): void {
+		const available = Math.max(8, Math.min(command.width, command.height));
+		const size = Math.max(8, Math.min(14, available * 0.28));
+		const inset = 2;
+		const x = command.x + Math.max(0, command.width - size - inset);
+		const y = command.y + Math.max(0, command.height - size - inset);
+
+		this.ctx.save();
+		this.ctx.beginPath();
+		this.ctx.roundRect(x, y, size, size, 3);
+		this.ctx.fillStyle = 'rgba(255, 159, 10, 0.16)';
+		this.ctx.strokeStyle = 'rgba(255, 159, 10, 0.92)';
+		this.ctx.lineWidth = 1;
+		this.ctx.fill();
+		this.ctx.stroke();
+
+		const dotRadius = Math.max(0.85, size * 0.08);
+		const spacing = Math.max(2, size * 0.22);
+		const centerY = y + size * 0.5;
+		const startX = x + size * 0.5 - spacing;
+		this.ctx.fillStyle = 'rgba(255, 110, 0, 0.95)';
+		for (let i = 0; i < 3; i += 1) {
+			this.ctx.beginPath();
+			this.ctx.arc(startX + i * spacing, centerY, dotRadius, 0, Math.PI * 2);
+			this.ctx.fill();
+		}
+		this.ctx.restore();
 	}
 
 	private drawEllipse(command: Extract<DrawCommand, { type: 'ellipse' }>): void {

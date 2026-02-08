@@ -14,17 +14,25 @@ import type { DrawCommand, GradientPaint, GradientStop, ImageOutlineStyle, Paint
 type BuildDrawListOptions = {
 	includeFrameFill?: boolean;
 	clipToBounds?: boolean;
+	textOverflowIndicatorNodeIds?: string[];
+	hiddenNodeIds?: string[];
 };
 
-export const buildDrawList = (doc: Document, boundsMap?: WorldBoundsMap): DrawCommand[] => {
+export const buildDrawList = (doc: Document, boundsMap?: WorldBoundsMap, options: BuildDrawListOptions = {}): DrawCommand[] => {
 	const rootNode = doc.nodes[doc.rootId];
 	if (!rootNode) {
 		return [];
 	}
 
 	const map = boundsMap ?? buildWorldBoundsMap(doc);
+	const overflowIndicatorIds =
+		options.textOverflowIndicatorNodeIds && options.textOverflowIndicatorNodeIds.length > 0
+			? new Set(options.textOverflowIndicatorNodeIds)
+			: null;
+	const hiddenNodeIds =
+		options.hiddenNodeIds && options.hiddenNodeIds.length > 0 ? new Set(options.hiddenNodeIds) : null;
 	const commands: DrawCommand[] = [];
-	buildNodeCommandsFromBounds(doc, rootNode, commands, map, { x: 0, y: 0 }, doc.rootId, true);
+	buildNodeCommandsFromBounds(doc, rootNode, commands, map, { x: 0, y: 0 }, doc.rootId, true, overflowIndicatorIds, hiddenNodeIds);
 
 	return commands;
 };
@@ -59,7 +67,7 @@ export const buildDrawListForNode = (
 			cornerRadius: node.type === 'frame' ? node.cornerRadius : undefined,
 		});
 	}
-	buildNodeCommandsFromBounds(doc, node, commands, map, base, nodeId, includeFrameFill);
+	buildNodeCommandsFromBounds(doc, node, commands, map, base, nodeId, includeFrameFill, null, null);
 	return commands;
 };
 
@@ -71,6 +79,8 @@ const buildNodeCommandsFromBounds = (
 	base: { x: number; y: number },
 	rootId: string,
 	includeRootFrameFill: boolean,
+	overflowIndicatorIds: Set<string> | null,
+	hiddenNodeIds: Set<string> | null,
 ): void => {
 	const bounds = boundsMap[node.id];
 	if (!bounds) {
@@ -83,6 +93,9 @@ const buildNodeCommandsFromBounds = (
 	const height = bounds.height;
 
 	if (node.visible === false) {
+		return;
+	}
+	if (node.id !== rootId && hiddenNodeIds?.has(node.id)) {
 		return;
 	}
 
@@ -137,7 +150,17 @@ const buildNodeCommandsFromBounds = (
 			for (const childId of node.children) {
 				const child = doc.nodes[childId];
 				if (child) {
-					buildNodeCommandsFromBounds(doc, child, commands, boundsMap, base, rootId, includeRootFrameFill);
+					buildNodeCommandsFromBounds(
+						doc,
+						child,
+						commands,
+						boundsMap,
+						base,
+						rootId,
+						includeRootFrameFill,
+						overflowIndicatorIds,
+						hiddenNodeIds,
+					);
 				}
 			}
 
@@ -156,7 +179,17 @@ const buildNodeCommandsFromBounds = (
 			for (const childId of node.children) {
 				const child = doc.nodes[childId];
 				if (child) {
-					buildNodeCommandsFromBounds(doc, child, commands, boundsMap, base, rootId, includeRootFrameFill);
+					buildNodeCommandsFromBounds(
+						doc,
+						child,
+						commands,
+						boundsMap,
+						base,
+						rootId,
+						includeRootFrameFill,
+						overflowIndicatorIds,
+						hiddenNodeIds,
+					);
 				}
 			}
 		}
@@ -199,13 +232,30 @@ const buildNodeCommandsFromBounds = (
 			nodeId: node.id,
 			x,
 			y,
+			width,
+			height,
 			text: node.text || '',
 			font: `${node.fontWeight || 'normal'} ${node.fontSize || 14}px ${node.fontFamily || 'sans-serif'}`,
 			fontSize: node.fontSize || 14,
+			textAlign: node.textAlign ?? 'left',
+			lineHeightPx: node.lineHeightPx,
+			letterSpacingPx: node.letterSpacingPx ?? 0,
+			textResizeMode: node.textResizeMode ?? 'auto-width',
 			fill: colorToText(node.fill),
 			opacity: node.opacity,
 			effects: getRenderableEffects(node),
 		});
+		if (overflowIndicatorIds?.has(node.id) && (node.textResizeMode ?? 'auto-width') === 'fixed') {
+			commands.push({
+				type: 'textOverflowIndicator',
+				nodeId: node.id,
+				x,
+				y,
+				width,
+				height,
+				opacity: node.opacity,
+			});
+		}
 	} else if (node.type === 'image') {
 		const src = resolveImageSource(doc, node);
 		const maskSrc = resolveImageMaskSource(doc, node);
@@ -230,7 +280,17 @@ const buildNodeCommandsFromBounds = (
 		if (isolationOperandId) {
 			const isolatedChild = doc.nodes[isolationOperandId];
 			if (isolatedChild) {
-				buildNodeCommandsFromBounds(doc, isolatedChild, commands, boundsMap, base, rootId, includeRootFrameFill);
+				buildNodeCommandsFromBounds(
+					doc,
+					isolatedChild,
+					commands,
+					boundsMap,
+					base,
+					rootId,
+					includeRootFrameFill,
+					overflowIndicatorIds,
+					hiddenNodeIds,
+				);
 			}
 			return;
 		}
@@ -297,7 +357,17 @@ const buildNodeCommandsFromBounds = (
 			for (const childId of node.children) {
 				const child = doc.nodes[childId];
 				if (child) {
-					buildNodeCommandsFromBounds(doc, child, commands, boundsMap, base, rootId, includeRootFrameFill);
+					buildNodeCommandsFromBounds(
+						doc,
+						child,
+						commands,
+						boundsMap,
+						base,
+						rootId,
+						includeRootFrameFill,
+						overflowIndicatorIds,
+						hiddenNodeIds,
+					);
 				}
 			}
 		}
