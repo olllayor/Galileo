@@ -129,8 +129,22 @@ export const ActionBar: React.FC<ActionBarProps> = ({
 							width: '32px',
 							height: '32px',
 							padding: '0',
-							backgroundColor: activeTool === tool.id ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
-							color: activeTool === tool.id ? '#fff' : 'rgba(255, 255, 255, 0.6)',
+							backgroundColor:
+								activeTool === tool.id
+									? tool.id === 'text'
+										? 'rgba(255, 110, 199, 0.22)'
+										: tool.id === 'pen'
+											? 'rgba(110, 231, 255, 0.24)'
+											: 'rgba(255, 255, 255, 0.15)'
+									: 'transparent',
+							color:
+								activeTool === tool.id
+									? tool.id === 'text'
+										? '#ff6ec7'
+										: tool.id === 'pen'
+											? '#6ee7ff'
+											: '#fff'
+									: 'rgba(255, 255, 255, 0.6)',
 							border: 'none',
 							borderRadius: '6px',
 							cursor: 'pointer',

@@ -5,6 +5,15 @@ use std::fs;
 use std::io::Cursor;
 use tauri::{path::BaseDirectory, Manager};
 
+#[cfg(target_os = "macos")]
+use objc::runtime::Object;
+#[cfg(target_os = "macos")]
+use objc::{class, msg_send, sel, sel_impl};
+#[cfg(target_os = "macos")]
+use std::ffi::CStr;
+#[cfg(target_os = "macos")]
+use std::os::raw::c_char;
+
 mod background_remove;
 mod draft_store;
 mod unsplash;
@@ -247,6 +256,57 @@ fn encode_webp(args: EncodeWebpArgs) -> Result<String, String> {
     Ok(general_purpose::STANDARD.encode(&webp_bytes))
 }
 
+#[cfg(target_os = "macos")]
+unsafe fn nsstring_to_string(value: *mut Object) -> Option<String> {
+    if value.is_null() {
+        return None;
+    }
+    let utf8: *const c_char = msg_send![value, UTF8String];
+    if utf8.is_null() {
+        return None;
+    }
+    let cstr = CStr::from_ptr(utf8);
+    Some(cstr.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn list_system_fonts() -> Result<Vec<String>, String> {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        let font_manager: *mut Object = msg_send![class!(NSFontManager), sharedFontManager];
+        if font_manager.is_null() {
+            return Err("Failed to access NSFontManager".to_string());
+        }
+
+        let families: *mut Object = msg_send![font_manager, availableFontFamilies];
+        if families.is_null() {
+            return Err("Failed to read available font families".to_string());
+        }
+
+        let count: usize = msg_send![families, count];
+        let mut result = Vec::with_capacity(count);
+
+        for index in 0..count {
+            let item: *mut Object = msg_send![families, objectAtIndex: index];
+            if let Some(family) = nsstring_to_string(item) {
+                let trimmed = family.trim();
+                if !trimmed.is_empty() {
+                    result.push(trimmed.to_string());
+                }
+            }
+        }
+
+        result.sort();
+        result.dedup();
+        return Ok(result);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Native system font listing is only implemented for macOS".to_string())
+    }
+}
+
 fn mask_env_value(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
     if chars.is_empty() {
@@ -335,6 +395,7 @@ fn main() {
             save_binary,
             encode_png,
             encode_webp,
+            list_system_fonts,
             unsplash::unsplash_search_photos,
             unsplash::unsplash_get_photo,
             unsplash::unsplash_track_download,

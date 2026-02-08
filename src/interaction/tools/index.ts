@@ -41,7 +41,7 @@ export const createTextTool = (parentId?: string): Tool => ({
 			textAlign: 'left',
 			letterSpacingPx: 0,
 			textResizeMode: 'auto-width',
-			fill: { type: 'solid', value: '#000000' },
+			fill: { type: 'solid', value: '#f5f5f5' },
 			visible: true,
 		};
 
@@ -71,20 +71,20 @@ export const createPenTool = (parentId?: string): Tool => ({
 	type: 'pen',
 	handleMouseDown: (doc, x, y) => {
 		const pointId = `pt_${Date.now().toString(36)}`;
-	const newNode: Partial<Node> & { type: Node['type'] } = {
-		type: 'path',
-		name: 'Path',
-		position: { x, y },
-		size: { width: 1, height: 1 },
-		stroke: {
-			color: { type: 'solid', value: '#111111' },
-			width: 1.5,
-			style: 'solid',
-		},
-		vector: {
-			points: [{ id: pointId, x: 0, y: 0, cornerMode: 'sharp' }],
-			segments: [],
-			closed: false,
+		const newNode: Partial<Node> & { type: Node['type'] } = {
+			type: 'path',
+			name: 'Path',
+			position: { x, y },
+			size: { width: 1, height: 1 },
+			stroke: {
+				color: { type: 'solid', value: '#6ee7ff' },
+				width: 1.5,
+				style: 'solid',
+			},
+			vector: {
+				points: [{ id: pointId, x: 0, y: 0, cornerMode: 'sharp' }],
+				segments: [],
+				closed: false,
 			},
 			visible: true,
 		};

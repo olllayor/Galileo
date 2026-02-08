@@ -8,7 +8,7 @@
 export const colors = {
 	// Background colors - macOS dark mode inspired
 	bg: {
-		primary: '#1e1e1e', // Main app background
+		primary: '#2c2c2c', // Main app background
 		secondary: '#252526', // Panel backgrounds
 		tertiary: '#2d2d2d', // Elevated surfaces
 		canvas: '#1a1a1a', // Canvas area background

@@ -3841,7 +3841,7 @@ export const App: React.FC = () => {
 	}, [editingTextBounds, editingTextNode, editingTextSize, textEditSession]);
 	const canvasSelectionBounds = activeTextEditSelectionBounds ?? selectionBounds;
 	const editingTextColor =
-		editingTextNode?.type === 'text' && editingTextNode.fill?.type === 'solid' ? editingTextNode.fill.value : '#000000';
+		editingTextNode?.type === 'text' && editingTextNode.fill?.type === 'solid' ? editingTextNode.fill.value : '#f5f5f5';
 	const selectedTextOverflow = useMemo(() => {
 		if (!ENABLE_TEXT_PARITY_V1 || !selectedNode || selectedNode.type !== 'text') return null;
 		if ((selectedNode.textResizeMode ?? 'auto-width') !== 'fixed') {
@@ -6771,7 +6771,7 @@ export const App: React.FC = () => {
 				height: '100vh',
 				overflow: 'hidden',
 				fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", sans-serif',
-				background: 'linear-gradient(180deg, #1b1c1f 0%, #18191b 100%)',
+				background: '#2C2C2C',
 			}}
 		>
 			<style>{`

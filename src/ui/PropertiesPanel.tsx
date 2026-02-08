@@ -33,6 +33,7 @@ import {
 } from '../core/doc';
 import { colors, spacing, typography, radii, transitions, panels } from './design-system';
 import { ScrubbableNumberInput } from './ScrubbableNumberInput';
+import { FontPickerModal } from './FontPickerModal';
 
 interface PropertiesPanelProps {
 	selectedNode: Node | null;
@@ -157,6 +158,29 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	textOverflow = null,
 }) => {
 	const [draggedEffectIndex, setDraggedEffectIndex] = React.useState<number | null>(null);
+	const [fontPickerOpen, setFontPickerOpen] = React.useState(false);
+	const [fontPickerAnchorRect, setFontPickerAnchorRect] = React.useState<DOMRect | null>(null);
+	const fontPickerTriggerRef = React.useRef<HTMLButtonElement | null>(null);
+
+	React.useEffect(() => {
+		if (selectedNode?.type !== 'text' && fontPickerOpen) {
+			setFontPickerOpen(false);
+		}
+	}, [selectedNode?.type, fontPickerOpen]);
+
+	React.useEffect(() => {
+		if (!fontPickerOpen) return;
+		const updateAnchor = () => {
+			setFontPickerAnchorRect(fontPickerTriggerRef.current?.getBoundingClientRect() ?? null);
+		};
+		updateAnchor();
+		window.addEventListener('resize', updateAnchor);
+		window.addEventListener('scroll', updateAnchor, true);
+		return () => {
+			window.removeEventListener('resize', updateAnchor);
+			window.removeEventListener('scroll', updateAnchor, true);
+		};
+	}, [fontPickerOpen]);
 
 	// Collapsed rail mode
 	if (collapsed) {
@@ -414,7 +438,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 		onUpdateNode(selectedNode.id, { position });
 	};
 
-	const defaultFill = selectedNode.type === 'text' ? '#000000' : '#888888';
+	const defaultFill = selectedNode.type === 'text' ? '#f5f5f5' : '#888888';
 	const effectiveOpacity = safeNumber(selectedNode.opacity, 1);
 	const rotationValue = safeNumber(selectedNode.rotation, 0);
 	const layout = selectedNode.layout;
@@ -3312,21 +3336,49 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						>
 							Font Family
 						</label>
-						<input
-							type="text"
-							value={selectedNode.fontFamily ?? 'Inter, sans-serif'}
-							onChange={(e) => handleInputChange('fontFamily', e.target.value)}
+						<button
+							ref={fontPickerTriggerRef}
+							type="button"
+							onClick={() => {
+								setFontPickerAnchorRect(fontPickerTriggerRef.current?.getBoundingClientRect() ?? null);
+								setFontPickerOpen(true);
+							}}
 							style={{
 								width: '100%',
-								padding: spacing.xs,
+								padding: `${spacing.xs} ${spacing.sm}`,
 								border: `1px solid ${colors.border.default}`,
 								borderRadius: radii.sm,
 								fontSize: typography.fontSize.md,
 								backgroundColor: colors.bg.tertiary,
 								color: colors.text.primary,
+								display: 'flex',
+								alignItems: 'center',
+								justifyContent: 'space-between',
+								gap: spacing.sm,
+								cursor: 'pointer',
 							}}
-						/>
+						>
+							<span
+								style={{
+									whiteSpace: 'nowrap',
+									overflow: 'hidden',
+									textOverflow: 'ellipsis',
+									fontFamily: selectedNode.fontFamily ?? 'Inter, sans-serif',
+								}}
+							>
+								{selectedNode.fontFamily ?? 'Inter, sans-serif'}
+							</span>
+							<span style={{ color: colors.text.tertiary }}>▾</span>
+						</button>
 					</div>
+
+					<FontPickerModal
+						open={fontPickerOpen}
+						selectedFontFamily={selectedNode.fontFamily ?? 'Inter, sans-serif'}
+						anchorRect={fontPickerAnchorRect}
+						onSelect={(fontFamily) => handleInputChange('fontFamily', fontFamily)}
+						onClose={() => setFontPickerOpen(false)}
+					/>
 				</div>
 			)}
 		</div>

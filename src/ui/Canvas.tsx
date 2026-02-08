@@ -65,9 +65,6 @@ export const Canvas: React.FC<CanvasProps> = ({
 	onWheel,
 	onContextMenu,
 }) => {
-	const checkerSize = 10;
-	const checkerColor = '#e1e1e1';
-	const baseColor = '#f7f7f7';
 	const drawCommands = useMemo(() => {
 		return buildDrawList(document, boundsMap, { textOverflowIndicatorNodeIds, hiddenNodeIds });
 	}, [document, boundsMap, textOverflowIndicatorNodeIds, hiddenNodeIds]);
@@ -114,9 +111,6 @@ export const Canvas: React.FC<CanvasProps> = ({
 		onContextMenu?.(event);
 	};
 
-	const bgPosX = (view.pan.x % checkerSize) + checkerSize / 2;
-	const bgPosY = (view.pan.y % checkerSize) + checkerSize / 2;
-
 	return (
 		<div
 			style={{
@@ -124,10 +118,7 @@ export const Canvas: React.FC<CanvasProps> = ({
 				justifyContent: 'center',
 				alignItems: 'center',
 				height: '100%',
-				backgroundColor: baseColor,
-				backgroundImage: `linear-gradient(90deg, ${checkerColor} 50%, transparent 50%), linear-gradient(${checkerColor} 50%, transparent 50%)`,
-				backgroundSize: `${checkerSize}px ${checkerSize}px`,
-				backgroundPosition: `${bgPosX}px ${bgPosY}px, ${bgPosX - checkerSize / 2}px ${bgPosY - checkerSize / 2}px`,
+				backgroundColor: '#1E1E1E',
 			}}
 		>
 			<div style={{ position: 'relative', width, height, overflow: 'hidden' }}>
@@ -266,8 +257,8 @@ export const Canvas: React.FC<CanvasProps> = ({
 							top: textCreationDraftRect.y,
 							width: Math.max(1, textCreationDraftRect.width),
 							height: Math.max(1, textCreationDraftRect.height),
-							border: '1px dashed rgba(10, 132, 255, 0.9)',
-							backgroundColor: 'rgba(10, 132, 255, 0.08)',
+							border: '1px dashed rgba(255, 110, 199, 0.9)',
+							backgroundColor: 'rgba(255, 110, 199, 0.12)',
 							boxSizing: 'border-box',
 							pointerEvents: 'none',
 						}}
@@ -290,7 +281,7 @@ export const Canvas: React.FC<CanvasProps> = ({
 									top: anchorY,
 									width: Math.max(1, length),
 									height: 1,
-									backgroundColor: 'rgba(74, 158, 255, 0.45)',
+									backgroundColor: 'rgba(110, 231, 255, 0.58)',
 									transformOrigin: 'top left',
 									transform: `rotate(${angle}rad)`,
 									pointerEvents: 'none',
@@ -304,8 +295,8 @@ export const Canvas: React.FC<CanvasProps> = ({
 									width: 8,
 									height: 8,
 									borderRadius: '50%',
-									border: `1px solid ${handle.isHovered ? '#ffffff' : '#4a9eff'}`,
-									backgroundColor: handle.isHovered ? '#4a9eff' : '#ffffff',
+									border: `1px solid ${handle.isHovered ? '#ffffff' : '#6ee7ff'}`,
+									backgroundColor: handle.isHovered ? '#6ee7ff' : '#ffffff',
 									boxSizing: 'border-box',
 									pointerEvents: 'none',
 								}}
@@ -327,8 +318,8 @@ export const Canvas: React.FC<CanvasProps> = ({
 								width: 10,
 								height: 10,
 								borderRadius: anchor.isFirst ? '3px' : '50%',
-								border: `1px solid ${anchor.isSelected || anchor.isHovered ? '#ffffff' : '#4a9eff'}`,
-								backgroundColor: anchor.isSelected || anchor.isHovered ? '#4a9eff' : '#ffffff',
+								border: `1px solid ${anchor.isSelected || anchor.isHovered ? '#ffffff' : '#6ee7ff'}`,
+								backgroundColor: anchor.isSelected || anchor.isHovered ? '#6ee7ff' : '#ffffff',
 								boxSizing: 'border-box',
 								pointerEvents: 'none',
 							}}
@@ -345,8 +336,8 @@ export const Canvas: React.FC<CanvasProps> = ({
 							width: 8,
 							height: 8,
 							borderRadius: '50%',
-							border: '1px solid #4a9eff',
-							backgroundColor: '#9fd0ff',
+							border: '1px solid #6ee7ff',
+							backgroundColor: '#c5f5ff',
 							boxSizing: 'border-box',
 							pointerEvents: 'none',
 						}}
