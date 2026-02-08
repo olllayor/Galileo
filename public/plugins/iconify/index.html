@@ -32,24 +32,24 @@
       margin: 0;
       height: 100%;
       overflow: hidden;
-      background: transparent;
+      background: var(--bg);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Text', Helvetica, Arial, sans-serif;
     }
 
     .modal-shell {
       height: 100%;
-      border-radius: 18px;
+      border-radius: 0;
       overflow: hidden;
       background: var(--bg);
-      border: 1px solid #4a4d53;
+      border: none;
       display: grid;
       grid-template-rows: 52px 44px minmax(0, 1fr);
     }
 
     .topbar {
       background: var(--header);
-      border-bottom: 1px solid var(--header-line);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.16);
       color: #f5f6f8;
       display: flex;
       align-items: center;
@@ -102,7 +102,7 @@
 
     .subbar {
       background: #1f2024;
-      border-bottom: 1px solid #2f3238;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
       color: #c9ced7;
       display: flex;
       align-items: center;
@@ -148,9 +148,9 @@
 
     .global-controls {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 36%;
-      gap: 10px;
-      padding: 10px 12px 8px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 6px;
+      padding: 8px 12px 6px;
       align-items: center;
     }
 
@@ -184,21 +184,6 @@
       background-repeat: no-repeat;
     }
 
-    .promo {
-      height: 44px;
-      border-radius: 0;
-      border: 2px solid var(--green-stroke);
-      background: var(--green);
-      color: #111;
-      font-size: 14px;
-      font-weight: 500;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      text-decoration: none;
-      white-space: nowrap;
-    }
-
     .view {
       min-height: 0;
       overflow: auto;
@@ -214,6 +199,10 @@
       grid-template-columns: minmax(0, 1fr) 130px 120px 210px;
       gap: 8px;
       margin-bottom: 8px;
+    }
+
+    .sets-filters.condensed {
+      grid-template-columns: 130px 120px 210px;
     }
 
     .chip-row {
@@ -310,6 +299,29 @@
       border-radius: 5px;
       background: linear-gradient(180deg, #70737a, #53565d);
       opacity: 0.88;
+    }
+
+    .set-preview .preview-cell {
+      width: 100%;
+      height: 17px;
+      border-radius: 5px;
+      border: 1px solid #c8cbd1;
+      background: #eef0f3;
+      object-fit: contain;
+      padding: 1px;
+    }
+
+    #globalSearch {
+      height: 38px;
+      font-size: 13px;
+      border-width: 1px;
+    }
+
+    #setSearch,
+    #iconFilter {
+      height: 36px;
+      font-size: 13px;
+      border-width: 1px;
     }
 
     .library-head {
@@ -514,6 +526,24 @@
         grid-template-columns: 1fr;
       }
     }
+
+    @media (max-width: 760px) {
+      .library-head {
+        grid-template-columns: 42px minmax(0, 1fr);
+      }
+
+      .library-head .library-nav {
+        flex-wrap: wrap;
+      }
+
+      .library-head .library-nav:nth-of-type(2) {
+        grid-column: 2;
+      }
+
+      .icon-grid {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+      }
+    }
   </style>
 </head>
 <body>
@@ -538,11 +568,10 @@
     <section class="body">
       <div class="global-controls">
         <input id="globalSearch" class="input search" placeholder="Search icons..." />
-        <a class="promo" href="https://iconify.design" target="_blank" rel="noopener noreferrer">Access 170,000 more icons &nbsp; &#8594;</a>
       </div>
 
       <div id="setsView" class="view">
-        <div class="sets-filters">
+        <div id="setFiltersRow" class="sets-filters">
           <input id="setSearch" class="input" placeholder="Filter icon sets..." />
           <select id="categoryFilter" class="select"><option value="">Tag</option></select>
           <select id="paletteFilter" class="select">
@@ -609,6 +638,7 @@
     const preset = new URLSearchParams(window.location.search).get('preset');
 
     const globalSearchInput = document.getElementById('globalSearch');
+    const setFiltersRow = document.getElementById('setFiltersRow');
     const setSearchInput = document.getElementById('setSearch');
     const categoryFilter = document.getElementById('categoryFilter');
     const paletteFilter = document.getElementById('paletteFilter');
@@ -778,6 +808,9 @@
       libraryRequestToken: 0,
       previewCache: new Map(),
       previewLoading: new Set(),
+      setPreviewCache: new Map(),
+      setPreviewLoading: new Set(),
+      collectionIconNamesCache: {},
       favorites: {
         sets: loadStoredArray(STORAGE_KEYS.favoriteSets),
         icons: loadStoredArray(STORAGE_KEYS.favoriteIcons),
@@ -795,6 +828,17 @@
       preserveColorOnReplace: true,
       loadingLibrary: false,
     };
+
+    function cacheCollectionIconNames(prefix, names) {
+      if (!prefix || !Array.isArray(names) || names.length === 0) return;
+      state.collectionIconNamesCache[prefix] = names.slice(0, 400);
+    }
+
+    function getCachedCollectionIconNames(prefix) {
+      const cached = state.collectionIconNamesCache[prefix];
+      if (!Array.isArray(cached) || cached.length === 0) return null;
+      return cached;
+    }
 
     function isFavoriteSet(prefix) {
       return state.favorites.sets.includes(prefix);
@@ -871,6 +915,29 @@
       selectEl.innerHTML = html;
       if (values.includes(current)) {
         selectEl.value = current;
+      }
+    }
+
+    function hasActiveDropdownFilters() {
+      return Boolean(
+        state.selectedCategory ||
+        state.selectedLicense ||
+        state.selectedPalette !== 'all'
+      );
+    }
+
+    function syncSetFilterControlVisibility() {
+      const active = hasActiveDropdownFilters();
+      if (setFiltersRow) {
+        setFiltersRow.classList.toggle('condensed', active);
+      }
+      if (setSearchInput) {
+        if (active && state.setSearch) {
+          state.setSearch = '';
+          setSearchInput.value = '';
+        }
+        setSearchInput.classList.toggle('hidden', active);
+        setSearchInput.disabled = active;
       }
     }
 
@@ -956,7 +1023,7 @@
                     <p class="set-meta">${escapeHtml(license)}</p>
                     <p class="set-meta">${escapeHtml(String(totalIcons))} icons</p>
                   </div>
-                  <div class="set-preview" aria-hidden="true">
+                  <div class="set-preview" data-set-preview="${escapeHtml(prefix)}" aria-hidden="true">
                     <span></span><span></span><span></span>
                     <span></span><span></span><span></span>
                   </div>
@@ -975,10 +1042,99 @@
         .join('');
     }
 
+    function renderSetPreview(prefix) {
+      const selector = window.CSS && typeof window.CSS.escape === 'function' ? window.CSS.escape(prefix) : prefix;
+      const node = setSections.querySelector(`[data-set-preview="${selector}"]`);
+      if (!node) return;
+      const previews = state.setPreviewCache.get(prefix);
+      if (!Array.isArray(previews) || previews.length === 0) return;
+      const cells = new Array(6).fill(0)
+        .map((_, index) => {
+          const src = previews[index];
+          if (!src) return '<span></span>';
+          return `<img class="preview-cell" src="${src}" alt="" />`;
+        })
+        .join('');
+      node.innerHTML = cells;
+    }
+
+    async function ensureSetPreview(prefix) {
+      if (!prefix) return;
+      if (state.setPreviewCache.has(prefix)) {
+        renderSetPreview(prefix);
+        return;
+      }
+      if (state.setPreviewLoading.has(prefix)) return;
+      state.setPreviewLoading.add(prefix);
+      try {
+        let iconNames = getCachedCollectionIconNames(prefix);
+        if (!iconNames) {
+          const collection = await rpc.call('iconify.collection', {
+            prefix,
+            info: false,
+            chars: false,
+          });
+          iconNames = parseCollectionIconNames(collection);
+          if (iconNames.length > 0) {
+            cacheCollectionIconNames(prefix, iconNames);
+          }
+        }
+
+        if (!iconNames || iconNames.length === 0) {
+          const fallback = await rpc.call('iconify.search', {
+            query: prefix,
+            prefix,
+            limit: 8,
+            start: 0,
+          });
+          const fallbackRaw = Array.isArray(fallback?.icons) ? fallback.icons : [];
+          iconNames = fallbackRaw
+            .map((entry) => normalizeIconId(entry))
+            .filter(Boolean)
+            .map((icon) => icon.name);
+          if (iconNames.length > 0) {
+            cacheCollectionIconNames(prefix, iconNames);
+          }
+        }
+
+        if (!iconNames || iconNames.length === 0) {
+          return;
+        }
+
+        const previews = [];
+        for (const name of iconNames.slice(0, 6)) {
+          try {
+            const rendered = await rpc.call('iconify.svg', { icon: `${prefix}:${name}` });
+            const svg = rendered && typeof rendered.svg === 'string' ? rendered.svg : '';
+            if (svg) previews.push(`data:image/svg+xml;base64,${encodeSvgToBase64(svg)}`);
+          } catch (_error) {
+            // Skip failed preview icon and keep loading remaining slots.
+          }
+        }
+
+        if (previews.length > 0) {
+          state.setPreviewCache.set(prefix, previews);
+          renderSetPreview(prefix);
+        }
+      } catch (error) {
+        console.warn('[Iconify] set preview failed', prefix, error);
+      } finally {
+        state.setPreviewLoading.delete(prefix);
+      }
+    }
+
+    function hydrateSetPreviews(entries) {
+      entries.slice(0, 32).forEach(([prefix], index) => {
+        setTimeout(() => void ensureSetPreview(prefix), index * 30);
+      });
+    }
+
     function renderSetsView() {
       const entries = getFilteredSetEntries();
+      syncSetFilterControlVisibility();
       renderCategoryChips(entries);
       renderSetSections(entries);
+      hydrateSetPreviews(entries);
       setStatus(`${entries.length} icon sets available`, 'ok');
     }
 
@@ -1049,6 +1205,9 @@
           });
           if (token !== state.libraryRequestToken) return;
           const iconNames = parseCollectionIconNames(collection);
+          if (iconNames.length > 0) {
+            cacheCollectionIconNames(state.selectedPrefix, iconNames);
+          }
 
           if (iconNames.length === 0) {
             console.warn('[Iconify] Empty collection icon list, fallback search by prefix', {
