@@ -367,6 +367,7 @@ type ClipboardPayload = {
 
 type PanelResizeState = {
 	panel: 'left' | 'right';
+	pointerId: number;
 	startX: number;
 	startWidth: number;
 };
@@ -1357,6 +1358,9 @@ export const App: React.FC = () => {
 		return panels.right.width;
 	});
 	const [panelResizeState, setPanelResizeState] = useState<PanelResizeState | null>(null);
+	const panelResizeRafRef = useRef<number | null>(null);
+	const panelResizePendingWidthRef = useRef<number | null>(null);
+	const [hoveredPanelResizeHandle, setHoveredPanelResizeHandle] = useState<'left' | 'right' | null>(null);
 	const [canvasViewportOffset, setCanvasViewportOffset] = useState({ x: 0, y: 0 });
 	const pluginIframeRef = useRef<HTMLIFrameElement | null>(null);
 	const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1385,44 +1389,86 @@ export const App: React.FC = () => {
 	}, [recentComponentIds]);
 
 	useEffect(() => {
+		if (panelResizeState) return;
 		localStorage.setItem(LEFT_PANEL_WIDTH_STORAGE_KEY, String(Math.round(leftPanelWidth)));
-	}, [leftPanelWidth]);
+	}, [leftPanelWidth, panelResizeState]);
 
 	useEffect(() => {
+		if (panelResizeState) return;
 		localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, String(Math.round(rightPanelWidth)));
-	}, [rightPanelWidth]);
+	}, [rightPanelWidth, panelResizeState]);
 
 	useEffect(() => {
 		if (!panelResizeState) return;
 
 		const previousCursor = globalThis.document.body.style.cursor;
 		const previousUserSelect = globalThis.document.body.style.userSelect;
+		const previousTouchAction = globalThis.document.body.style.touchAction;
 		globalThis.document.body.style.cursor = 'col-resize';
 		globalThis.document.body.style.userSelect = 'none';
+		globalThis.document.body.style.touchAction = 'none';
 
-		const handleMouseMove = (event: MouseEvent) => {
+		const commitPendingWidth = () => {
+			const pendingWidth = panelResizePendingWidthRef.current;
+			panelResizePendingWidthRef.current = null;
+			if (pendingWidth === null) return;
+			if (panelResizeState.panel === 'left') {
+				setLeftPanelWidth(pendingWidth);
+				return;
+			}
+			setRightPanelWidth(pendingWidth);
+		};
+
+		const flushPendingWidth = () => {
+			panelResizeRafRef.current = null;
+			commitPendingWidth();
+		};
+
+		const scheduleWidthCommit = (next: number) => {
+			panelResizePendingWidthRef.current = next;
+			if (panelResizeRafRef.current !== null) return;
+			panelResizeRafRef.current = window.requestAnimationFrame(flushPendingWidth);
+		};
+
+		const handlePointerMove = (event: PointerEvent) => {
+			if (event.pointerId !== panelResizeState.pointerId) return;
 			const deltaX = event.clientX - panelResizeState.startX;
 			if (panelResizeState.panel === 'left') {
 				const next = clamp(panelResizeState.startWidth + deltaX, panels.left.minWidth, panels.left.maxWidth);
-				setLeftPanelWidth(next);
+				scheduleWidthCommit(next);
 				return;
 			}
 			const next = clamp(panelResizeState.startWidth - deltaX, panels.right.minWidth, panels.right.maxWidth);
-			setRightPanelWidth(next);
+			scheduleWidthCommit(next);
 		};
 
-		const handleMouseUp = () => {
+		const stopResize = (event?: PointerEvent) => {
+			if (event && event.pointerId !== panelResizeState.pointerId) return;
+			if (panelResizeRafRef.current !== null) {
+				window.cancelAnimationFrame(panelResizeRafRef.current);
+				panelResizeRafRef.current = null;
+			}
+			commitPendingWidth();
+			setHoveredPanelResizeHandle(null);
 			setPanelResizeState(null);
 		};
 
-		window.addEventListener('mousemove', handleMouseMove);
-		window.addEventListener('mouseup', handleMouseUp);
+		window.addEventListener('pointermove', handlePointerMove);
+		window.addEventListener('pointerup', stopResize);
+		window.addEventListener('pointercancel', stopResize);
 
 		return () => {
+			if (panelResizeRafRef.current !== null) {
+				window.cancelAnimationFrame(panelResizeRafRef.current);
+				panelResizeRafRef.current = null;
+			}
+			panelResizePendingWidthRef.current = null;
 			globalThis.document.body.style.cursor = previousCursor;
 			globalThis.document.body.style.userSelect = previousUserSelect;
-			window.removeEventListener('mousemove', handleMouseMove);
-			window.removeEventListener('mouseup', handleMouseUp);
+			globalThis.document.body.style.touchAction = previousTouchAction;
+			window.removeEventListener('pointermove', handlePointerMove);
+			window.removeEventListener('pointerup', stopResize);
+			window.removeEventListener('pointercancel', stopResize);
 		};
 	}, [panelResizeState]);
 
@@ -7856,22 +7902,48 @@ export const App: React.FC = () => {
 							onAddVariant={addComponentVariant}
 							recentComponentIds={recentComponentIds}
 							assetsFocusNonce={assetsFocusNonce}
+							isResizing={panelResizeState !== null}
 						/>
 						{!leftPanelCollapsed && (
 							<div
 								role="separator"
 								aria-orientation="vertical"
-								onMouseDown={(event) => {
+								onPointerDown={(event) => {
 									event.preventDefault();
-									setPanelResizeState({ panel: 'left', startX: event.clientX, startWidth: leftPanelWidth });
+									event.currentTarget.setPointerCapture(event.pointerId);
+									setPanelResizeState({
+										panel: 'left',
+										pointerId: event.pointerId,
+										startX: event.clientX,
+										startWidth: leftPanelWidth,
+									});
 								}}
+								onPointerEnter={() => setHoveredPanelResizeHandle('left')}
+								onPointerLeave={() => setHoveredPanelResizeHandle((prev) => (prev === 'left' ? null : prev))}
 								style={{
-									width: '6px',
+									width: '1px',
 									flexShrink: 0,
 									cursor: 'col-resize',
-									backgroundColor: 'transparent',
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									touchAction: 'none',
 								}}
-							/>
+							>
+								<div
+									style={{
+										width: '1px',
+										height: '100%',
+										backgroundColor:
+											panelResizeState?.panel === 'left'
+												? 'rgba(10, 132, 255, 0.95)'
+												: hoveredPanelResizeHandle === 'left'
+													? 'rgba(255, 255, 255, 0.38)'
+													: 'rgba(255, 255, 255, 0.15)',
+										transition: panelResizeState ? 'none' : 'background-color 90ms ease-out',
+									}}
+								/>
+							</div>
 						)}
 
 						<div
@@ -8018,17 +8090,42 @@ export const App: React.FC = () => {
 							<div
 								role="separator"
 								aria-orientation="vertical"
-								onMouseDown={(event) => {
+								onPointerDown={(event) => {
 									event.preventDefault();
-									setPanelResizeState({ panel: 'right', startX: event.clientX, startWidth: rightPanelWidth });
+									event.currentTarget.setPointerCapture(event.pointerId);
+									setPanelResizeState({
+										panel: 'right',
+										pointerId: event.pointerId,
+										startX: event.clientX,
+										startWidth: rightPanelWidth,
+									});
 								}}
+								onPointerEnter={() => setHoveredPanelResizeHandle('right')}
+								onPointerLeave={() => setHoveredPanelResizeHandle((prev) => (prev === 'right' ? null : prev))}
 								style={{
-									width: '6px',
+									width: '1px',
 									flexShrink: 0,
 									cursor: 'col-resize',
-									backgroundColor: 'transparent',
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									touchAction: 'none',
 								}}
-							/>
+							>
+								<div
+									style={{
+										width: '1px',
+										height: '100%',
+										backgroundColor:
+											panelResizeState?.panel === 'right'
+												? 'rgba(10, 132, 255, 0.95)'
+												: hoveredPanelResizeHandle === 'right'
+													? 'rgba(255, 255, 255, 0.38)'
+													: 'rgba(255, 255, 255, 0.15)',
+										transition: panelResizeState ? 'none' : 'background-color 90ms ease-out',
+									}}
+								/>
+							</div>
 						)}
 
 						<PropertiesPanel
@@ -8036,6 +8133,7 @@ export const App: React.FC = () => {
 							document={document}
 							width={rightPanelWidth}
 							collapsed={rightPanelCollapsed}
+							isResizing={panelResizeState !== null}
 							onToggleCollapsed={toggleRightPanel}
 							onUpdateNode={handleUpdateNode}
 							onOpenPlugin={handleOpenPlugin}

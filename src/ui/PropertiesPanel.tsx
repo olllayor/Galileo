@@ -42,6 +42,7 @@ interface PropertiesPanelProps {
 	document: Document;
 	width?: number;
 	collapsed?: boolean;
+	isResizing?: boolean;
 	onToggleCollapsed?: () => void;
 	onUpdateNode: (id: string, updates: Partial<Node>) => void;
 	onOpenPlugin?: (pluginId: string) => void;
@@ -160,6 +161,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	document,
 	width = panels.right.width,
 	collapsed = false,
+	isResizing = false,
 	onToggleCollapsed,
 	onUpdateNode,
 	onOpenPlugin,
@@ -217,7 +219,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					flexDirection: 'column',
 					alignItems: 'center',
 					paddingTop: spacing.sm,
-					transition: `width ${transitions.normal}`,
+					transition: isResizing ? 'none' : `width ${transitions.normal}`,
 				}}
 			>
 				<button
@@ -295,7 +297,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					backgroundColor: colors.bg.secondary,
 					borderLeft: `1px solid ${colors.border.subtle}`,
 					overflowY: 'auto',
-					transition: `width ${transitions.normal}`,
+					transition: isResizing ? 'none' : `width ${transitions.normal}`,
 				}}
 			>
 				<div
@@ -562,7 +564,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 				backgroundColor: colors.bg.secondary,
 				borderLeft: `1px solid ${colors.border.subtle}`,
 				overflowY: 'auto',
-				transition: `width ${transitions.normal}`,
+				transition: isResizing ? 'none' : `width ${transitions.normal}`,
 			}}
 		>
 			<div

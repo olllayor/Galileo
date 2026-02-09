@@ -12,6 +12,7 @@ interface AssetsPanelProps {
 	components: ComponentsLibrary;
 	width?: number;
 	collapsed?: boolean;
+	isResizing?: boolean;
 	onToggleCollapsed?: () => void;
 	onCreateComponent: () => void;
 	onInsertComponent: (componentId: string, variant?: ComponentVariantMap) => void;
@@ -46,6 +47,7 @@ export const AssetsPanel: React.FC<AssetsPanelProps> = ({
 	components,
 	width = panels.left.width,
 	collapsed = false,
+	isResizing = false,
 	onToggleCollapsed,
 	onCreateComponent,
 	onInsertComponent,
@@ -95,7 +97,7 @@ export const AssetsPanel: React.FC<AssetsPanelProps> = ({
 					flexDirection: 'column',
 					alignItems: 'center',
 					paddingTop: spacing.sm,
-					transition: `width ${transitions.normal}`,
+					transition: isResizing ? 'none' : `width ${transitions.normal}`,
 				}}
 			>
 				<button
@@ -132,7 +134,7 @@ export const AssetsPanel: React.FC<AssetsPanelProps> = ({
 				backgroundColor: colors.bg.secondary,
 				display: 'flex',
 				flexDirection: 'column',
-				transition: `width ${transitions.normal}`,
+				transition: isResizing ? 'none' : `width ${transitions.normal}`,
 			}}
 		>
 			<div

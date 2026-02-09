@@ -44,6 +44,7 @@ interface LayersPanelProps {
 	renameRequestId?: string | null;
 	width?: number;
 	collapsed?: boolean;
+	isResizing?: boolean;
 	onToggleCollapsed?: () => void;
 	onRenameRequestHandled?: () => void;
 	onSelect: (id: string) => void;
@@ -66,6 +67,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 	renameRequestId,
 	width = panels.left.width,
 	collapsed = false,
+	isResizing = false,
 	onToggleCollapsed,
 	onRenameRequestHandled,
 	onSelect,
@@ -401,7 +403,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 					flexDirection: 'column',
 					alignItems: 'center',
 					paddingTop: spacing.sm,
-					transition: `width ${transitions.normal}`,
+					transition: isResizing ? 'none' : `width ${transitions.normal}`,
 				}}
 			>
 				<button
@@ -486,7 +488,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 				flexDirection: 'column',
 				overflow: 'hidden',
 				cursor: dragState && !dropIndicator ? 'not-allowed' : undefined,
-				transition: `width ${transitions.normal}`,
+				transition: isResizing ? 'none' : `width ${transitions.normal}`,
 			}}
 		>
 			{/* Panel Header */}

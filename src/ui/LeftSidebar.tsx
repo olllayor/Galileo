@@ -13,6 +13,7 @@ interface LeftSidebarProps {
 	renameRequestId?: string | null;
 	width?: number;
 	collapsed?: boolean;
+	isResizing?: boolean;
 	tab: SidebarTab;
 	onTabChange: (tab: SidebarTab) => void;
 	onToggleCollapsed?: () => void;
@@ -55,6 +56,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 	renameRequestId,
 	width = panels.left.width,
 	collapsed = false,
+	isResizing = false,
 	tab,
 	onTabChange,
 	onToggleCollapsed,
@@ -97,6 +99,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 					renameRequestId={renameRequestId}
 					width={width}
 					collapsed={collapsed}
+					isResizing={isResizing}
 					onToggleCollapsed={onToggleCollapsed}
 					onRenameRequestHandled={onRenameRequestHandled}
 					onSelect={onSelect}
@@ -110,6 +113,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 					components={components}
 					width={width}
 					collapsed={collapsed}
+					isResizing={isResizing}
 					onToggleCollapsed={onToggleCollapsed}
 					onCreateComponent={onCreateComponent}
 					onInsertComponent={onInsertComponent}
