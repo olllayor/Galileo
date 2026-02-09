@@ -1,15 +1,23 @@
 import { produce, enablePatches, Patch } from 'immer';
 import type { Command } from './types';
-import type { Asset, Document, Node, VectorData, VectorPoint, VectorSegment } from '../doc/types';
+import type { Asset, ComponentsLibrary, Document, Node, VectorData, VectorPoint, VectorSegment } from '../doc/types';
 import { buildVectorPathData } from '../doc/vector';
 import { resolveBooleanNodePath } from '../doc/boolean/solve';
 import { invalidateBooleanGeometryCache } from '../doc/geometry-cache';
 import { validateBooleanOperandSet } from '../doc/geometry';
+import {
+	materializeComponentInstance,
+	mergeComponentOverridePatch,
+	normalizeComponentVariant,
+	resolveComponentDefinition,
+} from '../doc/components';
 
 type DraftDocument = {
+	version: number;
 	rootId: string;
 	nodes: Record<string, Node>;
 	assets: Record<string, Asset>;
+	components: ComponentsLibrary;
 };
 
 enablePatches();
@@ -404,15 +412,194 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			}
 			break;
 		}
+
+		case 'createComponentDefinition': {
+			const { definition } = cmd.payload;
+			ensureComponentsLibrary(draft);
+			draft.components.definitions[definition.id] = { ...definition };
+			const existingSet = draft.components.sets[definition.setId];
+			if (existingSet) {
+				if (!existingSet.definitionIds.includes(definition.id)) {
+					existingSet.definitionIds.push(definition.id);
+				}
+				for (const [key, value] of Object.entries(definition.variant ?? {})) {
+					const current = existingSet.properties[key] ?? [];
+					if (!current.includes(value)) {
+						current.push(value);
+					}
+					existingSet.properties[key] = current;
+				}
+			}
+			break;
+		}
+
+		case 'updateComponentDefinition': {
+			const { id, updates } = cmd.payload;
+			ensureComponentsLibrary(draft);
+			const existing = draft.components.definitions[id];
+			if (!existing) break;
+			const merged = { ...existing, ...updates };
+			draft.components.definitions[id] = merged;
+			rematerializeInstancesForSet(draft, merged.setId);
+			break;
+		}
+
+		case 'createOrUpdateComponentSet': {
+			const { set } = cmd.payload;
+			ensureComponentsLibrary(draft);
+			draft.components.sets[set.id] = { ...set };
+			break;
+		}
+
+		case 'insertComponentInstance': {
+			const { id, parentId, componentId, name, variant, position, index, isMainPreview } = cmd.payload;
+			const parent = draft.nodes[parentId];
+			if (!parent) break;
+			ensureComponentsLibrary(draft);
+			const normalizedVariant = normalizeComponentVariant(variant);
+			const definition = resolveComponentDefinition(draft.components, componentId, normalizedVariant);
+			if (!definition) break;
+			const templateRoot = definition.templateNodes[definition.templateRootId];
+			const materialized = materializeComponentInstance(definition, id, {});
+			for (const [runtimeId, runtimeNode] of Object.entries(materialized.nodes)) {
+				if (isMainPreview) {
+					runtimeNode.locked = true;
+				}
+				draft.nodes[runtimeId] = runtimeNode;
+			}
+			draft.nodes[id] = {
+				id,
+				type: 'componentInstance',
+				name: name ?? definition.name,
+				position: position ? { ...position } : { x: 0, y: 0 },
+				size: templateRoot?.size ? { ...templateRoot.size } : { width: 100, height: 100 },
+				children: [...materialized.rootChildIds],
+				visible: true,
+				componentId,
+				variant: normalizedVariant,
+				componentOverrides: {},
+				isComponentMainPreview: Boolean(isMainPreview),
+				locked: Boolean(isMainPreview),
+			};
+			if (!parent.children) {
+				parent.children = [];
+			}
+			if (typeof index === 'number') {
+				parent.children.splice(Math.max(0, Math.min(index, parent.children.length)), 0, id);
+			} else {
+				parent.children.push(id);
+			}
+			break;
+		}
+
+		case 'setComponentInstanceVariant': {
+			const { id, variant } = cmd.payload;
+			const instance = draft.nodes[id];
+			if (!instance || instance.type !== 'componentInstance' || !instance.componentId) break;
+			instance.variant = normalizeComponentVariant(variant);
+			rematerializeComponentInstanceDraft(draft, id);
+			break;
+		}
+
+		case 'setComponentInstanceOverride': {
+			const { id, sourceNodeId, patch, reset } = cmd.payload;
+			const instance = draft.nodes[id];
+			if (!instance || instance.type !== 'componentInstance') break;
+			const existingOverrides = instance.componentOverrides ?? {};
+			if (reset) {
+				const next = { ...existingOverrides };
+				delete next[sourceNodeId];
+				instance.componentOverrides = Object.keys(next).length > 0 ? next : undefined;
+			} else {
+				const merged = mergeComponentOverridePatch(existingOverrides[sourceNodeId], patch ?? {});
+				const next = { ...existingOverrides };
+				if (merged) {
+					next[sourceNodeId] = merged;
+				} else {
+					delete next[sourceNodeId];
+				}
+				instance.componentOverrides = Object.keys(next).length > 0 ? next : undefined;
+			}
+			rematerializeComponentInstanceDraft(draft, id);
+			break;
+		}
+
+		case 'detachComponentInstance': {
+			const { id } = cmd.payload;
+			const instance = draft.nodes[id];
+			if (!instance || instance.type !== 'componentInstance') break;
+			instance.type = 'frame';
+			instance.componentId = undefined;
+			instance.variant = undefined;
+			instance.componentOverrides = undefined;
+			instance.clipContent = instance.clipContent ?? false;
+			const descendants = collectNodes(draft, id).filter((nodeId) => nodeId !== id);
+			for (const descendantId of descendants) {
+				const node = draft.nodes[descendantId];
+				if (!node) continue;
+				node.componentSourceNodeId = undefined;
+			}
+			break;
+		}
 	}
 };
 
 const asDocument = (draft: DraftDocument): Document => ({
-	version: 5,
+	version: draft.version,
 	rootId: draft.rootId,
 	nodes: draft.nodes,
 	assets: draft.assets,
+	components: draft.components,
 });
+
+const ensureComponentsLibrary = (draft: DraftDocument): void => {
+	if (!draft.components) {
+		draft.components = { definitions: {}, sets: {} };
+	}
+	if (!draft.components.definitions) {
+		draft.components.definitions = {};
+	}
+	if (!draft.components.sets) {
+		draft.components.sets = {};
+	}
+};
+
+const deleteNodeSubtree = (draft: DraftDocument, nodeId: string): void => {
+	const ids = collectNodes(draft, nodeId);
+	for (const id of ids) {
+		delete draft.nodes[id];
+	}
+};
+
+const rematerializeComponentInstanceDraft = (draft: DraftDocument, instanceId: string): void => {
+	const instance = draft.nodes[instanceId];
+	if (!instance || instance.type !== 'componentInstance' || !instance.componentId) return;
+	ensureComponentsLibrary(draft);
+	const definition = resolveComponentDefinition(draft.components, instance.componentId, instance.variant);
+	if (!definition) return;
+
+	for (const childId of instance.children ?? []) {
+		deleteNodeSubtree(draft, childId);
+	}
+
+	const materialized = materializeComponentInstance(definition, instanceId, instance.componentOverrides ?? {});
+	for (const [runtimeId, runtimeNode] of Object.entries(materialized.nodes)) {
+		draft.nodes[runtimeId] = runtimeNode;
+	}
+	instance.children = [...materialized.rootChildIds];
+	const templateRoot = definition.templateNodes[definition.templateRootId];
+	if (templateRoot) {
+		instance.size = { ...templateRoot.size };
+	}
+};
+
+const rematerializeInstancesForSet = (draft: DraftDocument, setId: string): void => {
+	for (const node of Object.values(draft.nodes)) {
+		if (node.type !== 'componentInstance') continue;
+		if (node.componentId !== setId) continue;
+		rematerializeComponentInstanceDraft(draft, node.id);
+	}
+};
 
 const refreshBooleanNodeMetadata = (draft: DraftDocument, nodeId: string): void => {
 	const node = draft.nodes[nodeId];

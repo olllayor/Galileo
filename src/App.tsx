@@ -7,11 +7,12 @@ import { PropertiesPanel } from './ui/PropertiesPanel';
 import { ContextMenu, type ContextMenuItem } from './ui/ContextMenu';
 import { PluginModal } from './ui/PluginModal';
 import { PluginManagerModal } from './ui/PluginManagerModal';
-import { LayersPanel } from './ui/LayersPanel';
+import { LeftSidebar } from './ui/LeftSidebar';
 import { ProjectsScreen } from './ui/ProjectsScreen';
 import { ProjectHandle } from './ui/ProjectHandle';
 import { ProjectTabs } from './ui/ProjectTabs';
 import { CommandPalette, type CommandPaletteItem } from './ui/CommandPalette';
+import { panels } from './ui/design-system';
 import { useDocument } from './hooks/useDocument';
 import {
 	createRectangleTool,
@@ -35,11 +36,16 @@ import {
 	buildLayoutGuideTargets,
 	computeConstrainedBounds,
 	computeLayoutGuideLines,
+	buildComponentSetFromDefinition,
+	extractComponentDefinitionFromSelection,
 	findParentNode,
 	getNodeWorldBounds,
 	getSelectionBounds,
 	isBooleanOperandEligible,
+	mergeComponentOverridePatch,
+	normalizeComponentVariant,
 	parseDocumentText,
+	resolveComponentDefinition,
 	resolveConstraints,
 	serializeDocument,
 	type BoundsOverrideMap,
@@ -50,6 +56,9 @@ import { generateId } from './core/doc/id';
 import { createDocument } from './core/doc/types';
 import type {
 	BooleanOp,
+	ComponentDefinition,
+	ComponentOverridePatch,
+	ComponentVariantMap,
 	Constraints,
 	Document,
 	ImageMeta,
@@ -140,6 +149,9 @@ const DEFAULT_IMAGE_OUTLINE = {
 	width: 12,
 	blur: 0,
 } as const;
+const RECENT_COMPONENTS_STORAGE_KEY = 'galileo.components.recents.v1';
+const LEFT_PANEL_WIDTH_STORAGE_KEY = 'galileo.ui.leftPanelWidth';
+const RIGHT_PANEL_WIDTH_STORAGE_KEY = 'galileo.ui.rightPanelWidth';
 type RemoveBackgroundResult = {
 	maskPngBase64: string;
 	width: number;
@@ -353,6 +365,12 @@ type ClipboardPayload = {
 	parentId: string | null;
 };
 
+type PanelResizeState = {
+	panel: 'left' | 'right';
+	startX: number;
+	startWidth: number;
+};
+
 const buildDraftKey = (path: string | null): string => {
 	if (!path) {
 		return UNTITLED_DRAFT_KEY;
@@ -418,6 +436,23 @@ const applyBoundsUpdate = (
 			},
 		},
 	};
+};
+
+const getOwningComponentInstanceId = (
+	doc: Document,
+	parentMap: Record<string, string | null>,
+	nodeId: string,
+): string | null => {
+	let current: string | null = nodeId;
+	while (current) {
+		const node = doc.nodes[current];
+		if (!node) return null;
+		if (node.type === 'componentInstance') {
+			return node.id;
+		}
+		current = parentMap[current] ?? null;
+	}
+	return null;
 };
 
 const applyBoundsUpdates = (
@@ -1290,10 +1325,38 @@ export const App: React.FC = () => {
 		const stored = localStorage.getItem('galileo.ui.leftPanelCollapsed');
 		return stored === 'true';
 	});
+	const [leftPanelWidth, setLeftPanelWidth] = useState<number>(() => {
+		const stored = Number(localStorage.getItem(LEFT_PANEL_WIDTH_STORAGE_KEY));
+		if (Number.isFinite(stored)) {
+			return clamp(stored, panels.left.minWidth, panels.left.maxWidth);
+		}
+		return panels.left.width;
+	});
+	const [leftSidebarTab, setLeftSidebarTab] = useState<'layers' | 'assets'>('layers');
+	const [assetsFocusNonce, setAssetsFocusNonce] = useState(0);
+	const [recentComponentIds, setRecentComponentIds] = useState<string[]>(() => {
+		try {
+			const stored = localStorage.getItem(RECENT_COMPONENTS_STORAGE_KEY);
+			if (!stored) return [];
+			const parsed = JSON.parse(stored);
+			if (!Array.isArray(parsed)) return [];
+			return parsed.filter((value): value is string => typeof value === 'string').slice(0, 12);
+		} catch {
+			return [];
+		}
+	});
 	const [rightPanelCollapsed, setRightPanelCollapsed] = useState<boolean>(() => {
 		const stored = localStorage.getItem('galileo.ui.rightPanelCollapsed');
 		return stored === 'true';
 	});
+	const [rightPanelWidth, setRightPanelWidth] = useState<number>(() => {
+		const stored = Number(localStorage.getItem(RIGHT_PANEL_WIDTH_STORAGE_KEY));
+		if (Number.isFinite(stored)) {
+			return clamp(stored, panels.right.minWidth, panels.right.maxWidth);
+		}
+		return panels.right.width;
+	});
+	const [panelResizeState, setPanelResizeState] = useState<PanelResizeState | null>(null);
 	const [canvasViewportOffset, setCanvasViewportOffset] = useState({ x: 0, y: 0 });
 	const pluginIframeRef = useRef<HTMLIFrameElement | null>(null);
 	const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1316,6 +1379,52 @@ export const App: React.FC = () => {
 		}, 2400);
 	}, []);
 	const isDev = import.meta.env?.DEV ?? false;
+
+	useEffect(() => {
+		localStorage.setItem(RECENT_COMPONENTS_STORAGE_KEY, JSON.stringify(recentComponentIds.slice(0, 12)));
+	}, [recentComponentIds]);
+
+	useEffect(() => {
+		localStorage.setItem(LEFT_PANEL_WIDTH_STORAGE_KEY, String(Math.round(leftPanelWidth)));
+	}, [leftPanelWidth]);
+
+	useEffect(() => {
+		localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, String(Math.round(rightPanelWidth)));
+	}, [rightPanelWidth]);
+
+	useEffect(() => {
+		if (!panelResizeState) return;
+
+		const previousCursor = globalThis.document.body.style.cursor;
+		const previousUserSelect = globalThis.document.body.style.userSelect;
+		globalThis.document.body.style.cursor = 'col-resize';
+		globalThis.document.body.style.userSelect = 'none';
+
+		const handleMouseMove = (event: MouseEvent) => {
+			const deltaX = event.clientX - panelResizeState.startX;
+			if (panelResizeState.panel === 'left') {
+				const next = clamp(panelResizeState.startWidth + deltaX, panels.left.minWidth, panels.left.maxWidth);
+				setLeftPanelWidth(next);
+				return;
+			}
+			const next = clamp(panelResizeState.startWidth - deltaX, panels.right.minWidth, panels.right.maxWidth);
+			setRightPanelWidth(next);
+		};
+
+		const handleMouseUp = () => {
+			setPanelResizeState(null);
+		};
+
+		window.addEventListener('mousemove', handleMouseMove);
+		window.addEventListener('mouseup', handleMouseUp);
+
+		return () => {
+			globalThis.document.body.style.cursor = previousCursor;
+			globalThis.document.body.style.userSelect = previousUserSelect;
+			window.removeEventListener('mousemove', handleMouseMove);
+			window.removeEventListener('mouseup', handleMouseUp);
+		};
+	}, [panelResizeState]);
 
 	const updateProjects = useCallback((updater: (prev: ProjectMeta[]) => ProjectMeta[]) => {
 		setProjects((prev) => {
@@ -1441,7 +1550,7 @@ export const App: React.FC = () => {
 			}
 			window.removeEventListener('resize', schedule);
 		};
-	}, [appView, leftPanelCollapsed, rightPanelCollapsed, canvasSize.height, canvasSize.width]);
+	}, [appView, leftPanelCollapsed, rightPanelCollapsed, leftPanelWidth, rightPanelWidth, canvasSize.height, canvasSize.width]);
 
 	const displayDocument = previewDocument ?? document;
 	const selectedNode = selectedIds.length === 1 ? displayDocument.nodes[selectedIds[0]] : null;
@@ -1472,6 +1581,68 @@ export const App: React.FC = () => {
 		() => getSelectionBounds(displayDocument, selectionIds, boundsMap),
 		[displayDocument, selectionIds, boundsMap],
 	);
+	const selectionComponentInstanceRootId = useMemo(() => {
+		if (selectionIds.length !== 1) return null;
+		const selectedId = selectionIds[0];
+		const selected = displayDocument.nodes[selectedId];
+		if (!selected) return null;
+		if (selected.type === 'componentInstance') {
+			return selected.id;
+		}
+		return getOwningComponentInstanceId(displayDocument, parentMap, selectedId);
+	}, [displayDocument, parentMap, selectionIds]);
+	const selectionIsNestedInstanceNode = useMemo(() => {
+		if (selectionIds.length !== 1) return false;
+		const selectedId = selectionIds[0];
+		if (!selectionComponentInstanceRootId) return false;
+		return selectedId !== selectionComponentInstanceRootId;
+	}, [selectionIds, selectionComponentInstanceRootId]);
+	const selectedInstanceNode =
+		selectionComponentInstanceRootId && displayDocument.nodes[selectionComponentInstanceRootId]?.type === 'componentInstance'
+			? displayDocument.nodes[selectionComponentInstanceRootId]
+			: null;
+	const selectedInstanceDefinition =
+		selectedInstanceNode?.componentId && document.components
+			? resolveComponentDefinition(document.components, selectedInstanceNode.componentId, selectedInstanceNode.variant)
+			: null;
+	const selectedInstanceSet =
+		selectedInstanceNode?.componentId && document.components
+			? document.components.sets[selectedInstanceNode.componentId] ?? null
+			: null;
+	const selectedNestedSourceNodeId =
+		selectionIsNestedInstanceNode && selectionIds.length === 1
+			? (displayDocument.nodes[selectionIds[0]]?.componentSourceNodeId ?? null)
+			: null;
+	const selectedNestedOverride =
+		selectedInstanceNode && selectedNestedSourceNodeId
+			? selectedInstanceNode.componentOverrides?.[selectedNestedSourceNodeId]
+			: undefined;
+	const componentPanelContext = useMemo(() => {
+		if (!selectedInstanceNode || !selectedInstanceSet) {
+			return null;
+		}
+		const propertyOptions: Record<string, string[]> = {};
+		for (const [key, values] of Object.entries(selectedInstanceSet.properties ?? {})) {
+			propertyOptions[key] = [...values];
+		}
+		return {
+			instanceId: selectedInstanceNode.id,
+			componentName: selectedInstanceSet.name,
+			propertyOptions,
+			currentVariant: normalizeComponentVariant(selectedInstanceNode.variant ?? selectedInstanceDefinition?.variant),
+			isNestedSelection: selectionIsNestedInstanceNode,
+			selectedSourceNodeId: selectedNestedSourceNodeId ?? undefined,
+			selectedOverride: selectedNestedOverride,
+			overrideCount: Object.keys(selectedInstanceNode.componentOverrides ?? {}).length,
+		};
+	}, [
+		selectedInstanceDefinition?.variant,
+		selectedInstanceNode,
+		selectedInstanceSet,
+		selectionIsNestedInstanceNode,
+		selectedNestedSourceNodeId,
+		selectedNestedOverride,
+	]);
 	const editablePathId = useMemo(() => {
 		if (!ENABLE_VECTOR_EDIT_V1) return null;
 		if (selectedIds.length !== 1) return null;
@@ -2838,6 +3009,23 @@ export const App: React.FC = () => {
 	const dispatchEditorAction = useCallback(
 		(action: EditorAction, targetIds: string[] = selectionIds) => {
 			console.log('dispatchEditorAction called:', action.type, 'targetIds:', targetIds);
+			const hasStructuralInstanceSelection = targetIds.some((id) => {
+				const ownerId = getOwningComponentInstanceId(document, documentParentMap, id);
+				if (!ownerId) return false;
+				if (ownerId !== id) return true;
+				const owner = document.nodes[ownerId];
+				return owner?.isComponentMainPreview === true;
+			});
+			const isStructuralAction =
+				action.type === 'duplicate' ||
+				action.type === 'delete' ||
+				action.type === 'reorderZ' ||
+				action.type === 'group' ||
+				action.type === 'ungroup';
+			if (isStructuralAction && hasStructuralInstanceSelection) {
+				showToast('Instance structure is locked. Detach to edit structure.');
+				return;
+			}
 			if (action.type === 'duplicate') {
 				duplicateNodes(targetIds);
 				return;
@@ -2883,6 +3071,7 @@ export const App: React.FC = () => {
 		[
 			applyPropsToSelection,
 			deleteNodes,
+			documentParentMap,
 			document.nodes,
 			duplicateNodes,
 			groupNodes,
@@ -2890,6 +3079,7 @@ export const App: React.FC = () => {
 			reorderZ,
 			selectionIds,
 			setSelection,
+			showToast,
 		],
 	);
 
@@ -4270,6 +4460,13 @@ export const App: React.FC = () => {
 							if (!node || node.locked === true) return false;
 							return !selectionIds.some((otherId) => otherId !== id && isDescendantOf(id, otherId));
 						});
+						const hasInstanceLockedSelection = activeIds.some((id) => {
+							const ownerId = getOwningComponentInstanceId(document, documentParentMap, id);
+							return Boolean(ownerId && ownerId !== id);
+						});
+						if (hasInstanceLockedSelection) {
+							return true;
+						}
 						if (activeIds.length === 0) {
 							return true;
 						}
@@ -4329,9 +4526,17 @@ export const App: React.FC = () => {
 					return true;
 				}
 
-				// Apply Figma-style selection: respect group boundaries unless deep selecting
-				const selectableId = findSelectableNode(displayDocument, hit.node.id, deepSelect);
-				const nodeId = selectableId;
+				let nodeId = findSelectableNode(displayDocument, hit.node.id, deepSelect);
+				if (containerFocusId) {
+					let currentId: string | null = hit.node.id;
+					while (currentId) {
+						if (currentId === containerFocusId) {
+							nodeId = hit.node.id;
+							break;
+						}
+						currentId = parentMap[currentId] ?? null;
+					}
+				}
 				const node = document.nodes[nodeId] ?? hit.node;
 
 				if (info.shiftKey) {
@@ -4343,6 +4548,13 @@ export const App: React.FC = () => {
 				const nextSelection = isAlreadySelected ? selectionIds : [nodeId];
 				if (!isAlreadySelected) {
 					selectNode(nodeId);
+				}
+				const hasInstanceLockedSelection = nextSelection.some((id) => {
+					const ownerId = getOwningComponentInstanceId(document, documentParentMap, id);
+					return Boolean(ownerId && ownerId !== id);
+				});
+				if (hasInstanceLockedSelection) {
+					return true;
 				}
 
 				const initialPositions: Record<string, { x: number; y: number }> = {};
@@ -5652,6 +5864,77 @@ export const App: React.FC = () => {
 	const handleUpdateNode = useCallback(
 		(id: string, updates: Record<string, unknown>) => {
 			const current = document.nodes[id];
+			if (current?.isComponentMainPreview) {
+				showToast('Main preview is read-only. Edit the component definition via variants/components.');
+				return;
+			}
+			if (
+				current?.type === 'componentInstance' &&
+				Object.prototype.hasOwnProperty.call(updates, 'variant') &&
+				updates.variant &&
+				typeof updates.variant === 'object'
+			) {
+				executeCommand({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Switch component variant',
+					type: 'setComponentInstanceVariant',
+					payload: {
+						id: current.id,
+						variant: normalizeComponentVariant(updates.variant as ComponentVariantMap),
+					},
+				} as Command);
+				return;
+			}
+
+			const owningInstanceId = getOwningComponentInstanceId(document, documentParentMap, id);
+			const owningInstance =
+				owningInstanceId && document.nodes[owningInstanceId]?.type === 'componentInstance'
+					? document.nodes[owningInstanceId]
+					: null;
+			if (owningInstance?.isComponentMainPreview) {
+				showToast('Main preview is read-only. Edit the component definition via variants/components.');
+				return;
+			}
+			if (current && owningInstanceId && owningInstanceId !== id) {
+				const sourceNodeId = current.componentSourceNodeId;
+				if (!sourceNodeId) {
+					return;
+				}
+				const overridePatch: Partial<ComponentOverridePatch> = {};
+				if (Object.prototype.hasOwnProperty.call(updates, 'text')) overridePatch.text = updates.text as string | undefined;
+				if (Object.prototype.hasOwnProperty.call(updates, 'fill')) overridePatch.fill = updates.fill as Node['fill'];
+				if (Object.prototype.hasOwnProperty.call(updates, 'stroke')) overridePatch.stroke = updates.stroke as Node['stroke'];
+				if (Object.prototype.hasOwnProperty.call(updates, 'image')) overridePatch.image = updates.image as Node['image'];
+				if (Object.prototype.hasOwnProperty.call(updates, 'opacity')) overridePatch.opacity = updates.opacity as number | undefined;
+				if (Object.prototype.hasOwnProperty.call(updates, 'visible')) overridePatch.visible = updates.visible as boolean | undefined;
+				if (Object.keys(overridePatch).length === 0) {
+					showToast('This layer is controlled by a component. Only override fields are editable.');
+					return;
+				}
+				const instanceNode = document.nodes[owningInstanceId];
+				if (!instanceNode || instanceNode.type !== 'componentInstance') {
+					return;
+				}
+				const existing = instanceNode.componentOverrides?.[sourceNodeId];
+				const merged = mergeComponentOverridePatch(existing, overridePatch);
+				executeCommand({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: merged ? 'Set instance override' : 'Reset instance override',
+					type: 'setComponentInstanceOverride',
+					payload: {
+						id: instanceNode.id,
+						sourceNodeId,
+						patch: merged,
+						reset: !merged,
+					},
+				} as Command);
+				return;
+			}
+
 			let nextUpdates = updates;
 			if (current?.type === 'text') {
 				const nextText = typeof updates.text === 'string' ? updates.text : (current.text ?? '');
@@ -5800,7 +6083,14 @@ export const App: React.FC = () => {
 				},
 			});
 		},
-		[document, boundsMap, executeCommand, measureTextSize],
+		[
+			document,
+			documentParentMap,
+			boundsMap,
+			executeCommand,
+			measureTextSize,
+			showToast,
+		],
 	);
 
 	const commitTextEditing = useCallback(() => {
@@ -5896,6 +6186,342 @@ export const App: React.FC = () => {
 			});
 		},
 		[executeCommand],
+	);
+
+	const recordRecentComponentId = useCallback((componentId: string) => {
+		setRecentComponentIds((prev) => [componentId, ...prev.filter((id) => id !== componentId)].slice(0, 12));
+	}, []);
+
+	const createComponentFromSelection = useCallback(() => {
+		if (selectionIds.length === 0) return;
+		const selectedSet = new Set(selectionIds);
+		const topLevelIds = selectionIds.filter((id) => {
+			let parentId = documentParentMap[id];
+			while (parentId) {
+				if (selectedSet.has(parentId)) return false;
+				parentId = documentParentMap[parentId] ?? null;
+			}
+			return id !== document.rootId && Boolean(document.nodes[id]);
+		});
+		if (topLevelIds.length === 0) return;
+		const parentIds = Array.from(new Set(topLevelIds.map((id) => documentParentMap[id]).filter(Boolean)));
+		if (parentIds.length !== 1) {
+			showToast('Select layers with the same parent to create a component.');
+			return;
+		}
+		const parentId = parentIds[0] as string;
+		const sortedTopLevelIds = topLevelIds
+			.slice()
+			.sort((a, b) => (document.nodes[parentId]?.children?.indexOf(a) ?? 0) - (document.nodes[parentId]?.children?.indexOf(b) ?? 0));
+		const insertIndex =
+			document.nodes[parentId]?.children && sortedTopLevelIds.length > 0
+				? Math.max(0, document.nodes[parentId]!.children!.indexOf(sortedTopLevelIds[0]))
+				: document.nodes[parentId]?.children?.length ?? 0;
+		let minX = Number.POSITIVE_INFINITY;
+		let minY = Number.POSITIVE_INFINITY;
+		for (const id of sortedTopLevelIds) {
+			const node = document.nodes[id];
+			if (!node) continue;
+			minX = Math.min(minX, node.position.x);
+			minY = Math.min(minY, node.position.y);
+		}
+		if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
+			return;
+		}
+
+		const setId = generateId();
+		const definitionId = generateId();
+		const firstNode = document.nodes[sortedTopLevelIds[0]];
+		const definitionName =
+			firstNode?.name && firstNode.name.trim().length > 0
+				? `${firstNode.name} Component`
+				: `Component ${Object.keys(document.components.sets).length + 1}`;
+		const definition = extractComponentDefinitionFromSelection(document, sortedTopLevelIds, {
+			definitionId,
+			setId,
+			name: definitionName,
+			variant: {},
+		});
+		if (!definition) return;
+		const componentSet = buildComponentSetFromDefinition(setId, definitionName, definition);
+		const instanceId = generateId();
+		const commands: Command[] = [
+			{
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Create component definition',
+				type: 'createComponentDefinition',
+				payload: { definition },
+			},
+			{
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Create component set',
+				type: 'createOrUpdateComponentSet',
+				payload: { set: componentSet },
+			},
+			...sortedTopLevelIds.map(
+				(id) =>
+					({
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'user',
+						description: 'Replace with component instance',
+						type: 'deleteNode',
+						payload: { id },
+					}) as Command,
+			),
+			{
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Insert component instance',
+				type: 'insertComponentInstance',
+				payload: {
+					id: instanceId,
+					parentId,
+					componentId: setId,
+					name: definitionName,
+					variant: {},
+					position: { x: minX, y: minY },
+					index: insertIndex,
+				},
+			},
+		];
+
+		executeCommand({
+			id: generateId(),
+			timestamp: Date.now(),
+			source: 'user',
+			description: 'Create component from selection',
+			type: 'batch',
+			payload: { commands },
+		} as Command);
+		recordRecentComponentId(setId);
+		setSelection([instanceId]);
+		setLeftSidebarTab('assets');
+		showToast('Component created');
+	}, [selectionIds, documentParentMap, document, showToast, executeCommand, recordRecentComponentId, setSelection]);
+
+	const insertComponentInstanceFromAssets = useCallback(
+		(componentId: string, variant?: ComponentVariantMap) => {
+			const definition = resolveComponentDefinition(document.components, componentId, variant);
+			if (!definition) {
+				showToast('Component definition is missing.');
+				return;
+			}
+			const instanceId = generateId();
+			const parentId = containerFocusId && document.nodes[containerFocusId] ? containerFocusId : document.rootId;
+			const worldPoint = getDefaultInsertPosition();
+			const localPoint = getLocalPointForParent(parentId, worldPoint.x, worldPoint.y);
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Insert component instance',
+				type: 'insertComponentInstance',
+				payload: {
+					id: instanceId,
+					parentId,
+					componentId,
+					name: definition.name,
+					variant: normalizeComponentVariant(variant ?? definition.variant),
+					position: localPoint,
+				},
+			} as Command);
+			recordRecentComponentId(componentId);
+			setSelection([instanceId]);
+		},
+		[
+			containerFocusId,
+			document.components,
+			document.nodes,
+			document.rootId,
+			executeCommand,
+			getDefaultInsertPosition,
+			getLocalPointForParent,
+			recordRecentComponentId,
+			setSelection,
+			showToast,
+		],
+	);
+
+	const revealComponentMainOnCanvas = useCallback(
+		(componentId: string) => {
+			const definition = resolveComponentDefinition(document.components, componentId, undefined);
+			if (!definition) {
+				showToast('Component definition is missing.');
+				return;
+			}
+			const instanceId = generateId();
+			const offset = Object.values(document.nodes).filter((node) => node.isComponentMainPreview).length * 36;
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Reveal component main',
+				type: 'insertComponentInstance',
+				payload: {
+					id: instanceId,
+					parentId: document.rootId,
+					componentId,
+					name: `Main: ${definition.name}`,
+					variant: normalizeComponentVariant(definition.variant),
+					position: { x: 64 + offset, y: 64 + offset },
+					isMainPreview: true,
+				},
+			} as Command);
+			setSelection([instanceId]);
+			recordRecentComponentId(componentId);
+		},
+		[document.components, document.nodes, document.rootId, executeCommand, recordRecentComponentId, setSelection, showToast],
+	);
+
+	const addComponentVariant = useCallback(
+		(setId: string, property: string, value: string) => {
+			const set = document.components.sets[setId];
+			if (!set) return;
+			const baseDefinition =
+				selectedInstanceDefinition && selectedInstanceDefinition.setId === setId
+					? selectedInstanceDefinition
+					: document.components.definitions[set.defaultDefinitionId];
+			if (!baseDefinition) return;
+			const nextVariant = normalizeComponentVariant({
+				...(baseDefinition.variant ?? {}),
+				[property]: value,
+			});
+			const duplicate = set.definitionIds
+				.map((id) => document.components.definitions[id])
+				.find((definition) => JSON.stringify(normalizeComponentVariant(definition?.variant)) === JSON.stringify(nextVariant));
+			if (duplicate) {
+				showToast('Variant already exists.');
+				return;
+			}
+			const nextDefinition: ComponentDefinition = {
+				...baseDefinition,
+				id: generateId(),
+				variant: nextVariant,
+			};
+			const nextSet = {
+				...set,
+				definitionIds: [...set.definitionIds, nextDefinition.id],
+				properties: {
+					...set.properties,
+					[property]: Array.from(new Set([...(set.properties[property] ?? []), value])),
+				},
+			};
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Add component variant',
+				type: 'batch',
+				payload: {
+					commands: [
+						{
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Create component definition',
+							type: 'createComponentDefinition',
+							payload: { definition: nextDefinition },
+						},
+						{
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Update component set',
+							type: 'createOrUpdateComponentSet',
+							payload: { set: nextSet },
+						},
+					] as Command[],
+				},
+			} as Command);
+			showToast('Variant added');
+		},
+		[document.components, executeCommand, selectedInstanceDefinition, showToast],
+	);
+
+	const setComponentInstanceVariant = useCallback(
+		(instanceId: string, variant: ComponentVariantMap) => {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Switch component variant',
+				type: 'setComponentInstanceVariant',
+				payload: {
+					id: instanceId,
+					variant: normalizeComponentVariant(variant),
+				},
+			} as Command);
+		},
+		[executeCommand],
+	);
+
+	const setComponentInstanceOverride = useCallback(
+		(instanceId: string, sourceNodeId: string, patch?: Partial<ComponentOverridePatch>, reset = false) => {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: reset ? 'Reset instance override' : 'Set instance override',
+				type: 'setComponentInstanceOverride',
+				payload: {
+					id: instanceId,
+					sourceNodeId,
+					patch,
+					reset,
+				},
+			} as Command);
+		},
+		[executeCommand],
+	);
+
+	const detachComponentInstance = useCallback(
+		(instanceId: string) => {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Detach component instance',
+				type: 'detachComponentInstance',
+				payload: { id: instanceId },
+			} as Command);
+			showToast('Instance detached');
+		},
+		[executeCommand, showToast],
+	);
+
+	const resetAllComponentOverrides = useCallback(
+		(instanceId: string) => {
+			const instance = document.nodes[instanceId];
+			if (!instance || instance.type !== 'componentInstance') return;
+			const sourceIds = Object.keys(instance.componentOverrides ?? {});
+			if (sourceIds.length === 0) return;
+			const commands = sourceIds.map(
+				(sourceNodeId) =>
+					({
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'user',
+						description: 'Reset instance override',
+						type: 'setComponentInstanceOverride',
+						payload: { id: instanceId, sourceNodeId, reset: true },
+					}) as Command,
+			);
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Reset all component overrides',
+				type: 'batch',
+				payload: { commands },
+			} as Command);
+		},
+		[document.nodes, executeCommand],
 	);
 
 	const persistDraftIfNeeded = useCallback(async () => {
@@ -6823,6 +7449,12 @@ export const App: React.FC = () => {
 					return;
 				}
 
+				if (isCmd && e.altKey && key === 'k') {
+					e.preventDefault();
+					createComponentFromSelection();
+					return;
+				}
+
 				if (e.key === 'Enter') {
 					if (activeTool === 'pen' && penSession) {
 						e.preventDefault();
@@ -6839,7 +7471,7 @@ export const App: React.FC = () => {
 						startTextEditing(target.id, { selectAll: false });
 						return;
 					}
-					if (target && (target.type === 'group' || target.type === 'frame')) {
+					if (target && (target.type === 'group' || target.type === 'frame' || target.type === 'componentInstance')) {
 						e.preventDefault();
 						setContainerFocusId(target.id);
 						return;
@@ -6891,6 +7523,12 @@ export const App: React.FC = () => {
 			}
 
 			if (!editable) {
+				if (e.shiftKey && !isCmd && key === 'i') {
+					e.preventDefault();
+					setLeftSidebarTab('assets');
+					setAssetsFocusNonce((prev) => prev + 1);
+					return;
+				}
 				if (key === 'v') setActiveTool('select');
 				if (key === 'h') setActiveTool('hand');
 				if (key === 'f') setActiveTool('frame');
@@ -7196,11 +7834,15 @@ export const App: React.FC = () => {
 						<ProjectTabs fileName={fileName} isDirty={isDirty} />
 					</div>
 					<div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-						<LayersPanel
+						<LeftSidebar
 							document={displayDocument}
+							components={displayDocument.components}
 							selectionIds={selectionIds}
 							renameRequestId={renameRequestId}
+							width={leftPanelWidth}
 							collapsed={leftPanelCollapsed}
+							tab={leftSidebarTab}
+							onTabChange={setLeftSidebarTab}
 							onToggleCollapsed={toggleLeftPanel}
 							onRenameRequestHandled={() => setRenameRequestId(null)}
 							onSelect={selectNode}
@@ -7208,7 +7850,29 @@ export const App: React.FC = () => {
 							onToggleVisible={handleToggleNodeVisible}
 							onToggleLocked={handleToggleNodeLocked}
 							onReorder={handleReorderChild}
+							onCreateComponent={createComponentFromSelection}
+							onInsertComponent={insertComponentInstanceFromAssets}
+							onRevealMain={revealComponentMainOnCanvas}
+							onAddVariant={addComponentVariant}
+							recentComponentIds={recentComponentIds}
+							assetsFocusNonce={assetsFocusNonce}
 						/>
+						{!leftPanelCollapsed && (
+							<div
+								role="separator"
+								aria-orientation="vertical"
+								onMouseDown={(event) => {
+									event.preventDefault();
+									setPanelResizeState({ panel: 'left', startX: event.clientX, startWidth: leftPanelWidth });
+								}}
+								style={{
+									width: '6px',
+									flexShrink: 0,
+									cursor: 'col-resize',
+									backgroundColor: 'transparent',
+								}}
+							/>
+						)}
 
 						<div
 							ref={canvasWrapperRef}
@@ -7350,9 +8014,27 @@ export const App: React.FC = () => {
 							/>
 						</div>
 
+						{!rightPanelCollapsed && (
+							<div
+								role="separator"
+								aria-orientation="vertical"
+								onMouseDown={(event) => {
+									event.preventDefault();
+									setPanelResizeState({ panel: 'right', startX: event.clientX, startWidth: rightPanelWidth });
+								}}
+								style={{
+									width: '6px',
+									flexShrink: 0,
+									cursor: 'col-resize',
+									backgroundColor: 'transparent',
+								}}
+							/>
+						)}
+
 						<PropertiesPanel
 							selectedNode={selectedNode}
 							document={document}
+							width={rightPanelWidth}
 							collapsed={rightPanelCollapsed}
 							onToggleCollapsed={toggleRightPanel}
 							onUpdateNode={handleUpdateNode}
@@ -7366,6 +8048,13 @@ export const App: React.FC = () => {
 							onPasteEffects={(nodeId) => pasteEffects([nodeId])}
 							canPasteEffects={Boolean(effectsClipboardRef.current?.length)}
 							textOverflow={selectedTextOverflow}
+							componentContext={componentPanelContext}
+							onSetComponentVariant={setComponentInstanceVariant}
+							onDetachComponentInstance={detachComponentInstance}
+							onResetComponentOverride={(instanceId, sourceNodeId) =>
+								setComponentInstanceOverride(instanceId, sourceNodeId, undefined, true)
+							}
+							onResetAllComponentOverrides={resetAllComponentOverrides}
 							vectorTarget={
 								editablePathNode?.type === 'path'
 									? {

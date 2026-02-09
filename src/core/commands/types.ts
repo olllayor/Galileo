@@ -1,4 +1,12 @@
-import type { Asset, BooleanOp, Node } from '../doc/types';
+import type {
+	Asset,
+	BooleanOp,
+	ComponentDefinition,
+	ComponentOverridePatch,
+	ComponentSet,
+	ComponentVariantMap,
+	Node,
+} from '../doc/types';
 
 export interface BaseCommand {
 	id: string;
@@ -175,6 +183,67 @@ export interface ToggleVectorClosedCommand extends BaseCommand {
 	};
 }
 
+export interface CreateComponentDefinitionCommand extends BaseCommand {
+	type: 'createComponentDefinition';
+	payload: {
+		definition: ComponentDefinition;
+	};
+}
+
+export interface UpdateComponentDefinitionCommand extends BaseCommand {
+	type: 'updateComponentDefinition';
+	payload: {
+		id: string;
+		updates: Partial<ComponentDefinition>;
+	};
+}
+
+export interface CreateOrUpdateComponentSetCommand extends BaseCommand {
+	type: 'createOrUpdateComponentSet';
+	payload: {
+		set: ComponentSet;
+	};
+}
+
+export interface InsertComponentInstanceCommand extends BaseCommand {
+	type: 'insertComponentInstance';
+	payload: {
+		id: string;
+		parentId: string;
+		componentId: string;
+		name?: string;
+		variant?: ComponentVariantMap;
+		position?: { x: number; y: number };
+		index?: number;
+		isMainPreview?: boolean;
+	};
+}
+
+export interface SetComponentInstanceVariantCommand extends BaseCommand {
+	type: 'setComponentInstanceVariant';
+	payload: {
+		id: string;
+		variant: ComponentVariantMap;
+	};
+}
+
+export interface SetComponentInstanceOverrideCommand extends BaseCommand {
+	type: 'setComponentInstanceOverride';
+	payload: {
+		id: string;
+		sourceNodeId: string;
+		patch?: Partial<ComponentOverridePatch>;
+		reset?: boolean;
+	};
+}
+
+export interface DetachComponentInstanceCommand extends BaseCommand {
+	type: 'detachComponentInstance';
+	payload: {
+		id: string;
+	};
+}
+
 export type Command =
 	| CreateNodeCommand
 	| DeleteNodeCommand
@@ -194,7 +263,14 @@ export type Command =
 	| MoveVectorPointCommand
 	| DeleteVectorPointCommand
 	| SetVectorHandleCommand
-	| ToggleVectorClosedCommand;
+	| ToggleVectorClosedCommand
+	| CreateComponentDefinitionCommand
+	| UpdateComponentDefinitionCommand
+	| CreateOrUpdateComponentSetCommand
+	| InsertComponentInstanceCommand
+	| SetComponentInstanceVariantCommand
+	| SetComponentInstanceOverrideCommand
+	| DetachComponentInstanceCommand;
 
 export const isCommand = (value: unknown): value is Command => {
 	if (typeof value !== 'object' || value === null) {

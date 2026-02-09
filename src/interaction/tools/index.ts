@@ -602,11 +602,11 @@ export const findSelectableNode = (doc: Document, nodeId: string, deepSelect: bo
 		}
 	}
 
-	// Find the first group in the path from root
-	// Return the topmost group, or the node itself if no groups
+	// Find the first selection boundary in the path from root.
+	// Groups and component instances are treated as default boundaries.
 	for (const id of path) {
 		const node = doc.nodes[id];
-		if (node?.type === 'group') {
+		if (node?.type === 'group' || node?.type === 'componentInstance') {
 			return id;
 		}
 	}

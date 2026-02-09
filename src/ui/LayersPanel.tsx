@@ -42,6 +42,7 @@ interface LayersPanelProps {
 	document: Document;
 	selectionIds: string[];
 	renameRequestId?: string | null;
+	width?: number;
 	collapsed?: boolean;
 	onToggleCollapsed?: () => void;
 	onRenameRequestHandled?: () => void;
@@ -63,6 +64,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 	document,
 	selectionIds,
 	renameRequestId,
+	width = panels.left.width,
 	collapsed = false,
 	onToggleCollapsed,
 	onRenameRequestHandled,
@@ -477,7 +479,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({
 			tabIndex={0}
 			onKeyDown={handleRowKeyDown}
 			style={{
-				width: `${panels.left.width}px`,
+				width: `${width}px`,
 				borderRight: `1px solid ${colors.border.subtle}`,
 				backgroundColor: 'rgba(25, 26, 28, 0.92)',
 				display: 'flex',

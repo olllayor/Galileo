@@ -1,6 +1,6 @@
-import { documentSchema, type Document } from './types';
+import { documentSchema, type ComponentDefinition, type ComponentSet, type Document, type Node } from './types';
 
-export const CURRENT_DOCUMENT_VERSION = 6;
+export const CURRENT_DOCUMENT_VERSION = 7;
 
 export type DocumentParseResult =
   | { ok: true; doc: Document; warnings: string[] }
@@ -59,6 +59,10 @@ const migrateDocument = (raw: unknown): DocumentParseResult => {
 			version: CURRENT_DOCUMENT_VERSION,
 			assets: (raw as { assets?: unknown }).assets ?? {},
 			nodes: migratedNodes,
+			components:
+				version < 7
+					? migrateLegacyComponents(migratedNodes)
+					: normalizeComponents((raw as { components?: unknown }).components),
 		} as Document;
 	}
 
@@ -103,7 +107,127 @@ const migrateNode = (rawNode: unknown, version: number): unknown => {
 		}
 	}
 
+	if (version < 7) {
+		node.variant = normalizeVariantMap(node.variant);
+	}
+
 	return node;
+};
+
+const normalizeVariantMap = (value: unknown): Record<string, string> | undefined => {
+	if (!value || typeof value !== 'object') {
+		return undefined;
+	}
+	const entries = Object.entries(value as Record<string, unknown>)
+		.map(([key, raw]) => [key, typeof raw === 'string' ? raw : String(raw)] as const)
+		.filter(([key, raw]) => key.trim().length > 0 && raw.trim().length > 0);
+	if (entries.length === 0) {
+		return undefined;
+	}
+	return Object.fromEntries(entries);
+};
+
+const normalizeNodeForComponentTemplate = (node: Record<string, unknown>): Record<string, unknown> => {
+	return {
+		...node,
+		componentId: undefined,
+		componentOverrides: undefined,
+		componentSourceNodeId: undefined,
+		isComponentMainPreview: undefined,
+		variant: normalizeVariantMap(node.variant),
+	};
+};
+
+type ComponentsLibraryLike = {
+	definitions: Record<string, ComponentDefinition>;
+	sets: Record<string, ComponentSet>;
+};
+
+const normalizeComponents = (raw: unknown): ComponentsLibraryLike => {
+	if (!raw || typeof raw !== 'object') {
+		return { definitions: {}, sets: {} };
+	}
+	const lib = raw as Record<string, unknown>;
+	const definitions =
+		lib.definitions && typeof lib.definitions === 'object' ? (lib.definitions as Record<string, ComponentDefinition>) : {};
+	const sets = lib.sets && typeof lib.sets === 'object' ? (lib.sets as Record<string, ComponentSet>) : {};
+	return { definitions, sets };
+};
+
+const migrateLegacyComponents = (nodes: Record<string, unknown>): ComponentsLibraryLike => {
+	const components: ComponentsLibraryLike = { definitions: {}, sets: {} };
+
+	const collectSubtree = (
+		nodeMap: Record<string, unknown>,
+		rootIds: string[],
+	): { rootChildIds: string[]; templateNodes: Record<string, Node> } => {
+		const result: Record<string, Node> = {};
+		const queue = [...rootIds];
+		while (queue.length > 0) {
+			const id = queue.shift()!;
+			const raw = nodeMap[id];
+			if (!raw || typeof raw !== 'object') continue;
+			const normalized = normalizeNodeForComponentTemplate(raw as Record<string, unknown>) as Node;
+			result[id] = normalized;
+			const children = Array.isArray(normalized.children) ? normalized.children : [];
+			for (const childId of children) {
+				queue.push(childId);
+			}
+		}
+		return { rootChildIds: rootIds, templateNodes: result };
+	};
+
+	for (const rawNode of Object.values(nodes)) {
+		if (!rawNode || typeof rawNode !== 'object') continue;
+		const node = rawNode as Record<string, unknown>;
+		if (node.type !== 'componentInstance') continue;
+		const componentId = typeof node.componentId === 'string' ? node.componentId : null;
+		if (!componentId || components.sets[componentId]) continue;
+		const children = Array.isArray(node.children) ? (node.children as string[]) : [];
+		if (children.length === 0) continue;
+
+		const extracted = collectSubtree(nodes, children);
+		const definitionId = `${componentId}__default`;
+		const rootTemplateId = `${componentId}__template_root`;
+		const variant = normalizeVariantMap(node.variant);
+		const templateRoot: Node = {
+			id: rootTemplateId,
+			type: 'frame',
+			name: typeof node.name === 'string' ? node.name : 'Component',
+			position: { x: 0, y: 0 },
+			size:
+				node.size && typeof node.size === 'object'
+					? (node.size as Node['size'])
+					: { width: 100, height: 100 },
+			children: extracted.rootChildIds,
+			visible: true,
+		};
+		extracted.templateNodes[rootTemplateId] = templateRoot;
+
+		const definition: ComponentDefinition = {
+			id: definitionId,
+			name: typeof node.name === 'string' ? node.name : 'Component',
+			setId: componentId,
+			variant,
+			templateRootId: rootTemplateId,
+			templateNodes: extracted.templateNodes,
+		};
+		components.definitions[definitionId] = definition;
+
+		const properties: Record<string, string[]> = {};
+		for (const [key, value] of Object.entries(variant ?? {})) {
+			properties[key] = [value];
+		}
+		components.sets[componentId] = {
+			id: componentId,
+			name: definition.name,
+			defaultDefinitionId: definitionId,
+			definitionIds: [definitionId],
+			properties,
+		};
+	}
+
+	return components;
 };
 
 const migrateLegacyVectorData = (rawVector: unknown): unknown => {

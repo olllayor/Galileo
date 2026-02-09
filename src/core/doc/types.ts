@@ -312,6 +312,30 @@ export const booleanDataSchema = z.object({
 	tolerance: z.number(),
 });
 
+export const componentVariantMapSchema = z.record(z.string());
+
+export const componentOverridePatchSchema = z
+	.object({
+		text: z.string().optional(),
+		fill: colorSchema.optional(),
+		stroke: strokeSchema.optional(),
+		opacity: z.number().optional(),
+		visible: z.boolean().optional(),
+		image: z
+			.object({
+				src: z.string().optional(),
+				mime: z.string().optional(),
+				originalPath: z.string().optional(),
+				assetId: z.string().optional(),
+				meta: imageMetaSchema.optional(),
+				maskAssetId: z.string().optional(),
+				bgRemoveMeta: imageBgRemoveMetaSchema.optional(),
+				outline: imageOutlineSchema.optional(),
+			})
+			.optional(),
+	})
+	.passthrough();
+
 export type VectorPoint = z.infer<typeof vectorPointSchema>;
 export type VectorSegment = z.infer<typeof vectorSegmentSchema>;
 export type VectorData = z.infer<typeof vectorDataSchema>;
@@ -319,6 +343,21 @@ export type BooleanOp = z.infer<typeof booleanOpSchema>;
 export type BooleanStatus = z.infer<typeof booleanStatusSchema>;
 export type BooleanErrorCode = z.infer<typeof booleanErrorCodeSchema>;
 export type BooleanData = z.infer<typeof booleanDataSchema>;
+export type ComponentVariantMap = z.infer<typeof componentVariantMapSchema>;
+export type ComponentOverridePatch = z.infer<typeof componentOverridePatchSchema>;
+
+const nodeImageSchema = z
+	.object({
+		src: z.string().optional(),
+		mime: z.string().optional(),
+		originalPath: z.string().optional(),
+		assetId: z.string().optional(),
+		meta: imageMetaSchema.optional(),
+		maskAssetId: z.string().optional(),
+		bgRemoveMeta: imageBgRemoveMetaSchema.optional(),
+		outline: imageOutlineSchema.optional(),
+	})
+	.passthrough();
 
 export const nodeSchema = z.object({
 	id: z.string(),
@@ -346,18 +385,7 @@ export const nodeSchema = z.object({
 	letterSpacingPx: z.number().optional(),
 	textResizeMode: textResizeModeSchema.optional(),
 
-	image: z
-		.object({
-			src: z.string().optional(),
-			mime: z.string().optional(),
-			originalPath: z.string().optional(),
-			assetId: z.string().optional(),
-			meta: imageMetaSchema.optional(),
-			maskAssetId: z.string().optional(),
-			bgRemoveMeta: imageBgRemoveMetaSchema.optional(),
-			outline: imageOutlineSchema.optional(),
-		})
-		.optional(),
+	image: nodeImageSchema.optional(),
 
 	path: z
 		.union([
@@ -377,7 +405,10 @@ export const nodeSchema = z.object({
 	booleanData: booleanDataSchema.optional(),
 
 	componentId: z.string().optional(),
-	variant: z.record(z.any()).optional(),
+	variant: componentVariantMapSchema.optional(),
+	componentOverrides: z.record(componentOverridePatchSchema).optional(),
+	componentSourceNodeId: z.string().optional(),
+	isComponentMainPreview: z.boolean().optional(),
 
 	// Device preset metadata for mockup integration
 	devicePresetId: z.string().optional(),
@@ -397,6 +428,33 @@ export const nodeSchema = z.object({
 
 export type Node = z.infer<typeof nodeSchema>;
 
+export const componentDefinitionSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	setId: z.string(),
+	variant: componentVariantMapSchema.optional(),
+	templateRootId: z.string(),
+	templateNodes: z.record(z.string(), nodeSchema),
+	previewNodeId: z.string().optional(),
+});
+
+export const componentSetSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	defaultDefinitionId: z.string(),
+	definitionIds: z.string().array(),
+	properties: z.record(z.string().array()),
+});
+
+export const componentsLibrarySchema = z.object({
+	definitions: z.record(z.string(), componentDefinitionSchema),
+	sets: z.record(z.string(), componentSetSchema),
+});
+
+export type ComponentDefinition = z.infer<typeof componentDefinitionSchema>;
+export type ComponentSet = z.infer<typeof componentSetSchema>;
+export type ComponentsLibrary = z.infer<typeof componentsLibrarySchema>;
+
 export const imageAssetSchema = z.object({
 	type: z.literal('image'),
 	mime: z.string(),
@@ -414,12 +472,13 @@ export const documentSchema = z.object({
 	rootId: z.string(),
 	nodes: z.record(z.string(), nodeSchema),
 	assets: z.record(z.string(), assetSchema),
+	components: componentsLibrarySchema,
 });
 
 export type Document = z.infer<typeof documentSchema>;
 
 export const createDocument = (): Document => ({
-	version: 6,
+	version: 7,
 	rootId: 'root',
 	nodes: {
 		root: {
@@ -433,6 +492,10 @@ export const createDocument = (): Document => ({
 		},
 	},
 	assets: {},
+	components: {
+		definitions: {},
+		sets: {},
+	},
 });
 
 export const validateDocument = (doc: unknown): doc is Document => {

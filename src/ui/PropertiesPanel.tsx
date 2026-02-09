@@ -11,9 +11,11 @@ import {
 	ArrowClockwise,
 } from 'akar-icons';
 import type {
+	ComponentVariantMap,
 	ConstraintAxisX,
 	ConstraintAxisY,
 	Constraints,
+	ComponentOverridePatch,
 	Document,
 	Layout,
 	LayoutGuideType,
@@ -38,6 +40,7 @@ import { FontPickerModal } from './FontPickerModal';
 interface PropertiesPanelProps {
 	selectedNode: Node | null;
 	document: Document;
+	width?: number;
 	collapsed?: boolean;
 	onToggleCollapsed?: () => void;
 	onUpdateNode: (id: string, updates: Partial<Node>) => void;
@@ -60,6 +63,20 @@ interface PropertiesPanelProps {
 	textOverflow?: {
 		isOverflowing: boolean;
 	} | null;
+	componentContext?: {
+		instanceId: string;
+		componentName: string;
+		propertyOptions: Record<string, string[]>;
+		currentVariant: ComponentVariantMap;
+		isNestedSelection: boolean;
+		selectedSourceNodeId?: string | null;
+		selectedOverride?: ComponentOverridePatch;
+		overrideCount: number;
+	} | null;
+	onSetComponentVariant?: (instanceId: string, variant: ComponentVariantMap) => void;
+	onDetachComponentInstance?: (instanceId: string) => void;
+	onResetComponentOverride?: (instanceId: string, sourceNodeId: string) => void;
+	onResetAllComponentOverrides?: (instanceId: string) => void;
 }
 
 const defaultLayout: Layout = {
@@ -141,6 +158,7 @@ type EffectVariableRow = { key: string; value: string };
 export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	selectedNode,
 	document,
+	width = panels.right.width,
 	collapsed = false,
 	onToggleCollapsed,
 	onUpdateNode,
@@ -156,6 +174,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	vectorTarget = null,
 	onToggleVectorClosed,
 	textOverflow = null,
+	componentContext = null,
+	onSetComponentVariant,
+	onDetachComponentInstance,
+	onResetComponentOverride,
+	onResetAllComponentOverrides,
 }) => {
 	const [draggedEffectIndex, setDraggedEffectIndex] = React.useState<number | null>(null);
 	const [fontPickerOpen, setFontPickerOpen] = React.useState(false);
@@ -267,7 +290,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 		return (
 			<div
 				style={{
-					width: `${panels.right.width}px`,
+					width: `${width}px`,
 					padding: spacing.md,
 					backgroundColor: colors.bg.secondary,
 					borderLeft: `1px solid ${colors.border.subtle}`,
@@ -534,7 +557,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	return (
 		<div
 			style={{
-				width: `${panels.right.width}px`,
+				width: `${width}px`,
 				padding: spacing.md,
 				backgroundColor: colors.bg.secondary,
 				borderLeft: `1px solid ${colors.border.subtle}`,
@@ -852,6 +875,137 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						}}
 					>
 						Status: {booleanData.status === 'ok' ? 'Valid' : `Invalid (${booleanData.lastErrorCode ?? 'engine_error'})`}
+					</div>
+				</div>
+			)}
+
+			{componentContext && (
+				<div style={{ marginBottom: spacing.lg }}>
+					<h4
+						style={{
+							margin: `0 0 ${spacing.sm} 0`,
+							fontSize: typography.fontSize.sm,
+							color: colors.text.secondary,
+							fontWeight: typography.fontWeight.medium,
+						}}
+					>
+						Component
+					</h4>
+					<div
+						style={{
+							display: 'grid',
+							gap: spacing.sm,
+							padding: spacing.sm,
+							borderRadius: radii.sm,
+							backgroundColor: colors.bg.tertiary,
+							marginBottom: spacing.sm,
+						}}
+					>
+						<div style={{ fontSize: typography.fontSize.sm, color: colors.text.primary }}>{componentContext.componentName}</div>
+						<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary }}>
+							Overrides: {componentContext.overrideCount}
+						</div>
+						{componentContext.isNestedSelection && (
+							<div style={{ fontSize: typography.fontSize.xs, color: colors.semantic.warning }}>
+								Inspect mode: only override fields are editable in nested layers.
+							</div>
+						)}
+					</div>
+
+					<div style={{ display: 'grid', gap: spacing.sm, marginBottom: spacing.sm }}>
+						{Object.entries(componentContext.propertyOptions).map(([property, options]) => (
+							<div key={property}>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									{property}
+								</label>
+								<select
+									value={componentContext.currentVariant[property] ?? ''}
+									onChange={(event) =>
+										onSetComponentVariant?.(componentContext.instanceId, {
+											...componentContext.currentVariant,
+											[property]: event.target.value,
+										})
+									}
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								>
+									{options.map((option) => (
+										<option key={`${property}-${option}`} value={option}>
+											{option}
+										</option>
+									))}
+								</select>
+							</div>
+						))}
+					</div>
+
+					<div style={{ display: 'flex', gap: spacing.sm }}>
+						{componentContext.selectedSourceNodeId && (
+							<button
+								type="button"
+								onClick={() =>
+									onResetComponentOverride?.(componentContext.instanceId, componentContext.selectedSourceNodeId!)
+								}
+								style={{
+									padding: `${spacing.xs} ${spacing.sm}`,
+									borderRadius: radii.sm,
+									border: `1px solid ${colors.border.default}`,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.secondary,
+									fontSize: typography.fontSize.md,
+									cursor: 'pointer',
+									flex: 1,
+								}}
+							>
+								Reset This Override
+							</button>
+						)}
+						<button
+							type="button"
+							onClick={() => onResetAllComponentOverrides?.(componentContext.instanceId)}
+							style={{
+								padding: `${spacing.xs} ${spacing.sm}`,
+								borderRadius: radii.sm,
+								border: `1px solid ${colors.border.default}`,
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.secondary,
+								fontSize: typography.fontSize.md,
+								cursor: 'pointer',
+								flex: 1,
+							}}
+						>
+							Reset All
+						</button>
+						<button
+							type="button"
+							onClick={() => onDetachComponentInstance?.(componentContext.instanceId)}
+							style={{
+								padding: `${spacing.xs} ${spacing.sm}`,
+								borderRadius: radii.sm,
+								border: `1px solid ${colors.border.default}`,
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.secondary,
+								fontSize: typography.fontSize.md,
+								cursor: 'pointer',
+								flex: 1,
+							}}
+						>
+							Detach
+						</button>
 					</div>
 				</div>
 			)}
