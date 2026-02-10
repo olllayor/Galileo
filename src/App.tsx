@@ -32,6 +32,7 @@ import {
 } from './interaction/tools';
 import {
 	ENABLE_BOOLEAN_V1,
+	ENABLE_FIGMA_INTEROP_V1,
 	ENABLE_TEXT_PARITY_V1,
 	ENABLE_VECTOR_EDIT_V1,
 	buildParentMap,
@@ -138,6 +139,25 @@ import {
 import type { DevicePreset } from './core/framePresets';
 import { iconifyClient } from './integrations/iconify/client';
 import { IconifyClientError } from './integrations/iconify/types';
+import {
+	GALILEO_CLIPBOARD_PREFIX_V2,
+	type ClipboardPayload,
+	type ClipboardPayloadV1,
+} from './interop/clipboard/types';
+import { parseClipboardByPriority } from './interop/clipboard/parse';
+import {
+	buildAssetIdRemapForPaste,
+	buildClipboardPayloadV2,
+	remapNodeAssetIdsForPaste,
+	toClipboardPayloadV2,
+} from './interop/clipboard/paste';
+import { mapSvgToClipboardPayload, rasterizeSvgToDataUrl } from './interop/svg/map-svg-to-galileo';
+import { analyzeSvgComplexity } from './interop/svg/analyze-svg';
+import { mapFigmaPayloadToClipboardPayload } from './interop/figma/map-figma-to-galileo';
+import { importFromFigma, parseFigmaFileKey, parseNodeIds } from './interop/figma/import-figma';
+import { buildDataUrl, parseDataUrl } from './interop/utils/data-url';
+import type { InteropImportReport } from './interop/types';
+import { FigmaImportModal, type FigmaImportFormValues } from './ui/FigmaImportModal';
 
 const clamp = (value: number, min: number, max: number): number => {
 	return Math.min(max, Math.max(min, value));
@@ -155,7 +175,6 @@ const LEGACY_AUTOSAVE_KEY = 'galileo.autosave.v1';
 const UNTITLED_DRAFT_KEY = 'untitled';
 const AUTOSAVE_DELAY_MS = 1500;
 const ZOOM_SENSITIVITY = 0.0035;
-const CLIPBOARD_PREFIX = 'GALILEO_CLIPBOARD_V1:';
 const DEFAULT_CANVAS_SIZE = { width: 1280, height: 800 } as const;
 const DEFAULT_IMAGE_OUTLINE = {
 	color: '#ffffff',
@@ -367,15 +386,6 @@ type TransformSession = {
 	startPointerWorld: { x: number; y: number };
 	startBoundsMap?: WorldBoundsMap;
 	modifiers: { shiftKey: boolean; altKey: boolean };
-};
-
-type ClipboardPayload = {
-	version: 1;
-	rootIds: string[];
-	nodes: Record<string, Node>;
-	bounds: Bounds;
-	rootWorldPositions: Record<string, { x: number; y: number }>;
-	parentId: string | null;
 };
 
 type PanelResizeState = {
@@ -707,21 +717,6 @@ const computeFrameConstraintUpdates = (
 	return updates;
 };
 
-const parseClipboardPayload = (text: string | null): ClipboardPayload | null => {
-	if (!text) return null;
-	if (!text.startsWith(CLIPBOARD_PREFIX)) return null;
-	const raw = text.slice(CLIPBOARD_PREFIX.length);
-	try {
-		const parsed = JSON.parse(raw) as ClipboardPayload;
-		if (!parsed || parsed.version !== 1) return null;
-		if (!Array.isArray(parsed.rootIds) || typeof parsed.nodes !== 'object') return null;
-		return parsed;
-	} catch (error) {
-		console.warn('Failed to parse clipboard payload', error);
-		return null;
-	}
-};
-
 const mergeSnapTargets = (a: SnapTargets, b: SnapTargets): SnapTargets => ({
 	x: [...a.x, ...b.x],
 	y: [...a.y, ...b.y],
@@ -850,18 +845,6 @@ const getMimeType = (path: string): string => {
 		default:
 			return 'application/octet-stream';
 	}
-};
-
-const buildDataUrl = (mime: string, dataBase64: string): string => {
-	return `data:${mime};base64,${dataBase64}`;
-};
-
-const parseDataUrl = (dataUrl: string): { mime: string; dataBase64: string } | null => {
-	const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-	if (!match) {
-		return null;
-	}
-	return { mime: match[1], dataBase64: match[2] };
 };
 
 const getImageSize = (src: string): Promise<{ width: number; height: number }> => {
@@ -1389,6 +1372,15 @@ export const App: React.FC = () => {
 	const [activePlugin, setActivePlugin] = useState<PluginRegistration | null>(null);
 	const [toastMessage, setToastMessage] = useState<string | null>(null);
 	const toastTimerRef = useRef<number | null>(null);
+	const [figmaImportOpen, setFigmaImportOpen] = useState(false);
+	const [figmaImportBusy, setFigmaImportBusy] = useState(false);
+	const [figmaImportError, setFigmaImportError] = useState<string | null>(null);
+	const [figmaImportForm, setFigmaImportForm] = useState<FigmaImportFormValues>({
+		fileOrUrl: '',
+		nodeIds: '',
+		token: '',
+		importToNewPage: true,
+	});
 	const [isRemovingBackground, setIsRemovingBackground] = useState(false);
 	const [leftPanelCollapsed, setLeftPanelCollapsed] = useState<boolean>(() => {
 		const stored = localStorage.getItem('galileo.ui.leftPanelCollapsed');
@@ -1451,6 +1443,19 @@ export const App: React.FC = () => {
 		}, 2400);
 	}, []);
 	const isDev = import.meta.env?.DEV ?? false;
+	const emitInteropImportReport = useCallback(
+		(report: InteropImportReport) => {
+			if (report.source === 'figma-svg' && report.mode === 'raster-fallback') {
+				showToast('Pasted as image (complex Figma SVG). Use Figma Bridge for editable import.');
+			} else {
+				showToast(`Imported ${report.importedLayerCount} layers, ${report.warningCount} warnings.`);
+			}
+			if (isDev) {
+				console.debug('Interop import report', report);
+			}
+		},
+		[isDev, showToast],
+	);
 
 	useEffect(() => {
 		localStorage.setItem(RECENT_COMPONENTS_STORAGE_KEY, JSON.stringify(recentComponentIds.slice(0, 12)));
@@ -2603,7 +2608,7 @@ export const App: React.FC = () => {
 			collect(id);
 		}
 
-		const payload: ClipboardPayload = {
+		const payloadV1: ClipboardPayloadV1 = {
 			version: 1,
 			rootIds: topLevelIds,
 			nodes,
@@ -2611,26 +2616,31 @@ export const App: React.FC = () => {
 			rootWorldPositions,
 			parentId,
 		};
+		const payload = buildClipboardPayloadV2(payloadV1, document.assets, 'galileo');
 
 		clipboardRef.current = payload;
 		clipboardPasteCountRef.current = 0;
 
-		const textPayload = `${CLIPBOARD_PREFIX}${JSON.stringify(payload)}`;
+		const textPayload = `${GALILEO_CLIPBOARD_PREFIX_V2}${JSON.stringify(payload)}`;
 		if (navigator.clipboard?.writeText) {
 			void navigator.clipboard.writeText(textPayload).catch(() => {
 				// Ignore clipboard permission errors; internal clipboard still works.
 			});
 		}
-	}, [selectionIds, documentParentMap, document]);
+		}, [selectionIds, documentParentMap, document]);
 
 	const pasteClipboardPayload = useCallback(
-		(payload: ClipboardPayload) => {
-			if (!payload.rootIds.length) return;
+		(payload: ClipboardPayload, options?: { targetParentId?: string }) => {
+			const normalizedPayload = toClipboardPayloadV2(payload);
+			if (!normalizedPayload.rootIds.length) return;
 
-			const targetParentId =
-				payload.parentId && document.nodes[payload.parentId] && activePageNodeIds.has(payload.parentId)
-					? payload.parentId
-					: activePageRootId;
+				const targetParentId = options?.targetParentId
+					? options.targetParentId
+					: normalizedPayload.parentId &&
+						document.nodes[normalizedPayload.parentId] &&
+						activePageNodeIds.has(normalizedPayload.parentId)
+						? normalizedPayload.parentId
+						: activePageRootId;
 			const docBoundsMap = buildWorldBoundsMap(document);
 			const parentBounds = docBoundsMap[targetParentId];
 			const parentWorld = {
@@ -2641,11 +2651,11 @@ export const App: React.FC = () => {
 			const pasteOffset = (clipboardPasteCountRef.current + 1) * 24;
 			const anchor = getDefaultInsertPosition();
 			const deltaWorld =
-				payload.parentId && payload.parentId === targetParentId
+				normalizedPayload.parentId && normalizedPayload.parentId === targetParentId
 					? { x: pasteOffset, y: pasteOffset }
 					: {
-							x: anchor.x - payload.bounds.x + pasteOffset,
-							y: anchor.y - payload.bounds.y + pasteOffset,
+							x: anchor.x - normalizedPayload.bounds.x + pasteOffset,
+							y: anchor.y - normalizedPayload.bounds.y + pasteOffset,
 						};
 
 			const idMap = new Map<string, string>();
@@ -2653,6 +2663,21 @@ export const App: React.FC = () => {
 			const newRootIds: string[] = [];
 			const parent = document.nodes[targetParentId];
 			const baseIndex = parent?.children?.length ?? 0;
+			const { assetIdMap, assetsToCreate } = buildAssetIdRemapForPaste(normalizedPayload, document.assets, generateId);
+
+			for (const assetEntry of assetsToCreate) {
+				commands.push({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Paste image asset',
+					type: 'createAsset',
+					payload: {
+						id: assetEntry.id,
+						asset: assetEntry.asset,
+					},
+				} as Command);
+			}
 
 			const ensureId = (oldId: string) => {
 				const existing = idMap.get(oldId);
@@ -2662,21 +2687,22 @@ export const App: React.FC = () => {
 				return nextId;
 			};
 
-				const cloneNode = (oldId: string, parentId: string, isRoot: boolean, index?: number) => {
-					const node = payload.nodes[oldId];
-					if (!node) return;
-					const newId = ensureId(oldId);
-					const { children } = node;
-					const rest = Object.fromEntries(
-						Object.entries(node).filter(([key]) => key !== 'id' && key !== 'children'),
-					) as Omit<Node, 'id' | 'children'>;
-					const baseWorld = payload.rootWorldPositions[oldId] || { x: node.position.x, y: node.position.y };
+			const cloneNode = (oldId: string, parentId: string, isRoot: boolean, index?: number) => {
+				const node = normalizedPayload.nodes[oldId];
+				if (!node) return;
+				const remappedNode = remapNodeAssetIdsForPaste(node, assetIdMap);
+				const newId = ensureId(oldId);
+				const { children } = remappedNode;
+				const rest = Object.fromEntries(
+					Object.entries(remappedNode).filter(([key]) => key !== 'id' && key !== 'children'),
+				) as Omit<Node, 'id' | 'children'>;
+				const baseWorld = normalizedPayload.rootWorldPositions[oldId] || { x: node.position.x, y: node.position.y };
 				const position = isRoot
 					? {
 							x: baseWorld.x + deltaWorld.x - parentWorld.x,
 							y: baseWorld.y + deltaWorld.y - parentWorld.y,
 						}
-					: { ...node.position };
+					: { ...remappedNode.position };
 				commands.push({
 					id: generateId(),
 					timestamp: Date.now(),
@@ -2690,7 +2716,7 @@ export const App: React.FC = () => {
 						node: {
 							...(rest as Omit<Node, 'id' | 'children'>),
 							position,
-							size: { ...node.size },
+							size: { ...remappedNode.size },
 						},
 					},
 				} as Command);
@@ -2704,7 +2730,7 @@ export const App: React.FC = () => {
 				}
 			};
 
-			payload.rootIds.forEach((rootId, index) => cloneNode(rootId, targetParentId, true, baseIndex + index));
+			normalizedPayload.rootIds.forEach((rootId, index) => cloneNode(rootId, targetParentId, true, baseIndex + index));
 
 			if (commands.length === 0) return;
 			if (commands.length === 1) {
@@ -7811,6 +7837,87 @@ export const App: React.FC = () => {
 		}
 	}, [insertImageNode]);
 
+	const handleOpenFigmaImport = useCallback(() => {
+		setFigmaImportError(null);
+		setFigmaImportOpen(true);
+	}, []);
+
+	const handleSubmitFigmaImport = useCallback(async () => {
+		if (!ENABLE_FIGMA_INTEROP_V1) return;
+		const fileKey = parseFigmaFileKey(figmaImportForm.fileOrUrl);
+		if (!fileKey) {
+			setFigmaImportError('Provide a valid Figma file URL or file key.');
+			return;
+		}
+		if (!figmaImportForm.token.trim()) {
+			setFigmaImportError('Provide a Figma personal access token.');
+			return;
+		}
+
+		setFigmaImportBusy(true);
+		setFigmaImportError(null);
+		try {
+			const mapped = await importFromFigma({
+				fileKey,
+				token: figmaImportForm.token.trim(),
+				nodeIds: parseNodeIds(figmaImportForm.nodeIds),
+				generateId,
+			});
+
+			if (!mapped.payload) {
+				const message = mapped.result.warnings[0]?.message ?? 'No importable layers were found.';
+				setFigmaImportError(message);
+				return;
+			}
+
+			if (figmaImportForm.importToNewPage) {
+				const pageId = generateId();
+				const rootId = generateId();
+				const nextPageName = mapped.result.pageName?.trim() || `Figma ${document.pages.length + 1}`;
+				executeCommand({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Import from Figma',
+					type: 'createPage',
+					payload: {
+						pageId,
+						name: nextPageName,
+						rootId,
+						index: document.pages.length,
+						activate: true,
+						rootNode: {
+							type: 'frame',
+							name: 'Canvas',
+							position: { x: 0, y: 0 },
+							size: { width: 1280, height: 800 },
+							children: [],
+							visible: true,
+						},
+					},
+				} as Command);
+				pasteClipboardPayload(mapped.payload, { targetParentId: rootId });
+				setActivePageId(pageId);
+			} else {
+				pasteClipboardPayload(mapped.payload);
+			}
+
+			emitInteropImportReport({
+				source: 'figma-pat',
+				mode: 'editable',
+				reasons: mapped.result.warnings.map((warning) => warning.message),
+				warningCount: mapped.result.warnings.length,
+				importedLayerCount: mapped.result.importedLayerCount,
+			});
+			setFigmaImportOpen(false);
+		} catch (error) {
+			console.error('Figma import failed', error);
+			setFigmaImportError(error instanceof Error ? error.message : 'Failed to import from Figma.');
+		} finally {
+			setFigmaImportBusy(false);
+		}
+	}, [document.pages.length, emitInteropImportReport, executeCommand, figmaImportForm, pasteClipboardPayload]);
+
 	const handleCreateDeviceFrame = useCallback(
 		(preset: DevicePreset) => {
 			const newId = generateId();
@@ -7915,12 +8022,97 @@ export const App: React.FC = () => {
 			if (!clipboardData) return;
 			if (isEditableTarget(event.target)) return;
 
-			const customText =
-				clipboardData.getData('application/x-galileo') || clipboardData.getData('text/plain');
-			const payload = parseClipboardPayload(customText);
-			if (payload) {
+			const parsedClipboard = parseClipboardByPriority(clipboardData);
+			if (parsedClipboard?.kind === 'galileo') {
 				event.preventDefault();
-				pasteClipboardPayload(payload);
+				pasteClipboardPayload(parsedClipboard.payload);
+				return;
+			}
+			if (ENABLE_FIGMA_INTEROP_V1 && parsedClipboard?.kind === 'figma') {
+				event.preventDefault();
+				void (async () => {
+					try {
+						const figmaPayload =
+							parsedClipboard.payload.version === 2
+								? {
+										selection: parsedClipboard.payload.selection,
+										metadata: parsedClipboard.payload.metadata,
+										exportVersion: parsedClipboard.payload.exportVersion,
+									}
+								: parsedClipboard.payload.payload;
+						const mapped = mapFigmaPayloadToClipboardPayload(figmaPayload, {
+							generateId,
+							name: 'Figma Paste',
+						});
+						if (mapped.payload) {
+							pasteClipboardPayload(mapped.payload);
+						}
+						if (mapped.result.warnings.length > 0 || mapped.result.importedLayerCount > 0) {
+							emitInteropImportReport({
+								source: 'figma-plugin',
+								mode: 'editable',
+								reasons: mapped.result.warnings.map((warning) => warning.message),
+								warningCount: mapped.result.warnings.length,
+								importedLayerCount: mapped.result.importedLayerCount,
+							});
+						}
+					} catch (error) {
+						console.error('Figma clipboard paste error:', error);
+						showToast('Failed to paste Figma payload.');
+					}
+				})();
+				return;
+			}
+			if (ENABLE_FIGMA_INTEROP_V1 && parsedClipboard?.kind === 'svg') {
+				event.preventDefault();
+				void (async () => {
+					try {
+						const complexity = analyzeSvgComplexity(parsedClipboard.svgText);
+						if (complexity.isComplex) {
+							const rasterized = await rasterizeSvgToDataUrl(parsedClipboard.svgText);
+							await insertImageNode({
+								src: rasterized,
+								mime: 'image/png',
+								name: 'Figma SVG',
+							});
+							emitInteropImportReport({
+								source: 'figma-svg',
+								mode: 'raster-fallback',
+								reasons: complexity.reasons,
+								warningCount: 0,
+								importedLayerCount: 0,
+							});
+							return;
+						}
+
+						const mapped = mapSvgToClipboardPayload(parsedClipboard.svgText, {
+							generateId,
+							name: 'SVG Paste',
+						});
+						if (mapped.payload) {
+							pasteClipboardPayload(mapped.payload);
+						} else if (mapped.fallbackRasterize) {
+							const rasterized = await rasterizeSvgToDataUrl(parsedClipboard.svgText);
+							await insertImageNode({
+								src: rasterized,
+								mime: 'image/png',
+								name: 'Figma SVG',
+							});
+						}
+						if (mapped.warnings.length > 0 || mapped.importedLayerCount > 0) {
+							emitInteropImportReport({
+								source: 'figma-svg',
+								mode: mapped.fallbackRasterize ? 'raster-fallback' : 'editable',
+								reasons: mapped.warnings.map((warning) => warning.message),
+								warningCount: mapped.warnings.length,
+								importedLayerCount: mapped.importedLayerCount,
+							});
+						}
+					} catch (error) {
+						console.error('SVG clipboard paste error:', error);
+						showToast('Failed to paste SVG payload.');
+					}
+				})();
 				return;
 			}
 
@@ -8008,7 +8200,7 @@ export const App: React.FC = () => {
 
 		window.addEventListener('paste', handlePaste);
 		return () => window.removeEventListener('paste', handlePaste);
-	}, [appView, insertImageNode, pasteClipboardPayload]);
+	}, [appView, emitInteropImportReport, insertImageNode, pasteClipboardPayload, showToast]);
 
 	useEffect(() => {
 		if (appView !== 'editor') return;
@@ -8503,6 +8695,12 @@ export const App: React.FC = () => {
 					handleLoad();
 				}
 
+				if (ENABLE_FIGMA_INTEROP_V1 && isCmd && e.shiftKey && key === 'i') {
+					e.preventDefault();
+					handleOpenFigmaImport();
+					return;
+				}
+
 				if (isCmd && key === 'i') {
 					e.preventDefault();
 					handleImportImage();
@@ -8528,6 +8726,12 @@ export const App: React.FC = () => {
 			if (isCmd && key === 'o') {
 				e.preventDefault();
 				handleLoad();
+			}
+
+			if (ENABLE_FIGMA_INTEROP_V1 && isCmd && e.shiftKey && key === 'i') {
+				e.preventDefault();
+				handleOpenFigmaImport();
+				return;
 			}
 
 			if (isCmd && key === 'i') {
@@ -8574,6 +8778,7 @@ export const App: React.FC = () => {
 		handleOpenFile,
 		handleSave,
 		handleLoad,
+		handleOpenFigmaImport,
 		handleImportImage,
 		executeCommand,
 		copySelectionToClipboard,
@@ -8664,6 +8869,16 @@ export const App: React.FC = () => {
 				shortcut: 'Cmd+W',
 				action: handleBackToProjects,
 			});
+			if (ENABLE_FIGMA_INTEROP_V1) {
+				items.push({
+					id: 'command-import-figma',
+					label: 'Import From Figma (PAT)',
+					description: 'For editable fidelity via paste, use Figma Bridge plugin first.',
+					section: 'Commands',
+					shortcut: 'Cmd+Shift+I',
+					action: handleOpenFigmaImport,
+				});
+			}
 		}
 
 		if (appView === 'editor' && currentPath) {
@@ -8699,6 +8914,7 @@ export const App: React.FC = () => {
 		fileName,
 		handleBackToProjects,
 		handleCreateProject,
+		handleOpenFigmaImport,
 		handleOpenFile,
 		handleOpenProject,
 		missingPaths,
@@ -9025,6 +9241,7 @@ export const App: React.FC = () => {
 								onSave={handleSave}
 								onLoad={handleLoad}
 								onImport={handleImportImage}
+								onImportFigma={ENABLE_FIGMA_INTEROP_V1 ? handleOpenFigmaImport : undefined}
 								onCreateDeviceFrame={handleCreateDeviceFrame}
 							/>
 						</div>
@@ -9150,6 +9367,18 @@ export const App: React.FC = () => {
 					onLoadDev={handleLoadDevPlugin}
 					onRemove={handleRemovePlugin}
 					showDev={isDev}
+				/>
+			)}
+
+			{ENABLE_FIGMA_INTEROP_V1 && (
+				<FigmaImportModal
+					open={figmaImportOpen}
+					values={figmaImportForm}
+					onChange={setFigmaImportForm}
+					onClose={() => setFigmaImportOpen(false)}
+					onSubmit={handleSubmitFigmaImport}
+					isImporting={figmaImportBusy}
+					errorMessage={figmaImportError}
 				/>
 			)}
 

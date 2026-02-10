@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      body { font-family: Inter, system-ui, sans-serif; margin: 0; padding: 16px; background: #101218; color: #f5f7fb; }
+      button { border: 0; border-radius: 8px; padding: 10px 12px; background: #4f7cff; color: #fff; cursor: pointer; font-weight: 600; }
+      textarea { width: 100%; min-height: 140px; margin-top: 12px; border-radius: 8px; border: 1px solid #2f3442; background: #141826; color: #cfd7f6; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      .hint { margin-top: 8px; color: #9ea8c7; font-size: 12px; }
+      .error { color: #ff8d8d; margin-top: 10px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <button id="generate">Generate Galileo Payload</button>
+    <textarea id="payload" placeholder="Payload will appear here"></textarea>
+    <div class="hint">If clipboard write is blocked, copy from this field and paste in Galileo.</div>
+    <div class="error" id="error"></div>
+    <script>
+      const payloadEl = document.getElementById('payload');
+      const errorEl = document.getElementById('error');
+      document.getElementById('generate').addEventListener('click', () => {
+        errorEl.textContent = '';
+        parent.postMessage({ pluginMessage: { type: 'generate' } }, '*');
+      });
+
+      onmessage = async (event) => {
+        const msg = event.data.pluginMessage;
+        if (!msg) return;
+        if (msg.type === 'payload') {
+          payloadEl.value = msg.text;
+          try {
+            await navigator.clipboard.writeText(msg.text);
+          } catch {
+            // Manual copy fallback.
+          }
+        }
+        if (msg.type === 'error') {
+          errorEl.textContent = msg.message;
+        }
+      };
+    </script>
+  </body>
+</html>

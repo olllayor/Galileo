@@ -16,6 +16,7 @@ use std::os::raw::c_char;
 
 mod background_remove;
 mod draft_store;
+mod figma;
 mod unsplash;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -400,6 +401,10 @@ fn main() {
             unsplash::unsplash_get_photo,
             unsplash::unsplash_track_download,
             unsplash::unsplash_fetch_image,
+            figma::figma_fetch_file,
+            figma::figma_fetch_nodes,
+            figma::figma_fetch_images,
+            figma::figma_fetch_local_variables,
         ])
         .setup(|_app| {
             log_env_diagnostics();

@@ -1,0 +1,8 @@
+{
+  "name": "Galileo Figma Bridge",
+  "id": "com.galileo.figma-bridge",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": ["figma"],
+  "ui": "ui.html"
+}

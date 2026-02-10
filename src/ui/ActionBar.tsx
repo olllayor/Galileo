@@ -11,6 +11,7 @@ interface ActionBarProps {
 	onSave?: () => void;
 	onLoad?: () => void;
 	onImport?: () => void;
+	onImportFigma?: () => void;
 	onCreateDeviceFrame?: (preset: DevicePreset) => void;
 }
 
@@ -20,6 +21,7 @@ export const ActionBar: React.FC<ActionBarProps> = ({
 	onSave,
 	onLoad,
 	onImport,
+	onImportFigma,
 	onCreateDeviceFrame,
 }) => {
 	const [devicePickerOpen, setDevicePickerOpen] = useState(false);
@@ -394,6 +396,23 @@ export const ActionBar: React.FC<ActionBarProps> = ({
 			>
 				<Image strokeWidth={2} size={actionIconSize} />
 			</button>
+
+			{onImportFigma && (
+				<button
+					type="button"
+					onClick={onImportFigma}
+					title="Import from Figma (⌘⇧I)"
+					style={{
+						...actionButtonBaseStyle,
+						backgroundColor: 'transparent',
+						color: 'rgba(255, 255, 255, 0.6)',
+						fontWeight: 700,
+						fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
+					}}
+				>
+					F
+				</button>
+			)}
 		</div>
 	);
 };
