@@ -1,20 +1,26 @@
 import {
+	createEmptyPrototypeGraph,
+	createEmptyPrototypePageGraph,
 	documentSchema,
 	effectStyleSchema,
 	gridStyleSchema,
 	paintStyleSchema,
+	prototypeTransitionSchema,
 	textStyleSchema,
 	type ComponentDefinition,
 	type ComponentSet,
 	type Document,
 	type Node,
+	type PrototypeGraph,
+	type PrototypeInteraction,
+	type PrototypePageGraph,
 	type StyleLibrary,
 	type StyleVariableCollection,
 	type StyleVariableLibrary,
 	type StyleVariableToken,
 } from './types';
 
-export const CURRENT_DOCUMENT_VERSION = 9;
+export const CURRENT_DOCUMENT_VERSION = 10;
 
 export type DocumentParseResult =
   | { ok: true; doc: Document; warnings: string[] }
@@ -115,6 +121,7 @@ const migrateDocument = (raw: unknown): DocumentParseResult => {
 	}
 
 	migrated = normalizePages(migrated, warnings);
+	migrated = normalizePrototypeGraph(migrated, warnings);
 
   const parsed = documentSchema.safeParse(migrated);
   if (!parsed.success) {
@@ -185,6 +192,101 @@ const normalizePages = (doc: Document, warnings: string[]): Document => {
 		rootId: normalizedRootId,
 		pages: safePages,
 		activePageId,
+	};
+};
+
+const normalizePrototypeInteraction = (
+	value: unknown,
+	pageFrameIds: Set<string>,
+): PrototypeInteraction | null => {
+	if (!value || typeof value !== 'object') return null;
+	const entry = value as Record<string, unknown>;
+	if (typeof entry.targetFrameId !== 'string') return null;
+	if (!pageFrameIds.has(entry.targetFrameId)) return null;
+	const transitionParse = prototypeTransitionSchema.safeParse(entry.transition);
+	if (!transitionParse.success) return null;
+	return {
+		targetFrameId: entry.targetFrameId,
+		transition: transitionParse.data,
+	};
+};
+
+const normalizePrototypePageGraph = (
+	value: unknown,
+	pageRootId: string,
+	pageFrameIds: Set<string>,
+): PrototypePageGraph => {
+	const fallback = createEmptyPrototypePageGraph();
+	if (!value || typeof value !== 'object') return fallback;
+	const raw = value as Record<string, unknown>;
+	const startFrameId = typeof raw.startFrameId === 'string' && pageFrameIds.has(raw.startFrameId) ? raw.startFrameId : undefined;
+	const rawInteractions =
+		raw.interactionsBySource && typeof raw.interactionsBySource === 'object'
+			? (raw.interactionsBySource as Record<string, unknown>)
+			: {};
+	const interactionsBySource: PrototypePageGraph['interactionsBySource'] = {};
+
+	for (const [sourceFrameId, sourceValue] of Object.entries(rawInteractions)) {
+		if (!pageFrameIds.has(sourceFrameId) || sourceFrameId === pageRootId) continue;
+		if (!sourceValue || typeof sourceValue !== 'object') continue;
+		const source = sourceValue as Record<string, unknown>;
+		const click = normalizePrototypeInteraction(source.click, pageFrameIds);
+		const hover = normalizePrototypeInteraction(source.hover, pageFrameIds);
+		if (!click && !hover) continue;
+		interactionsBySource[sourceFrameId] = {
+			...(click ? { click } : {}),
+			...(hover ? { hover } : {}),
+		};
+	}
+
+	return {
+		...(startFrameId ? { startFrameId } : {}),
+		interactionsBySource,
+	};
+};
+
+const normalizePrototypeGraph = (doc: Document, warnings: string[]): Document => {
+	const pageIds = doc.pages.map((page) => page.id);
+	const fallback = createEmptyPrototypeGraph(pageIds);
+	const rawPrototype = (doc as { prototype?: unknown }).prototype;
+	if (!rawPrototype || typeof rawPrototype !== 'object') {
+		warnings.push('Prototype graph was missing and has been initialized');
+		return {
+			...doc,
+			prototype: fallback,
+		};
+	}
+
+	const rawPages =
+		(rawPrototype as { pages?: unknown }).pages && typeof (rawPrototype as { pages?: unknown }).pages === 'object'
+			? ((rawPrototype as { pages: Record<string, unknown> }).pages ?? {})
+			: {};
+
+	const normalizedPages: PrototypeGraph['pages'] = {};
+	for (const page of doc.pages) {
+		const pageFrameIds = new Set<string>();
+		const queue = [page.rootId];
+		while (queue.length > 0) {
+			const nextId = queue.shift();
+			if (!nextId || pageFrameIds.has(nextId)) continue;
+			const node = doc.nodes[nextId];
+			if (!node) continue;
+			if (node.type === 'frame') {
+				pageFrameIds.add(nextId);
+			}
+			for (const childId of node.children ?? []) {
+				queue.push(childId);
+			}
+		}
+
+		normalizedPages[page.id] = normalizePrototypePageGraph(rawPages[page.id], page.rootId, pageFrameIds);
+	}
+
+	return {
+		...doc,
+		prototype: {
+			pages: normalizedPages,
+		},
 	};
 };
 

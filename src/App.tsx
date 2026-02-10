@@ -12,6 +12,9 @@ import { ProjectsScreen } from './ui/ProjectsScreen';
 import { ProjectHandle } from './ui/ProjectHandle';
 import { ProjectTabs } from './ui/ProjectTabs';
 import { CommandPalette, type CommandPaletteItem } from './ui/CommandPalette';
+import { PrototypePanel } from './ui/PrototypePanel';
+import { PrototypeLinksOverlay } from './ui/PrototypeLinksOverlay';
+import { PrototypePlayer } from './ui/PrototypePlayer';
 import { panels } from './ui/design-system';
 import { useDocument } from './hooks/useDocument';
 import {
@@ -75,6 +78,7 @@ import type {
 	StyleVariableCollection,
 	StyleVariableToken,
 	TextStyle,
+	PrototypeInteraction,
 	VectorPoint,
 } from './core/doc/types';
 import type { Command, SharedStyleKind } from './core/commands/types';
@@ -1341,6 +1345,8 @@ export const App: React.FC = () => {
 	const [activeProjectId, setActiveProjectId] = useState<string | null>(() => getLastOpenProjectId());
 	const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 	const [missingPaths, setMissingPaths] = useState<Record<string, boolean>>({});
+	const [editorMode, setEditorMode] = useState<'design' | 'prototype'>('design');
+	const [prototypePlayerStartFrameId, setPrototypePlayerStartFrameId] = useState<string | null>(null);
 
 	const [activeTool, setActiveTool] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen'>('select');
 	const [penSession, setPenSession] = useState<PenSession | null>(null);
@@ -1770,6 +1776,39 @@ export const App: React.FC = () => {
 		() => getSelectionBounds(displayDocument, selectionIds, boundsMap),
 		[displayDocument, selectionIds, boundsMap],
 	);
+	const activePagePrototype = useMemo(
+		() => document.prototype.pages[activePageId] ?? { interactionsBySource: {} },
+		[document.prototype.pages, activePageId],
+	);
+	const prototypeFrameOptions = useMemo(() => {
+		const pageRoot = document.nodes[activePageRootId];
+		if (!pageRoot?.children || pageRoot.children.length === 0) return [] as Array<{ id: string; name: string }>;
+		return pageRoot.children
+			.map((childId) => document.nodes[childId])
+			.filter((node): node is Node => Boolean(node && node.type === 'frame'))
+			.map((node, index) => ({
+				id: node.id,
+				name: node.name?.trim() ? node.name : `Frame ${index + 1}`,
+			}));
+	}, [document.nodes, activePageRootId]);
+	const prototypeFrameIdSet = useMemo(() => new Set(prototypeFrameOptions.map((frame) => frame.id)), [prototypeFrameOptions]);
+	const selectedPrototypeFrameId = useMemo(() => {
+		if (selectionIds.length !== 1) return null;
+		const id = selectionIds[0];
+		return prototypeFrameIdSet.has(id) ? id : null;
+	}, [selectionIds, prototypeFrameIdSet]);
+	useEffect(() => {
+		if (!prototypePlayerStartFrameId) return;
+		const node = document.nodes[prototypePlayerStartFrameId];
+		if (!node || node.type !== 'frame' || !prototypeFrameIdSet.has(prototypePlayerStartFrameId)) {
+			setPrototypePlayerStartFrameId(null);
+		}
+	}, [document.nodes, prototypeFrameIdSet, prototypePlayerStartFrameId]);
+	useEffect(() => {
+		if (appView !== 'editor' && prototypePlayerStartFrameId) {
+			setPrototypePlayerStartFrameId(null);
+		}
+	}, [appView, prototypePlayerStartFrameId]);
 	const selectionComponentInstanceRootId = useMemo(() => {
 		if (selectionIds.length !== 1) return null;
 		const selectedId = selectionIds[0];
@@ -6627,6 +6666,69 @@ export const App: React.FC = () => {
 		[activePageId, document.pages, executeCommand, switchToPage],
 	);
 
+	const setPrototypeStartFrame = useCallback(
+		(pageId: string, frameId?: string) => {
+			if (frameId && !prototypeFrameIdSet.has(frameId)) {
+				showToast('Start frame must be a top-level frame on the current page.');
+				return;
+			}
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: frameId ? 'Set prototype start frame' : 'Clear prototype start frame',
+				type: 'setPrototypeStartFrame',
+				payload: { pageId, frameId },
+			} as Command);
+		},
+		[executeCommand, prototypeFrameIdSet, showToast],
+	);
+
+	const setPrototypeInteraction = useCallback(
+		(
+			pageId: string,
+			sourceFrameId: string,
+			trigger: 'click' | 'hover',
+			interaction?: PrototypeInteraction,
+		) => {
+			if (!prototypeFrameIdSet.has(sourceFrameId)) {
+				showToast('Interaction source must be a top-level frame on the current page.');
+				return;
+			}
+			if (interaction && !prototypeFrameIdSet.has(interaction.targetFrameId)) {
+				showToast('Interaction destination must be a top-level frame on the current page.');
+				return;
+			}
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: interaction ? 'Set prototype interaction' : 'Remove prototype interaction',
+				type: 'setPrototypeInteraction',
+				payload: {
+					pageId,
+					sourceFrameId,
+					trigger,
+					interaction,
+				},
+			} as Command);
+		},
+		[executeCommand, prototypeFrameIdSet, showToast],
+	);
+
+	const launchPrototypePreview = useCallback(() => {
+		const selectedStart =
+			selectedPrototypeFrameId && prototypeFrameIdSet.has(selectedPrototypeFrameId) ? selectedPrototypeFrameId : null;
+		const firstVisibleFrameId =
+			prototypeFrameOptions.find((frame) => document.nodes[frame.id]?.visible !== false)?.id ?? null;
+		const startFrameId = selectedStart ?? firstVisibleFrameId;
+		if (!startFrameId) {
+			showToast('Create at least one visible top-level frame to preview.');
+			return;
+		}
+		setPrototypePlayerStartFrameId(startFrameId);
+	}, [document.nodes, prototypeFrameIdSet, prototypeFrameOptions, selectedPrototypeFrameId, showToast]);
+
 	const recordRecentComponentId = useCallback((componentId: string) => {
 		setRecentComponentIds((prev) => [componentId, ...prev.filter((id) => id !== componentId)].slice(0, 12));
 	}, []);
@@ -8678,7 +8780,12 @@ export const App: React.FC = () => {
 								onDuplicate={handleDuplicateCurrentProject}
 							/>
 						</div>
-						<ProjectTabs fileName={fileName} isDirty={isDirty} />
+						<ProjectTabs
+							fileName={fileName}
+							isDirty={isDirty}
+							editorMode={editorMode}
+							onEditorModeChange={setEditorMode}
+						/>
 					</div>
 					<div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 						<LeftSidebar
@@ -8799,6 +8906,17 @@ export const App: React.FC = () => {
 								onWheel={handleCanvasWheel}
 								onContextMenu={handleCanvasContextMenu}
 							/>
+
+							{editorMode === 'prototype' && (
+								<PrototypeLinksOverlay
+									width={canvasSize.width}
+									height={canvasSize.height}
+									view={view}
+									pagePrototype={activePagePrototype}
+									boundsMap={boundsMap}
+									frames={prototypeFrameOptions}
+								/>
+							)}
 
 							{ENABLE_TEXT_PARITY_V1 &&
 								textEditSession &&
@@ -8953,45 +9071,61 @@ export const App: React.FC = () => {
 							</div>
 						)}
 
-						<PropertiesPanel
-							selectedNode={selectedNode}
-							document={document}
-							styles={document.styles}
-							width={rightPanelWidth}
-							collapsed={rightPanelCollapsed}
-							isResizing={panelResizeState !== null}
-							onToggleCollapsed={toggleRightPanel}
-							onUpdateNode={handleUpdateNode}
-							onOpenPlugin={handleOpenPlugin}
-							onRemoveBackground={removeBackgroundForImage}
-							onClearBackground={clearBackgroundRemoval}
-							onUpdateImageOutline={updateImageOutline}
-							isRemovingBackground={isRemovingBackground}
-							zoom={zoom}
-							onCopyEffects={(nodeId) => copyEffects(nodeId)}
-							onPasteEffects={(nodeId) => pasteEffects([nodeId])}
-							canPasteEffects={Boolean(effectsClipboardRef.current?.length)}
-							textOverflow={selectedTextOverflow}
-							componentContext={componentPanelContext}
-							onSetComponentVariant={setComponentInstanceVariant}
-							onDetachComponentInstance={detachComponentInstance}
-							onResetComponentOverride={(instanceId, sourceNodeId) =>
-								setComponentInstanceOverride(instanceId, sourceNodeId, undefined, true)
-							}
-							onResetAllComponentOverrides={resetAllComponentOverrides}
-							onCreateSharedStyleFromNode={createSharedStyleFromNode}
-							vectorTarget={
-								editablePathNode?.type === 'path'
-									? {
-											pathId: editablePathNode.id,
-											closed: editablePathNode.vector?.closed ?? false,
-											pointCount: editablePathPointCount,
-											selectedPointId: vectorEditSession?.selectedPointId ?? null,
-										}
-									: null
-							}
-							onToggleVectorClosed={toggleVectorClosed}
-						/>
+						{editorMode === 'prototype' ? (
+							<PrototypePanel
+								pageId={activePageId}
+								width={rightPanelWidth}
+								collapsed={rightPanelCollapsed}
+								isResizing={panelResizeState !== null}
+								onToggleCollapsed={toggleRightPanel}
+								frames={prototypeFrameOptions}
+								selectedFrameId={selectedPrototypeFrameId}
+								pagePrototype={activePagePrototype}
+								onSetStartFrame={setPrototypeStartFrame}
+								onSetInteraction={setPrototypeInteraction}
+								onLaunchPreview={launchPrototypePreview}
+							/>
+						) : (
+							<PropertiesPanel
+								selectedNode={selectedNode}
+								document={document}
+								styles={document.styles}
+								width={rightPanelWidth}
+								collapsed={rightPanelCollapsed}
+								isResizing={panelResizeState !== null}
+								onToggleCollapsed={toggleRightPanel}
+								onUpdateNode={handleUpdateNode}
+								onOpenPlugin={handleOpenPlugin}
+								onRemoveBackground={removeBackgroundForImage}
+								onClearBackground={clearBackgroundRemoval}
+								onUpdateImageOutline={updateImageOutline}
+								isRemovingBackground={isRemovingBackground}
+								zoom={zoom}
+								onCopyEffects={(nodeId) => copyEffects(nodeId)}
+								onPasteEffects={(nodeId) => pasteEffects([nodeId])}
+								canPasteEffects={Boolean(effectsClipboardRef.current?.length)}
+								textOverflow={selectedTextOverflow}
+								componentContext={componentPanelContext}
+								onSetComponentVariant={setComponentInstanceVariant}
+								onDetachComponentInstance={detachComponentInstance}
+								onResetComponentOverride={(instanceId, sourceNodeId) =>
+									setComponentInstanceOverride(instanceId, sourceNodeId, undefined, true)
+								}
+								onResetAllComponentOverrides={resetAllComponentOverrides}
+								onCreateSharedStyleFromNode={createSharedStyleFromNode}
+								vectorTarget={
+									editablePathNode?.type === 'path'
+										? {
+												pathId: editablePathNode.id,
+												closed: editablePathNode.vector?.closed ?? false,
+												pointCount: editablePathPointCount,
+												selectedPointId: vectorEditSession?.selectedPointId ?? null,
+											}
+										: null
+								}
+								onToggleVectorClosed={toggleVectorClosed}
+							/>
+						)}
 					</div>
 				</>
 			)}
@@ -9024,6 +9158,15 @@ export const App: React.FC = () => {
 				items={commandItems}
 				onClose={() => setCommandPaletteOpen(false)}
 			/>
+
+			{prototypePlayerStartFrameId && (
+				<PrototypePlayer
+					document={document}
+					pagePrototype={activePagePrototype}
+					initialFrameId={prototypePlayerStartFrameId}
+					onClose={() => setPrototypePlayerStartFrameId(null)}
+				/>
+			)}
 
 			{toastMessage && (
 				<div

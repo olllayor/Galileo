@@ -574,6 +574,48 @@ export const pageSchema = z.object({
 
 export type Page = z.infer<typeof pageSchema>;
 
+export const prototypeTransitionSchema = z.enum([
+	'instant',
+	'dissolve',
+	'slide-left',
+	'slide-right',
+	'slide-up',
+	'slide-down',
+]);
+
+export const prototypeInteractionSchema = z.object({
+	targetFrameId: z.string(),
+	transition: prototypeTransitionSchema,
+});
+
+export const prototypeSourceInteractionsSchema = z.object({
+	click: prototypeInteractionSchema.optional(),
+	hover: prototypeInteractionSchema.optional(),
+});
+
+export const prototypePageGraphSchema = z.object({
+	startFrameId: z.string().optional(),
+	interactionsBySource: z.record(z.string(), prototypeSourceInteractionsSchema),
+});
+
+export const prototypeGraphSchema = z.object({
+	pages: z.record(z.string(), prototypePageGraphSchema),
+});
+
+export type PrototypeTransition = z.infer<typeof prototypeTransitionSchema>;
+export type PrototypeInteraction = z.infer<typeof prototypeInteractionSchema>;
+export type PrototypeSourceInteractions = z.infer<typeof prototypeSourceInteractionsSchema>;
+export type PrototypePageGraph = z.infer<typeof prototypePageGraphSchema>;
+export type PrototypeGraph = z.infer<typeof prototypeGraphSchema>;
+
+export const createEmptyPrototypePageGraph = (): PrototypePageGraph => ({
+	interactionsBySource: {},
+});
+
+export const createEmptyPrototypeGraph = (pageIds: string[] = []): PrototypeGraph => ({
+	pages: Object.fromEntries(pageIds.map((pageId) => [pageId, createEmptyPrototypePageGraph()])),
+});
+
 export const documentSchema = z.object({
 	version: z.number().int().nonnegative(),
 	rootId: z.string(),
@@ -584,12 +626,13 @@ export const documentSchema = z.object({
 	components: componentsLibrarySchema,
 	styles: styleLibrarySchema,
 	variables: styleVariableLibrarySchema,
+	prototype: prototypeGraphSchema,
 });
 
 export type Document = z.infer<typeof documentSchema>;
 
 export const createDocument = (): Document => ({
-	version: 9,
+	version: 10,
 	rootId: 'root',
 	pages: [
 		{
@@ -626,6 +669,7 @@ export const createDocument = (): Document => ({
 		tokens: {},
 		activeModeByCollection: {},
 	},
+	prototype: createEmptyPrototypeGraph(['page_1']),
 });
 
 export const validateDocument = (doc: unknown): doc is Document => {

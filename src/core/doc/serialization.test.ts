@@ -19,7 +19,7 @@ const assertEqual = (failures: string[], label: string, actual: unknown, expecte
 };
 
 const makeV9Doc = (): Document => ({
-	version: 9,
+	version: 10,
 	rootId: 'root',
 	pages: [{ id: 'page_1', name: 'Page 1', rootId: 'root' }],
 	activePageId: 'page_1',
@@ -41,6 +41,7 @@ const makeV9Doc = (): Document => ({
 	},
 	styles: { paint: {}, text: {}, effect: {}, grid: {} },
 	variables: { collections: {}, tokens: {}, activeModeByCollection: {} },
+	prototype: { pages: { page_1: { interactionsBySource: {} } } },
 });
 
 export const runSerializationUnitTests = (): UnitTestResult => {
@@ -68,10 +69,16 @@ export const runSerializationUnitTests = (): UnitTestResult => {
 	const migrated = parseDocumentText(JSON.stringify(legacyV7));
 	assert(failures, 'v7 migrates successfully', migrated.ok);
 	if (migrated.ok) {
-		assertEqual(failures, 'v7 migration bumps to v9', migrated.doc.version, 9);
+		assertEqual(failures, 'v7 migration bumps to v10', migrated.doc.version, 10);
 		assertEqual(failures, 'v7 migration creates one page', migrated.doc.pages.length, 1);
 		assertEqual(failures, 'v7 migration keeps root as page root', migrated.doc.pages[0]?.rootId, 'root');
 		assertEqual(failures, 'v7 migration sets active page', migrated.doc.activePageId, migrated.doc.pages[0]?.id);
+		assertEqual(
+			failures,
+			'v7 migration initializes prototype graph',
+			typeof migrated.doc.prototype.pages[migrated.doc.pages[0]?.id ?? ''] === 'object',
+			true,
+		);
 	}
 
 	const invalidPageRoot = makeV9Doc();
@@ -117,7 +124,7 @@ export const runSerializationUnitTests = (): UnitTestResult => {
 	const migratedLegacyEffects = parseDocumentText(JSON.stringify(legacyEffectVariables));
 	assert(failures, 'legacy effect variables parse successfully', migratedLegacyEffects.ok);
 	if (migratedLegacyEffects.ok) {
-		assertEqual(failures, 'legacy effect variables doc version migrated', migratedLegacyEffects.doc.version, 9);
+		assertEqual(failures, 'legacy effect variables doc version migrated', migratedLegacyEffects.doc.version, 10);
 		const tokens = Object.values(migratedLegacyEffects.doc.variables.tokens);
 		assert(failures, 'legacy effect variables produce tokens', tokens.length >= 1);
 	}

@@ -33,6 +33,7 @@ type DraftDocument = {
 	components: ComponentsLibrary;
 	styles: StyleLibrary;
 	variables: StyleVariableLibrary;
+	prototype: Document['prototype'];
 };
 
 enablePatches();
@@ -48,6 +49,7 @@ export const applyCommand = (doc: Document, cmd: Command): Document => {
 const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 	ensurePagesMetadata(draft);
 	ensureStyleVariableLibraries(draft);
+	ensurePrototypeGraph(draft);
 
 	switch (cmd.type) {
 		case 'createNode': {
@@ -91,6 +93,7 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			if (parent && parent.children) {
 				parent.children = parent.children.filter((childId: string) => childId !== id);
 			}
+			prunePrototypeGraph(draft);
 			break;
 		}
 
@@ -460,6 +463,7 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			const insertIndex =
 				typeof index === 'number' ? Math.max(0, Math.min(index, draft.pages.length)) : draft.pages.length;
 			draft.pages.splice(insertIndex, 0, page);
+			ensurePrototypePageGraph(draft, pageId);
 			if (activate) {
 				draft.activePageId = pageId;
 			}
@@ -509,6 +513,94 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 				draft.rootId = draft.pages[0].rootId;
 			}
 			deleteNodeSubtree(draft, removedPage.rootId);
+			delete draft.prototype.pages[removedPage.id];
+			prunePrototypeGraph(draft);
+			break;
+		}
+
+		case 'setPrototypeStartFrame': {
+			const { pageId, frameId } = cmd.payload;
+			const page = draft.pages.find((entry) => entry.id === pageId);
+			if (!page) break;
+			const pagePrototype = ensurePrototypePageGraph(draft, pageId);
+			if (!frameId) {
+				pagePrototype.startFrameId = undefined;
+				break;
+			}
+			if (!isFrameInPage(draft, page.rootId, frameId)) break;
+			pagePrototype.startFrameId = frameId;
+			break;
+		}
+
+		case 'setPrototypeInteraction': {
+			const { pageId, sourceFrameId, trigger, interaction } = cmd.payload;
+			const page = draft.pages.find((entry) => entry.id === pageId);
+			if (!page) break;
+			if (!isFrameInPage(draft, page.rootId, sourceFrameId)) break;
+			const pagePrototype = ensurePrototypePageGraph(draft, pageId);
+			const current = pagePrototype.interactionsBySource[sourceFrameId] ?? {};
+
+			if (!interaction) {
+				const next = { ...current, [trigger]: undefined };
+				if (!next.click && !next.hover) {
+					delete pagePrototype.interactionsBySource[sourceFrameId];
+				} else {
+					pagePrototype.interactionsBySource[sourceFrameId] = next;
+				}
+				break;
+			}
+
+			if (!isFrameInPage(draft, page.rootId, interaction.targetFrameId)) break;
+			pagePrototype.interactionsBySource[sourceFrameId] = {
+				...current,
+				[trigger]: {
+					targetFrameId: interaction.targetFrameId,
+					transition: interaction.transition,
+				},
+			};
+			break;
+		}
+
+		case 'setVariableCollectionMode': {
+			const { collectionId, modeId } = cmd.payload;
+			const collection = draft.variables.collections[collectionId];
+			if (!collection) break;
+			if (!collection.modes.some((mode) => mode.id === modeId)) break;
+			draft.variables.activeModeByCollection[collectionId] = modeId;
+			break;
+		}
+
+		case 'upsertVariableCollection': {
+			const { collection } = cmd.payload;
+			draft.variables.collections[collection.id] = collection;
+			const fallbackModeId = collection.defaultModeId ?? collection.modes[0]?.id;
+			if (fallbackModeId && !draft.variables.activeModeByCollection[collection.id]) {
+				draft.variables.activeModeByCollection[collection.id] = fallbackModeId;
+			}
+			break;
+		}
+
+		case 'removeVariableCollection': {
+			const { collectionId } = cmd.payload;
+			delete draft.variables.collections[collectionId];
+			delete draft.variables.activeModeByCollection[collectionId];
+			for (const [tokenId, token] of Object.entries(draft.variables.tokens)) {
+				if (token.collectionId === collectionId) {
+					delete draft.variables.tokens[tokenId];
+				}
+			}
+			break;
+		}
+
+		case 'upsertVariableToken': {
+			const { token } = cmd.payload;
+			draft.variables.tokens[token.id] = token;
+			break;
+		}
+
+		case 'removeVariableToken': {
+			const { tokenId } = cmd.payload;
+			delete draft.variables.tokens[tokenId];
 			break;
 		}
 
@@ -669,48 +761,6 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			break;
 		}
 
-		case 'upsertVariableCollection': {
-			const { collection } = cmd.payload;
-			draft.variables.collections[collection.id] = collection;
-			const fallbackModeId = collection.defaultModeId ?? collection.modes[0]?.id;
-			if (fallbackModeId && !draft.variables.activeModeByCollection[collection.id]) {
-				draft.variables.activeModeByCollection[collection.id] = fallbackModeId;
-			}
-			break;
-		}
-
-		case 'removeVariableCollection': {
-			const { collectionId } = cmd.payload;
-			delete draft.variables.collections[collectionId];
-			delete draft.variables.activeModeByCollection[collectionId];
-			for (const [tokenId, token] of Object.entries(draft.variables.tokens)) {
-				if (token.collectionId === collectionId) {
-					delete draft.variables.tokens[tokenId];
-				}
-			}
-			break;
-		}
-
-		case 'upsertVariableToken': {
-			const { token } = cmd.payload;
-			draft.variables.tokens[token.id] = token;
-			break;
-		}
-
-		case 'removeVariableToken': {
-			const { tokenId } = cmd.payload;
-			delete draft.variables.tokens[tokenId];
-			break;
-		}
-
-		case 'setVariableCollectionMode': {
-			const { collectionId, modeId } = cmd.payload;
-			const collection = draft.variables.collections[collectionId];
-			if (!collection) break;
-			if (!collection.modes.some((mode) => mode.id === modeId)) break;
-			draft.variables.activeModeByCollection[collectionId] = modeId;
-			break;
-		}
 	}
 };
 
@@ -724,6 +774,7 @@ const asDocument = (draft: DraftDocument): Document => ({
 	components: draft.components,
 	styles: draft.styles,
 	variables: draft.variables,
+	prototype: draft.prototype,
 });
 
 const ensurePagesMetadata = (draft: DraftDocument): void => {
@@ -766,6 +817,104 @@ const ensureStyleVariableLibraries = (draft: DraftDocument): void => {
 	if (!draft.variables.collections) draft.variables.collections = {};
 	if (!draft.variables.tokens) draft.variables.tokens = {};
 	if (!draft.variables.activeModeByCollection) draft.variables.activeModeByCollection = {};
+};
+
+const ensurePrototypeGraph = (draft: DraftDocument): void => {
+	if (!draft.prototype || typeof draft.prototype !== 'object') {
+		draft.prototype = { pages: {} };
+	}
+	if (!draft.prototype.pages || typeof draft.prototype.pages !== 'object') {
+		draft.prototype.pages = {};
+	}
+	for (const page of draft.pages) {
+		ensurePrototypePageGraph(draft, page.id);
+	}
+};
+
+const ensurePrototypePageGraph = (draft: DraftDocument, pageId: string): Document['prototype']['pages'][string] => {
+	if (!draft.prototype.pages[pageId]) {
+		draft.prototype.pages[pageId] = {
+			interactionsBySource: {},
+		};
+	}
+	if (!draft.prototype.pages[pageId].interactionsBySource) {
+		draft.prototype.pages[pageId].interactionsBySource = {};
+	}
+	return draft.prototype.pages[pageId];
+};
+
+const collectPageNodeIds = (draft: DraftDocument, pageRootId: string): Set<string> => {
+	const ids = new Set<string>();
+	const queue = [pageRootId];
+	while (queue.length > 0) {
+		const nodeId = queue.shift();
+		if (!nodeId || ids.has(nodeId)) continue;
+		const node = draft.nodes[nodeId];
+		if (!node) continue;
+		ids.add(nodeId);
+		for (const childId of node.children ?? []) {
+			queue.push(childId);
+		}
+	}
+	return ids;
+};
+
+const isFrameInPage = (draft: DraftDocument, pageRootId: string, frameId: string): boolean => {
+	if (frameId === pageRootId) return false;
+	const node = draft.nodes[frameId];
+	if (!node || node.type !== 'frame') return false;
+	return collectPageNodeIds(draft, pageRootId).has(frameId);
+};
+
+const prunePrototypeGraph = (draft: DraftDocument): void => {
+	ensurePrototypeGraph(draft);
+	const validPageIds = new Set(draft.pages.map((page) => page.id));
+	for (const pageId of Object.keys(draft.prototype.pages)) {
+		if (!validPageIds.has(pageId)) {
+			delete draft.prototype.pages[pageId];
+		}
+	}
+
+	for (const page of draft.pages) {
+		const pagePrototype = ensurePrototypePageGraph(draft, page.id);
+		const pageNodeIds = collectPageNodeIds(draft, page.rootId);
+		const validFrames = new Set<string>();
+		for (const nodeId of pageNodeIds) {
+			const node = draft.nodes[nodeId];
+			if (!node || node.type !== 'frame' || nodeId === page.rootId) continue;
+			validFrames.add(nodeId);
+		}
+
+		if (!pagePrototype.startFrameId || !validFrames.has(pagePrototype.startFrameId)) {
+			pagePrototype.startFrameId = undefined;
+		}
+
+		for (const [sourceFrameId, sourceInteractions] of Object.entries(pagePrototype.interactionsBySource ?? {})) {
+			if (!validFrames.has(sourceFrameId)) {
+				delete pagePrototype.interactionsBySource[sourceFrameId];
+				continue;
+			}
+
+			const click =
+				sourceInteractions.click && validFrames.has(sourceInteractions.click.targetFrameId)
+					? sourceInteractions.click
+					: undefined;
+			const hover =
+				sourceInteractions.hover && validFrames.has(sourceInteractions.hover.targetFrameId)
+					? sourceInteractions.hover
+					: undefined;
+
+			if (!click && !hover) {
+				delete pagePrototype.interactionsBySource[sourceFrameId];
+				continue;
+			}
+
+			pagePrototype.interactionsBySource[sourceFrameId] = {
+				...(click ? { click } : {}),
+				...(hover ? { hover } : {}),
+			};
+		}
+	}
 };
 
 const deleteNodeSubtree = (draft: DraftDocument, nodeId: string): void => {

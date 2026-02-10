@@ -9,6 +9,7 @@ import type {
 	GridStyle,
 	Node,
 	PaintStyle,
+	PrototypeInteraction,
 	StyleVariableCollection,
 	StyleVariableToken,
 	TextStyle,
@@ -137,6 +138,24 @@ export interface DeletePageCommand extends BaseCommand {
 	payload: {
 		pageId: string;
 		fallbackPageId?: string;
+	};
+}
+
+export interface SetPrototypeStartFrameCommand extends BaseCommand {
+	type: 'setPrototypeStartFrame';
+	payload: {
+		pageId: string;
+		frameId?: string;
+	};
+}
+
+export interface SetPrototypeInteractionCommand extends BaseCommand {
+	type: 'setPrototypeInteraction';
+	payload: {
+		pageId: string;
+		sourceFrameId: string;
+		trigger: 'click' | 'hover';
+		interaction?: PrototypeInteraction;
 	};
 }
 
@@ -364,6 +383,8 @@ export type Command =
 	| RenamePageCommand
 	| ReorderPageCommand
 	| DeletePageCommand
+	| SetPrototypeStartFrameCommand
+	| SetPrototypeInteractionCommand
 	| CreateBooleanNodeCommand
 	| SetBooleanOpCommand
 	| SetBooleanIsolationCommand
