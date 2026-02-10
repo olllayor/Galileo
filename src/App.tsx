@@ -65,6 +65,7 @@ import type {
 	ImageMetaUnsplash,
 	ImageOutline,
 	Node,
+	Page,
 	ShadowEffect,
 	VectorPoint,
 } from './core/doc/types';
@@ -370,6 +371,51 @@ type PanelResizeState = {
 	pointerId: number;
 	startX: number;
 	startWidth: number;
+};
+
+type PageEditorState = {
+	selectionIds: string[];
+	panOffset: { x: number; y: number };
+	zoom: number;
+	containerFocusId: string | null;
+};
+
+const DEFAULT_PAGE_EDITOR_STATE: PageEditorState = {
+	selectionIds: [],
+	panOffset: { x: 0, y: 0 },
+	zoom: 1,
+	containerFocusId: null,
+};
+
+const collectSubtreeNodeIds = (doc: Document, rootId: string): Set<string> => {
+	const ids = new Set<string>();
+	const stack = [rootId];
+	while (stack.length > 0) {
+		const current = stack.pop();
+		if (!current || ids.has(current)) continue;
+		const node = doc.nodes[current];
+		if (!node) continue;
+		ids.add(current);
+		for (const childId of node.children ?? []) {
+			stack.push(childId);
+		}
+	}
+	return ids;
+};
+
+const filterNodeIdsToPage = (doc: Document, ids: string[], pageRootId: string): string[] => {
+	const validIds = collectSubtreeNodeIds(doc, pageRootId);
+	return ids.filter((id) => id !== pageRootId && validIds.has(id));
+};
+
+const sanitizeContainerFocusForPage = (
+	doc: Document,
+	containerFocusId: string | null,
+	pageRootId: string,
+): string | null => {
+	if (!containerFocusId) return null;
+	const validIds = collectSubtreeNodeIds(doc, pageRootId);
+	return validIds.has(containerFocusId) ? containerFocusId : null;
 };
 
 const buildDraftKey = (path: string | null): string => {
@@ -693,8 +739,11 @@ const getMarqueeSelection = (
 	rect: { x: number; y: number; width: number; height: number },
 ): string[] => {
 	const ids: string[] = [];
-	for (const [id, node] of Object.entries(doc.nodes)) {
+	const pageNodeIds = collectSubtreeNodeIds(doc, doc.rootId);
+	for (const id of pageNodeIds) {
 		if (id === doc.rootId) continue;
+		const node = doc.nodes[id];
+		if (!node) continue;
 		if (node.visible === false) continue;
 		const bounds = boundsMap[id];
 		if (!bounds) continue;
@@ -707,8 +756,11 @@ const getMarqueeSelection = (
 
 const getSelectableNodeIds = (doc: Document): string[] => {
 	const ids: string[] = [];
-	for (const [id, node] of Object.entries(doc.nodes)) {
+	const pageNodeIds = collectSubtreeNodeIds(doc, doc.rootId);
+	for (const id of pageNodeIds) {
 		if (id === doc.rootId) continue;
+		const node = doc.nodes[id];
+		if (!node) continue;
 		if (node.visible === false) continue;
 		if (node.locked === true) continue;
 		ids.push(id);
@@ -1272,6 +1324,8 @@ export const App: React.FC = () => {
 		markDirty,
 		isDirty,
 	} = useDocument();
+	const [activePageId, setActivePageId] = useState<string>(() => document.activePageId);
+	const pageEditorStateRef = useRef<Record<string, PageEditorState>>({});
 
 	const [appView, setAppView] = useState<'projects' | 'editor'>('projects');
 	const [projects, setProjects] = useState<ProjectMeta[]>(() => loadProjects());
@@ -1333,7 +1387,7 @@ export const App: React.FC = () => {
 		}
 		return panels.left.width;
 	});
-	const [leftSidebarTab, setLeftSidebarTab] = useState<'layers' | 'assets'>('layers');
+	const [leftSidebarTab, setLeftSidebarTab] = useState<'pages' | 'layers' | 'assets'>('layers');
 	const [assetsFocusNonce, setAssetsFocusNonce] = useState(0);
 	const [recentComponentIds, setRecentComponentIds] = useState<string[]>(() => {
 		try {
@@ -1598,7 +1652,88 @@ export const App: React.FC = () => {
 		};
 	}, [appView, leftPanelCollapsed, rightPanelCollapsed, leftPanelWidth, rightPanelWidth, canvasSize.height, canvasSize.width]);
 
-	const displayDocument = previewDocument ?? document;
+	const activePage = useMemo<Page | null>(() => {
+		if (!Array.isArray(document.pages) || document.pages.length === 0) return null;
+		return document.pages.find((page) => page.id === activePageId) ?? document.pages[0] ?? null;
+	}, [document.pages, activePageId]);
+	const activePageRootId = activePage?.rootId ?? document.rootId;
+	const activePageNodeIds = useMemo(() => collectSubtreeNodeIds(document, activePageRootId), [document, activePageRootId]);
+	const displayDocument = useMemo<Document>(
+		() => ({
+			...(previewDocument ?? document),
+			rootId: activePageRootId,
+		}),
+		[previewDocument, document, activePageRootId],
+	);
+
+	useEffect(() => {
+		if (!Array.isArray(document.pages) || document.pages.length === 0) return;
+		if (document.pages.some((page) => page.id === activePageId)) return;
+		const fallbackId =
+			document.pages.find((page) => page.id === document.activePageId)?.id ?? document.pages[0]?.id ?? null;
+		if (fallbackId) {
+			setActivePageId(fallbackId);
+		}
+	}, [document.pages, document.activePageId, activePageId]);
+
+	useEffect(() => {
+		if (!activePage) return;
+		pageEditorStateRef.current[activePage.id] = {
+			selectionIds: filterNodeIdsToPage(document, selectedIds, activePage.rootId),
+			panOffset: { ...panOffset },
+			zoom,
+			containerFocusId: sanitizeContainerFocusForPage(document, containerFocusId, activePage.rootId),
+		};
+	}, [activePage, containerFocusId, document, panOffset, selectedIds, zoom]);
+
+	useEffect(() => {
+		const nextSelection = filterNodeIdsToPage(document, selectedIds, activePageRootId);
+		if (!sameSelectionSet(selectedIds, nextSelection)) {
+			setSelection(nextSelection);
+		}
+		const nextContainerFocusId = sanitizeContainerFocusForPage(document, containerFocusId, activePageRootId);
+		if (nextContainerFocusId !== containerFocusId) {
+			setContainerFocusId(nextContainerFocusId);
+		}
+	}, [activePageRootId, containerFocusId, document, selectedIds, setSelection]);
+
+	const switchToPage = useCallback(
+		(pageId: string) => {
+			if (pageId === activePageId) return;
+			const currentPage = document.pages.find((page) => page.id === activePageId);
+			if (currentPage) {
+				pageEditorStateRef.current[currentPage.id] = {
+					selectionIds: filterNodeIdsToPage(document, selectedIds, currentPage.rootId),
+					panOffset: { ...panOffset },
+					zoom,
+					containerFocusId: sanitizeContainerFocusForPage(document, containerFocusId, currentPage.rootId),
+				};
+			}
+
+			const targetPage = document.pages.find((page) => page.id === pageId);
+			if (!targetPage) return;
+			const savedState = pageEditorStateRef.current[pageId] ?? DEFAULT_PAGE_EDITOR_STATE;
+
+			setActivePageId(pageId);
+			setSelection(filterNodeIdsToPage(document, savedState.selectionIds, targetPage.rootId));
+			setPanOffset({ ...savedState.panOffset });
+			setZoom(savedState.zoom > 0 ? savedState.zoom : DEFAULT_PAGE_EDITOR_STATE.zoom);
+			setContainerFocusId(sanitizeContainerFocusForPage(document, savedState.containerFocusId, targetPage.rootId));
+			setPreviewDocument(null);
+			setDragState(null);
+			setTransformSession(null);
+			setTextCreationDragState(null);
+			setPenSession(null);
+			setVectorEditSession(null);
+			setVectorHover(null);
+			setSnapGuides([]);
+			setHoverHandle(null);
+			setHoverHit(null);
+			setHitCycle(null);
+		},
+		[activePageId, containerFocusId, document, panOffset, selectedIds, setSelection, zoom],
+	);
+
 	const selectedNode = selectedIds.length === 1 ? displayDocument.nodes[selectedIds[0]] : null;
 	const view = useMemo(() => ({ pan: panOffset, zoom }), [panOffset, zoom]);
 	const baseBoundsMap = useMemo(() => buildWorldBoundsMap(displayDocument), [displayDocument]);
@@ -1877,21 +2012,21 @@ export const App: React.FC = () => {
 					}
 				}
 			}
-			return document.rootId;
+			return activePageRootId;
 		},
 		[
 			containerFocusId,
 			hitTestStackAtPoint,
 			displayDocument,
 			selectionIds,
-			document.rootId,
+			activePageRootId,
 			boundsMap,
 			findTopmostFrameAtPoint,
 		],
 	);
 	const getLocalPointForParent = useCallback(
 		(parentId: string, worldX: number, worldY: number) => {
-			if (parentId === document.rootId) {
+			if (parentId === activePageRootId) {
 				return { x: worldX, y: worldY };
 			}
 			const parentBounds = boundsMap[parentId];
@@ -1900,7 +2035,7 @@ export const App: React.FC = () => {
 			}
 			return { x: worldX - parentBounds.x, y: worldY - parentBounds.y };
 		},
-		[boundsMap, document.rootId],
+		[boundsMap, activePageRootId],
 	);
 
 	const getLayoutGuideTargetsForParent = useCallback(
@@ -2149,7 +2284,7 @@ export const App: React.FC = () => {
 				type: 'createNode',
 				payload: {
 					id: newId,
-					parentId: document.rootId,
+					parentId: activePageRootId,
 					node: {
 						type: 'image',
 						name: name || 'Image',
@@ -2181,7 +2316,7 @@ export const App: React.FC = () => {
 		[
 			canvasSize.height,
 			canvasSize.width,
-			document.rootId,
+			activePageRootId,
 			executeCommand,
 			selectNode,
 			view.pan.x,
@@ -2442,7 +2577,9 @@ export const App: React.FC = () => {
 			if (!payload.rootIds.length) return;
 
 			const targetParentId =
-				payload.parentId && document.nodes[payload.parentId] ? payload.parentId : document.rootId;
+				payload.parentId && document.nodes[payload.parentId] && activePageNodeIds.has(payload.parentId)
+					? payload.parentId
+					: activePageRootId;
 			const docBoundsMap = buildWorldBoundsMap(document);
 			const parentBounds = docBoundsMap[targetParentId];
 			const parentWorld = {
@@ -2536,7 +2673,7 @@ export const App: React.FC = () => {
 			}
 			clipboardPasteCountRef.current += 1;
 		},
-		[document, executeCommand, getDefaultInsertPosition, setSelection],
+		[activePageNodeIds, activePageRootId, document, executeCommand, getDefaultInsertPosition, setSelection],
 	);
 
 	const runPlugin = useCallback((plugin: PluginRegistration) => {
@@ -2674,7 +2811,7 @@ export const App: React.FC = () => {
 
 	const deleteNodes = useCallback(
 		(ids: string[]) => {
-			const deletable = ids.filter((id) => id !== document.rootId);
+			const deletable = ids.filter((id) => id !== activePageRootId);
 			if (deletable.length === 0) {
 				return;
 			}
@@ -2700,12 +2837,12 @@ export const App: React.FC = () => {
 				} as Command);
 			}
 		},
-		[document.rootId, executeCommand],
+		[activePageRootId, executeCommand],
 	);
 
 	const duplicateNodes = useCallback(
 		(ids: string[]) => {
-			const sourceIds = ids.filter((id) => id !== document.rootId);
+			const sourceIds = ids.filter((id) => id !== activePageRootId);
 			if (sourceIds.length === 0) {
 				return;
 			}
@@ -2754,7 +2891,7 @@ export const App: React.FC = () => {
 			};
 
 			for (const id of sourceIds) {
-				const parentId = documentParentMap[id] ?? document.rootId;
+				const parentId = documentParentMap[id] ?? activePageRootId;
 				const parent = document.nodes[parentId];
 				if (!parent?.children) continue;
 				const siblings = workingChildren.get(parentId) ?? [...parent.children];
@@ -2783,7 +2920,7 @@ export const App: React.FC = () => {
 				setSelection(newIds);
 			}
 		},
-		[document.nodes, document.rootId, documentParentMap, executeCommand, setSelection],
+		[activePageRootId, document.nodes, documentParentMap, executeCommand, setSelection],
 	);
 
 	const reorderZ = useCallback(
@@ -2816,11 +2953,11 @@ export const App: React.FC = () => {
 	const groupNodes = useCallback(
 		(ids: string[]) => {
 			console.log('groupNodes called with:', ids);
-			console.log('document.rootId:', document.rootId);
+			console.log('activePageRootId:', activePageRootId);
 			console.log('documentParentMap:', documentParentMap);
 
 			// Filter out root node and ensure we have at least 2 nodes to group
-			const validIds = ids.filter((id) => id !== document.rootId && document.nodes[id]);
+			const validIds = ids.filter((id) => id !== activePageRootId && document.nodes[id]);
 			console.log('validIds:', validIds);
 
 			if (validIds.length < 2) {
@@ -2887,7 +3024,7 @@ export const App: React.FC = () => {
 			setSelection([groupId]);
 			console.log('Group command executed, new groupId:', groupId);
 		},
-		[document.nodes, document.rootId, documentParentMap, executeCommand, setSelection],
+		[activePageRootId, document.nodes, documentParentMap, executeCommand, setSelection],
 	);
 
 	const ungroupNodes = useCallback(
@@ -3465,6 +3602,7 @@ export const App: React.FC = () => {
 							ids,
 							primaryId: ids.length > 0 ? ids[0] : null,
 							nodes,
+							pageId: activePageId,
 						};
 						return { rpc: 1, id: request.id, ok: true, result };
 					}
@@ -4157,7 +4295,7 @@ export const App: React.FC = () => {
 				return fail('internal_error', error instanceof Error ? error.message : 'Unknown error');
 			}
 		},
-		[document, executeCommand, getDefaultInsertPosition, insertImageNode, isDev, selectionIds, setActivePlugin],
+		[activePageId, document, executeCommand, getDefaultInsertPosition, insertImageNode, isDev, selectionIds, setActivePlugin],
 	);
 
 	useEffect(() => {
@@ -4979,7 +5117,7 @@ export const App: React.FC = () => {
 							toggleVectorClosed(activePathNode.id, true);
 							setPenSession({
 								pathId: activePathNode.id,
-								parentId: documentParentMap[activePathNode.id] ?? document.rootId,
+								parentId: documentParentMap[activePathNode.id] ?? activePageRootId,
 								lastPointId: points[0].id,
 							});
 							setVectorEditSession({ pathId: activePathNode.id, selectedPointId: points[0].id });
@@ -5011,7 +5149,7 @@ export const App: React.FC = () => {
 					} as Command);
 					setPenSession({
 						pathId: activePathNode.id,
-						parentId: documentParentMap[activePathNode.id] ?? document.rootId,
+						parentId: documentParentMap[activePathNode.id] ?? activePageRootId,
 						lastPointId: pointId,
 					});
 					setVectorEditSession({ pathId: activePathNode.id, selectedPointId: pointId });
@@ -6234,6 +6372,125 @@ export const App: React.FC = () => {
 		[executeCommand],
 	);
 
+	const handleSelectPage = useCallback(
+		(pageId: string) => {
+			switchToPage(pageId);
+		},
+		[switchToPage],
+	);
+
+	const handleCreatePage = useCallback(() => {
+		const pageId = generateId();
+		const rootId = generateId();
+		pageEditorStateRef.current[pageId] = {
+			selectionIds: [],
+			panOffset: { ...DEFAULT_PAGE_EDITOR_STATE.panOffset },
+			zoom: DEFAULT_PAGE_EDITOR_STATE.zoom,
+			containerFocusId: DEFAULT_PAGE_EDITOR_STATE.containerFocusId,
+		};
+
+		executeCommand({
+			id: generateId(),
+			timestamp: Date.now(),
+			source: 'user',
+			description: 'Create page',
+			type: 'createPage',
+			payload: {
+				pageId,
+				name: `Page ${document.pages.length + 1}`,
+				rootId,
+				index: document.pages.length,
+				activate: true,
+				rootNode: {
+					type: 'frame',
+					name: 'Canvas',
+					position: { x: 0, y: 0 },
+					size: { width: 1280, height: 800 },
+					children: [],
+					visible: true,
+				},
+			},
+		} as Command);
+
+		setActivePageId(pageId);
+		setSelection([]);
+		setPanOffset({ ...DEFAULT_PAGE_EDITOR_STATE.panOffset });
+		setZoom(DEFAULT_PAGE_EDITOR_STATE.zoom);
+		setContainerFocusId(DEFAULT_PAGE_EDITOR_STATE.containerFocusId);
+		setPreviewDocument(null);
+		setDragState(null);
+		setTransformSession(null);
+		setTextCreationDragState(null);
+		setPenSession(null);
+		setVectorEditSession(null);
+		setVectorHover(null);
+		setSnapGuides([]);
+		setHoverHandle(null);
+		setHoverHit(null);
+		setHitCycle(null);
+	}, [document.pages.length, executeCommand, setSelection]);
+
+	const handleRenamePage = useCallback(
+		(pageId: string, name: string) => {
+			const trimmed = name.trim();
+			if (!trimmed) return;
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Rename page',
+				type: 'renamePage',
+				payload: { pageId, name: trimmed },
+			} as Command);
+		},
+		[executeCommand],
+	);
+
+	const handleReorderPage = useCallback(
+		(fromIndex: number, toIndex: number) => {
+			if (fromIndex === toIndex) return;
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Reorder pages',
+				type: 'reorderPage',
+				payload: { fromIndex, toIndex },
+			} as Command);
+		},
+		[executeCommand],
+	);
+
+	const handleDeletePage = useCallback(
+		(pageId: string) => {
+			if (document.pages.length <= 1) return;
+			const pageIndex = document.pages.findIndex((page) => page.id === pageId);
+			if (pageIndex === -1) return;
+
+			const fallbackPage =
+				document.pages[Math.min(pageIndex, document.pages.length - 2)] ??
+				document.pages[document.pages.length - 1] ??
+				null;
+			const fallbackPageId = fallbackPage?.id;
+
+			if (pageId === activePageId && fallbackPageId) {
+				switchToPage(fallbackPageId);
+			}
+
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Delete page',
+				type: 'deletePage',
+				payload: { pageId, fallbackPageId: fallbackPageId ?? undefined },
+			} as Command);
+
+			delete pageEditorStateRef.current[pageId];
+		},
+		[activePageId, document.pages, executeCommand, switchToPage],
+	);
+
 	const recordRecentComponentId = useCallback((componentId: string) => {
 		setRecentComponentIds((prev) => [componentId, ...prev.filter((id) => id !== componentId)].slice(0, 12));
 	}, []);
@@ -6247,7 +6504,7 @@ export const App: React.FC = () => {
 				if (selectedSet.has(parentId)) return false;
 				parentId = documentParentMap[parentId] ?? null;
 			}
-			return id !== document.rootId && Boolean(document.nodes[id]);
+			return id !== activePageRootId && Boolean(document.nodes[id]);
 		});
 		if (topLevelIds.length === 0) return;
 		const parentIds = Array.from(new Set(topLevelIds.map((id) => documentParentMap[id]).filter(Boolean)));
@@ -6359,7 +6616,10 @@ export const App: React.FC = () => {
 				return;
 			}
 			const instanceId = generateId();
-			const parentId = containerFocusId && document.nodes[containerFocusId] ? containerFocusId : document.rootId;
+			const parentId =
+				containerFocusId && document.nodes[containerFocusId] && activePageNodeIds.has(containerFocusId)
+					? containerFocusId
+					: activePageRootId;
 			const worldPoint = getDefaultInsertPosition();
 			const localPoint = getLocalPointForParent(parentId, worldPoint.x, worldPoint.y);
 			executeCommand({
@@ -6381,10 +6641,11 @@ export const App: React.FC = () => {
 			setSelection([instanceId]);
 		},
 		[
+			activePageNodeIds,
+			activePageRootId,
 			containerFocusId,
 			document.components,
 			document.nodes,
-			document.rootId,
 			executeCommand,
 			getDefaultInsertPosition,
 			getLocalPointForParent,
@@ -6411,7 +6672,7 @@ export const App: React.FC = () => {
 				type: 'insertComponentInstance',
 				payload: {
 					id: instanceId,
-					parentId: document.rootId,
+					parentId: activePageRootId,
 					componentId,
 					name: `Main: ${definition.name}`,
 					variant: normalizeComponentVariant(definition.variant),
@@ -6422,7 +6683,7 @@ export const App: React.FC = () => {
 			setSelection([instanceId]);
 			recordRecentComponentId(componentId);
 		},
-		[document.components, document.nodes, document.rootId, executeCommand, recordRecentComponentId, setSelection, showToast],
+		[activePageRootId, document.components, document.nodes, executeCommand, recordRecentComponentId, setSelection, showToast],
 	);
 
 	const addComponentVariant = useCallback(
@@ -6577,9 +6838,9 @@ export const App: React.FC = () => {
 		await saveDraftSnapshot({
 			key: buildDraftKey(currentPath),
 			path: currentPath,
-			content: serializeDocument(document),
+			content: serializeDocument(document, { activePageId }),
 		});
-	}, [appView, currentPath, document, isDirty, saveDraftSnapshot]);
+	}, [activePageId, appView, currentPath, document, isDirty, saveDraftSnapshot]);
 
 	const flushDraftNow = useCallback(() => {
 		void persistDraftIfNeeded();
@@ -6590,7 +6851,7 @@ export const App: React.FC = () => {
 			return;
 		}
 
-		const content = serializeDocument(document);
+		const content = serializeDocument(document, { activePageId });
 
 		if (currentPath) {
 			try {
@@ -6616,6 +6877,7 @@ export const App: React.FC = () => {
 		appView,
 		currentPath,
 		deleteDraftByKey,
+		activePageId,
 		document,
 		isDirty,
 		saveDraftSnapshot,
@@ -6624,15 +6886,24 @@ export const App: React.FC = () => {
 	const applyLoadedDocument = useCallback(
 		(doc: Document, path: string | null) => {
 			replaceDocument(doc);
+			pageEditorStateRef.current = {};
+			setActivePageId(doc.activePageId);
 			setCurrentPath(path);
 			markSaved();
 			setPanOffset({ x: 0, y: 0 });
 			setZoom(1);
+			setContainerFocusId(null);
 			setPreviewDocument(null);
 			setDragState(null);
+			setTransformSession(null);
+			setTextCreationDragState(null);
+			setPenSession(null);
+			setVectorEditSession(null);
+			setVectorHover(null);
 			setSnapGuides([]);
 			setHoverHandle(null);
 			setHoverHit(null);
+			setHitCycle(null);
 		},
 		[replaceDocument, markSaved],
 	);
@@ -6725,7 +6996,7 @@ export const App: React.FC = () => {
 		try {
 			const doc = createDocument();
 			await invoke('save_document', {
-				args: { path, content: serializeDocument(doc) },
+				args: { path, content: serializeDocument(doc, { activePageId: doc.activePageId }) },
 			});
 			applyLoadedDocument(doc, path);
 			registerProjectOpened(path);
@@ -6871,7 +7142,7 @@ export const App: React.FC = () => {
 			}
 
 			await invoke('save_document', {
-				args: { path, content: serializeDocument(document) },
+				args: { path, content: serializeDocument(document, { activePageId }) },
 			});
 			if (pickedPath) {
 				setCurrentPath(path);
@@ -6885,7 +7156,7 @@ export const App: React.FC = () => {
 			console.error('Save error:', error);
 			alert('Failed to save document');
 		}
-	}, [currentPath, deleteDraftByKey, document, ensureGalileoExtension, markSaved, registerProjectOpened]);
+	}, [activePageId, currentPath, deleteDraftByKey, document, ensureGalileoExtension, markSaved, registerProjectOpened]);
 
 	const handleImportImage = useCallback(async () => {
 		try {
@@ -6929,7 +7200,7 @@ export const App: React.FC = () => {
 				type: 'createNode',
 				payload: {
 					id: newId,
-					parentId: document.rootId,
+					parentId: activePageRootId,
 					node: {
 						type: 'frame',
 						name: preset.name,
@@ -6946,7 +7217,7 @@ export const App: React.FC = () => {
 			executeCommand(command);
 			setSelection([newId]);
 		},
-		[document.rootId, executeCommand, setSelection, canvasSize, panOffset, zoom],
+		[activePageRootId, executeCommand, setSelection, canvasSize, panOffset, zoom],
 	);
 
 	const handleLoad = useCallback(async () => {
@@ -6999,12 +7270,12 @@ export const App: React.FC = () => {
 			void saveDraftSnapshot({
 				key: buildDraftKey(currentPath),
 				path: currentPath,
-				content: serializeDocument(document),
+				content: serializeDocument(document, { activePageId }),
 			});
 		}, AUTOSAVE_DELAY_MS);
 
 		return () => window.clearTimeout(handle);
-	}, [appView, currentPath, document, isDirty, saveDraftSnapshot]);
+	}, [activePageId, appView, currentPath, document, isDirty, saveDraftSnapshot]);
 
 	useEffect(() => {
 		if (appView !== 'editor') return;
@@ -7437,7 +7708,7 @@ export const App: React.FC = () => {
 				}
 				if (isCmd && key === 'a') {
 					e.preventDefault();
-					setSelection(getSelectableNodeIds(document));
+					setSelection(getSelectableNodeIds(displayDocument));
 					return;
 				}
 				if (isCmd && key === 'c') {
@@ -7882,6 +8153,8 @@ export const App: React.FC = () => {
 					<div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 						<LeftSidebar
 							document={displayDocument}
+							pages={document.pages}
+							activePageId={activePageId}
 							components={displayDocument.components}
 							selectionIds={selectionIds}
 							renameRequestId={renameRequestId}
@@ -7896,6 +8169,11 @@ export const App: React.FC = () => {
 							onToggleVisible={handleToggleNodeVisible}
 							onToggleLocked={handleToggleNodeLocked}
 							onReorder={handleReorderChild}
+							onSelectPage={handleSelectPage}
+							onCreatePage={handleCreatePage}
+							onRenamePage={handleRenamePage}
+							onReorderPage={handleReorderPage}
+							onDeletePage={handleDeletePage}
 							onCreateComponent={createComponentFromSelection}
 							onInsertComponent={insertComponentInstanceFromAssets}
 							onRevealMain={revealComponentMainOnCanvas}

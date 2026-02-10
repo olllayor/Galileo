@@ -50,6 +50,7 @@ export type RpcResponse = {
 };
 
 export type SelectionGetResult = {
+	pageId?: string;
 	ids: string[];
 	primaryId: string | null;
 	nodes: Array<{

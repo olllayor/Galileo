@@ -29,8 +29,10 @@ const makeNode = (id: string, overrides: Partial<Node>): Node => ({
 });
 
 const makeDoc = (): Document => ({
-	version: 7,
+	version: 8,
 	rootId: 'root',
+	pages: [{ id: 'page_1', name: 'Page 1', rootId: 'root' }],
+	activePageId: 'page_1',
 	nodes: {
 		root: makeNode('root', { type: 'frame', size: { width: 1440, height: 900 }, children: [] }),
 	},
@@ -179,4 +181,3 @@ export const runComponentExecutorUnitTests = (): UnitTestResult => {
 		failures,
 	};
 };
-

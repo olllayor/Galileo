@@ -1,13 +1,16 @@
 import React from 'react';
-import type { ComponentVariantMap, ComponentsLibrary, Document } from '../core/doc/types';
+import type { ComponentVariantMap, ComponentsLibrary, Document, Page } from '../core/doc/types';
 import { colors, panels, radii, spacing, typography } from './design-system';
 import { AssetsPanel } from './AssetsPanel';
 import { LayersPanel } from './LayersPanel';
+import { PagesPanel } from './PagesPanel';
 
-type SidebarTab = 'layers' | 'assets';
+type SidebarTab = 'pages' | 'layers' | 'assets';
 
 interface LeftSidebarProps {
 	document: Document;
+	pages: Page[];
+	activePageId: string;
 	components: ComponentsLibrary;
 	selectionIds: string[];
 	renameRequestId?: string | null;
@@ -23,6 +26,11 @@ interface LeftSidebarProps {
 	onToggleVisible: (id: string, nextVisible: boolean) => void;
 	onToggleLocked: (id: string, nextLocked: boolean) => void;
 	onReorder: (parentId: string, fromIndex: number, toIndex: number) => void;
+	onSelectPage: (pageId: string) => void;
+	onCreatePage: () => void;
+	onRenamePage: (pageId: string, name: string) => void;
+	onReorderPage: (fromIndex: number, toIndex: number) => void;
+	onDeletePage: (pageId: string) => void;
 	onCreateComponent: () => void;
 	onInsertComponent: (componentId: string, variant?: ComponentVariantMap) => void;
 	onRevealMain: (componentId: string) => void;
@@ -51,6 +59,8 @@ const TabButton: React.FC<{ active: boolean; onClick: () => void; label: string 
 
 export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 	document,
+	pages,
+	activePageId,
 	components,
 	selectionIds,
 	renameRequestId,
@@ -66,6 +76,11 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 	onToggleVisible,
 	onToggleLocked,
 	onReorder,
+	onSelectPage,
+	onCreatePage,
+	onRenamePage,
+	onReorderPage,
+	onDeletePage,
 	onCreateComponent,
 	onInsertComponent,
 	onRevealMain,
@@ -88,11 +103,26 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 						backgroundColor: colors.bg.secondary,
 					}}
 				>
+					<TabButton active={tab === 'pages'} onClick={() => onTabChange('pages')} label="Pages" />
 					<TabButton active={tab === 'layers'} onClick={() => onTabChange('layers')} label="Layers" />
 					<TabButton active={tab === 'assets'} onClick={() => onTabChange('assets')} label="Assets" />
 				</div>
 			)}
-			{tab === 'layers' ? (
+			{tab === 'pages' ? (
+				<PagesPanel
+					pages={pages}
+					activePageId={activePageId}
+					width={width}
+					collapsed={collapsed}
+					isResizing={isResizing}
+					onToggleCollapsed={onToggleCollapsed}
+					onSelectPage={onSelectPage}
+					onCreatePage={onCreatePage}
+					onRenamePage={onRenamePage}
+					onReorderPage={onReorderPage}
+					onDeletePage={onDeletePage}
+				/>
+			) : tab === 'layers' ? (
 				<LayersPanel
 					document={document}
 					selectionIds={selectionIds}

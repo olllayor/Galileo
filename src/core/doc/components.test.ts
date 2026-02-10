@@ -37,8 +37,10 @@ const makeNode = (id: string, overrides: Partial<Node>): Node => ({
 });
 
 const makeDoc = (): Document => ({
-	version: 7,
+	version: 8,
 	rootId: 'root',
+	pages: [{ id: 'page_1', name: 'Page 1', rootId: 'root' }],
+	activePageId: 'page_1',
 	nodes: {
 		root: makeNode('root', { type: 'frame', size: { width: 1200, height: 800 }, children: [] }),
 	},
@@ -187,7 +189,7 @@ export const runComponentsUnitTests = (): UnitTestResult => {
 	const parsedLegacy = parseDocumentText(JSON.stringify(legacyDoc));
 	assert(failures, 'v6 migration succeeds', parsedLegacy.ok);
 	if (parsedLegacy.ok) {
-		assertEqual(failures, 'migrates to version 7', parsedLegacy.doc.version, 7);
+		assertEqual(failures, 'migrates to version 8', parsedLegacy.doc.version, 8);
 		assert(failures, 'synthesizes component set', Boolean(parsedLegacy.doc.components.sets.legacy_set));
 	}
 
@@ -196,4 +198,3 @@ export const runComponentsUnitTests = (): UnitTestResult => {
 		failures,
 	};
 };
-

@@ -1,6 +1,6 @@
 import { produce, enablePatches, Patch } from 'immer';
 import type { Command } from './types';
-import type { Asset, ComponentsLibrary, Document, Node, VectorData, VectorPoint, VectorSegment } from '../doc/types';
+import type { Asset, ComponentsLibrary, Document, Node, Page, VectorData, VectorPoint, VectorSegment } from '../doc/types';
 import { buildVectorPathData } from '../doc/vector';
 import { resolveBooleanNodePath } from '../doc/boolean/solve';
 import { invalidateBooleanGeometryCache } from '../doc/geometry-cache';
@@ -15,6 +15,8 @@ import {
 type DraftDocument = {
 	version: number;
 	rootId: string;
+	pages: Page[];
+	activePageId: string;
 	nodes: Record<string, Node>;
 	assets: Record<string, Asset>;
 	components: ComponentsLibrary;
@@ -31,6 +33,8 @@ export const applyCommand = (doc: Document, cmd: Command): Document => {
 };
 
 const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
+	ensurePagesMetadata(draft);
+
 	switch (cmd.type) {
 		case 'createNode': {
 			const { id, parentId, node, index } = cmd.payload;
@@ -59,6 +63,9 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			const { id } = cmd.payload;
 			if (id === draft.rootId) {
 				throw new Error('Cannot delete root node');
+			}
+			if (isPageRootNode(draft, id)) {
+				throw new Error('Cannot delete page root node');
 			}
 
 			const toDelete = collectNodes(draft, id);
@@ -413,6 +420,84 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			break;
 		}
 
+		case 'createPage': {
+			const { pageId, name, rootId, index, activate, rootNode } = cmd.payload;
+			if (draft.pages.some((page) => page.id === pageId)) break;
+			if (draft.nodes[rootId]) break;
+
+			const nextRootNode: Node = {
+				id: rootId,
+				type: 'frame',
+				name: 'Canvas',
+				position: { x: 0, y: 0 },
+				size: { width: 1280, height: 800 },
+				children: [],
+				visible: true,
+				...(rootNode ?? {}),
+			};
+			nextRootNode.children = Array.isArray(rootNode?.children) ? [...rootNode.children] : [];
+			draft.nodes[rootId] = nextRootNode;
+
+			const page: Page = {
+				id: pageId,
+				name: name.trim().length > 0 ? name.trim() : `Page ${draft.pages.length + 1}`,
+				rootId,
+			};
+			const insertIndex =
+				typeof index === 'number' ? Math.max(0, Math.min(index, draft.pages.length)) : draft.pages.length;
+			draft.pages.splice(insertIndex, 0, page);
+			if (activate) {
+				draft.activePageId = pageId;
+			}
+			break;
+		}
+
+		case 'renamePage': {
+			const { pageId, name } = cmd.payload;
+			const page = draft.pages.find((entry) => entry.id === pageId);
+			if (!page) break;
+			const nextName = name.trim();
+			page.name = nextName.length > 0 ? nextName : page.name;
+			break;
+		}
+
+		case 'reorderPage': {
+			const { fromIndex, toIndex } = cmd.payload;
+			if (fromIndex < 0 || fromIndex >= draft.pages.length) {
+				break;
+			}
+			const [moved] = draft.pages.splice(fromIndex, 1);
+			if (!moved) break;
+			const clamped = Math.max(0, Math.min(toIndex, draft.pages.length));
+			draft.pages.splice(clamped, 0, moved);
+			break;
+		}
+
+		case 'deletePage': {
+			const { pageId, fallbackPageId } = cmd.payload;
+			if (draft.pages.length <= 1) {
+				throw new Error('Cannot delete last page');
+			}
+			const pageIndex = draft.pages.findIndex((entry) => entry.id === pageId);
+			if (pageIndex === -1) break;
+
+			const [removedPage] = draft.pages.splice(pageIndex, 1);
+			if (!removedPage) break;
+
+			const fallback =
+				(fallbackPageId && draft.pages.find((entry) => entry.id === fallbackPageId)?.id) ??
+				draft.pages[Math.min(pageIndex, draft.pages.length - 1)]?.id ??
+				draft.pages[0]?.id;
+			if (removedPage.id === draft.activePageId && fallback) {
+				draft.activePageId = fallback;
+			}
+			if (removedPage.rootId === draft.rootId && draft.pages[0]) {
+				draft.rootId = draft.pages[0].rootId;
+			}
+			deleteNodeSubtree(draft, removedPage.rootId);
+			break;
+		}
+
 		case 'createComponentDefinition': {
 			const { definition } = cmd.payload;
 			ensureComponentsLibrary(draft);
@@ -547,10 +632,25 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 const asDocument = (draft: DraftDocument): Document => ({
 	version: draft.version,
 	rootId: draft.rootId,
+	pages: draft.pages,
+	activePageId: draft.activePageId,
 	nodes: draft.nodes,
 	assets: draft.assets,
 	components: draft.components,
 });
+
+const ensurePagesMetadata = (draft: DraftDocument): void => {
+	if (!Array.isArray(draft.pages) || draft.pages.length === 0) {
+		draft.pages = [{ id: 'page_1', name: 'Page 1', rootId: draft.rootId }];
+	}
+	if (!draft.activePageId || !draft.pages.some((page) => page.id === draft.activePageId)) {
+		draft.activePageId = draft.pages[0].id;
+	}
+};
+
+const isPageRootNode = (draft: DraftDocument, nodeId: string): boolean => {
+	return draft.pages.some((page) => page.rootId === nodeId);
+};
 
 const ensureComponentsLibrary = (draft: DraftDocument): void => {
 	if (!draft.components) {

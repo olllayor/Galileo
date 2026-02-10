@@ -98,6 +98,42 @@ export interface BatchCommand extends BaseCommand {
 	};
 }
 
+export interface CreatePageCommand extends BaseCommand {
+	type: 'createPage';
+	payload: {
+		pageId: string;
+		name: string;
+		rootId: string;
+		index?: number;
+		activate?: boolean;
+		rootNode?: Omit<Node, 'id'>;
+	};
+}
+
+export interface RenamePageCommand extends BaseCommand {
+	type: 'renamePage';
+	payload: {
+		pageId: string;
+		name: string;
+	};
+}
+
+export interface ReorderPageCommand extends BaseCommand {
+	type: 'reorderPage';
+	payload: {
+		fromIndex: number;
+		toIndex: number;
+	};
+}
+
+export interface DeletePageCommand extends BaseCommand {
+	type: 'deletePage';
+	payload: {
+		pageId: string;
+		fallbackPageId?: string;
+	};
+}
+
 export interface CreateBooleanNodeCommand extends BaseCommand {
 	type: 'createBooleanNode';
 	payload: {
@@ -255,6 +291,10 @@ export type Command =
 	| GroupNodesCommand
 	| UngroupNodesCommand
 	| BatchCommand
+	| CreatePageCommand
+	| RenamePageCommand
+	| ReorderPageCommand
+	| DeletePageCommand
 	| CreateBooleanNodeCommand
 	| SetBooleanOpCommand
 	| SetBooleanIsolationCommand

@@ -467,9 +467,19 @@ export const assetSchema = z.discriminatedUnion('type', [imageAssetSchema]);
 
 export type Asset = z.infer<typeof assetSchema>;
 
+export const pageSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	rootId: z.string(),
+});
+
+export type Page = z.infer<typeof pageSchema>;
+
 export const documentSchema = z.object({
 	version: z.number().int().nonnegative(),
 	rootId: z.string(),
+	pages: z.array(pageSchema).min(1),
+	activePageId: z.string(),
 	nodes: z.record(z.string(), nodeSchema),
 	assets: z.record(z.string(), assetSchema),
 	components: componentsLibrarySchema,
@@ -478,8 +488,16 @@ export const documentSchema = z.object({
 export type Document = z.infer<typeof documentSchema>;
 
 export const createDocument = (): Document => ({
-	version: 7,
+	version: 8,
 	rootId: 'root',
+	pages: [
+		{
+			id: 'page_1',
+			name: 'Page 1',
+			rootId: 'root',
+		},
+	],
+	activePageId: 'page_1',
 	nodes: {
 		root: {
 			id: 'root',

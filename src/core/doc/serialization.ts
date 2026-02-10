@@ -1,6 +1,6 @@
 import { documentSchema, type ComponentDefinition, type ComponentSet, type Document, type Node } from './types';
 
-export const CURRENT_DOCUMENT_VERSION = 7;
+export const CURRENT_DOCUMENT_VERSION = 8;
 
 export type DocumentParseResult =
   | { ok: true; doc: Document; warnings: string[] }
@@ -10,6 +10,29 @@ const validateDocumentIntegrity = (doc: Document): string[] => {
   const errors: string[] = [];
   if (!doc.nodes[doc.rootId]) {
     errors.push('rootId does not exist in nodes');
+  }
+  if (!Array.isArray(doc.pages) || doc.pages.length === 0) {
+    errors.push('document must contain at least one page');
+    return errors;
+  }
+
+  const pageIdSet = new Set<string>();
+  const pageRootIdSet = new Set<string>();
+  for (const page of doc.pages) {
+    if (pageIdSet.has(page.id)) {
+      errors.push(`duplicate page id: ${page.id}`);
+    }
+    pageIdSet.add(page.id);
+    if (pageRootIdSet.has(page.rootId)) {
+      errors.push(`duplicate page rootId: ${page.rootId}`);
+    }
+    pageRootIdSet.add(page.rootId);
+    if (!doc.nodes[page.rootId]) {
+      errors.push(`page rootId does not exist in nodes: ${page.rootId}`);
+    }
+  }
+  if (!pageIdSet.has(doc.activePageId)) {
+    errors.push(`activePageId does not exist in pages: ${doc.activePageId}`);
   }
 
   for (const [id, node] of Object.entries(doc.nodes)) {
@@ -66,6 +89,8 @@ const migrateDocument = (raw: unknown): DocumentParseResult => {
 		} as Document;
 	}
 
+	migrated = normalizePages(migrated, warnings);
+
   const parsed = documentSchema.safeParse(migrated);
   if (!parsed.success) {
     const details = parsed.error.issues.map(issue => issue.message);
@@ -78,6 +103,64 @@ const migrateDocument = (raw: unknown): DocumentParseResult => {
   }
 
   return { ok: true, doc: parsed.data, warnings };
+};
+
+const normalizePages = (doc: Document, warnings: string[]): Document => {
+	const rawPages = Array.isArray((doc as { pages?: unknown }).pages) ? ((doc as { pages?: unknown }).pages as unknown[]) : [];
+	const pages = rawPages
+		.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object'))
+		.map((page, index) => {
+			const id = typeof page.id === 'string' && page.id.trim().length > 0 ? page.id : `page_${index + 1}`;
+			const rootId = typeof page.rootId === 'string' && page.rootId.trim().length > 0 ? page.rootId : null;
+			const name = typeof page.name === 'string' && page.name.trim().length > 0 ? page.name : `Page ${index + 1}`;
+			return {
+				id,
+				name,
+				rootId,
+			};
+		})
+		.filter((page): page is { id: string; name: string; rootId: string } => typeof page.rootId === 'string');
+
+	const legacyRootId =
+		typeof (doc as { rootId?: unknown }).rootId === 'string' && (doc as { rootId?: string }).rootId
+			? (doc as { rootId: string }).rootId
+			: null;
+
+	let normalizedPages = pages.filter((page, index, list) => list.findIndex((candidate) => candidate.id === page.id) === index);
+	if (normalizedPages.length !== pages.length) {
+		warnings.push('Duplicate page IDs detected; removed duplicates during normalization');
+	}
+
+	if (normalizedPages.length === 0) {
+		const fallbackRootId = legacyRootId && doc.nodes[legacyRootId] ? legacyRootId : Object.keys(doc.nodes)[0] ?? 'root';
+		normalizedPages = [{ id: 'page_1', name: 'Page 1', rootId: fallbackRootId }];
+		warnings.push('Document missing pages; synthesized default page');
+	}
+
+	const firstValidPage = normalizedPages.find((page) => Boolean(doc.nodes[page.rootId])) ?? normalizedPages[0];
+	const filteredPages = normalizedPages.filter((page) => Boolean(doc.nodes[page.rootId]));
+	if (filteredPages.length !== normalizedPages.length) {
+		warnings.push('Some pages referenced missing roots; removed invalid pages');
+	}
+	const safePages = filteredPages.length > 0 ? filteredPages : [firstValidPage];
+
+	const candidateActivePageId =
+		typeof (doc as { activePageId?: unknown }).activePageId === 'string'
+			? (doc as { activePageId: string }).activePageId
+			: safePages[0].id;
+	const activePageId = safePages.some((page) => page.id === candidateActivePageId) ? candidateActivePageId : safePages[0].id;
+	if (activePageId !== candidateActivePageId) {
+		warnings.push('activePageId was invalid and has been normalized');
+	}
+
+	const normalizedRootId = legacyRootId && doc.nodes[legacyRootId] ? legacyRootId : safePages[0].rootId;
+
+	return {
+		...doc,
+		rootId: normalizedRootId,
+		pages: safePages,
+		activePageId,
+	};
 };
 
 const migrateNode = (rawNode: unknown, version: number): unknown => {
@@ -345,10 +428,15 @@ export const parseDocumentText = (content: string): DocumentParseResult => {
   return migrateDocument(parsedJson);
 };
 
-export const serializeDocument = (doc: Document): string => {
+export const serializeDocument = (doc: Document, options?: { activePageId?: string }): string => {
+  const activePageId =
+    typeof options?.activePageId === 'string' && doc.pages.some((page) => page.id === options.activePageId)
+      ? options.activePageId
+      : doc.activePageId;
   const normalized: Document = {
     ...doc,
     version: CURRENT_DOCUMENT_VERSION,
+    activePageId,
   };
   return JSON.stringify(normalized, null, 2);
 };

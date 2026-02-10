@@ -64,6 +64,9 @@ export const deleteNode = (doc: Document, nodeId: string): Document => {
 	if (nodeId === doc.rootId) {
 		throw new Error('Cannot delete root node');
 	}
+	if (doc.pages.some((page) => page.rootId === nodeId)) {
+		throw new Error('Cannot delete page root node');
+	}
 
 	const nodesToDelete = collectNodesToDelete(doc, nodeId);
 	const newNodes = { ...doc.nodes };
