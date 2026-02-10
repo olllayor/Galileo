@@ -4,11 +4,12 @@ import {
 	buildWorldBoundsMap,
 	compileShadowEffects,
 	normalizeShadowEffects,
+	resolveNodeStyleProps,
 	resolveShadowOverflow,
 	type WorldBoundsMap,
 } from '../../core/doc';
 import { getNodePathData } from '../../core/doc/vector';
-import type { Color, Document, Node, RenderableShadowEffect } from '../../core/doc/types';
+import type { Color, Document, Node, RenderableShadowEffect, ShadowEffect } from '../../core/doc/types';
 import type { DrawCommand, GradientPaint, GradientStop, ImageOutlineStyle, Paint } from './types';
 
 type BuildDrawListOptions = {
@@ -91,6 +92,7 @@ const buildNodeCommandsFromBounds = (
 	const y = bounds.y - base.y;
 	const width = bounds.width;
 	const height = bounds.height;
+	const resolvedStyle = resolveNodeStyleProps(doc, node);
 
 	if (node.visible === false) {
 		return;
@@ -120,7 +122,7 @@ const buildNodeCommandsFromBounds = (
 			});
 		}
 
-		if (node.fill && shouldIncludeFill) {
+		if (resolvedStyle.fill && shouldIncludeFill) {
 			commands.push({
 				type: 'rect',
 				nodeId: node.id,
@@ -128,10 +130,10 @@ const buildNodeCommandsFromBounds = (
 				y,
 				width,
 				height,
-				fill: colorToPaint(node.fill),
+				fill: colorToPaint(resolvedStyle.fill),
 				cornerRadius: node.cornerRadius,
 				opacity: node.opacity,
-				effects: getRenderableEffects(node),
+				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
 			});
 		}
 
@@ -194,7 +196,7 @@ const buildNodeCommandsFromBounds = (
 			}
 		}
 	} else if (node.type === 'rectangle') {
-		if (node.fill || node.stroke) {
+		if (resolvedStyle.fill || node.stroke) {
 			commands.push({
 				type: 'rect',
 				nodeId: node.id,
@@ -202,16 +204,16 @@ const buildNodeCommandsFromBounds = (
 				y,
 				width,
 				height,
-				fill: node.fill ? colorToPaint(node.fill) : undefined,
+				fill: resolvedStyle.fill ? colorToPaint(resolvedStyle.fill) : undefined,
 				stroke: node.stroke ? colorToPaint(node.stroke.color) : undefined,
 				strokeWidth: node.stroke?.width,
 				cornerRadius: node.cornerRadius,
 				opacity: node.opacity,
-				effects: getRenderableEffects(node),
+				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
 			});
 		}
 	} else if (node.type === 'ellipse') {
-		if (node.fill || node.stroke) {
+		if (resolvedStyle.fill || node.stroke) {
 			commands.push({
 				type: 'ellipse',
 				nodeId: node.id,
@@ -219,11 +221,11 @@ const buildNodeCommandsFromBounds = (
 				y: y + height / 2,
 				radiusX: width / 2,
 				radiusY: height / 2,
-				fill: node.fill ? colorToPaint(node.fill) : undefined,
+				fill: resolvedStyle.fill ? colorToPaint(resolvedStyle.fill) : undefined,
 				stroke: node.stroke ? colorToPaint(node.stroke.color) : undefined,
 				strokeWidth: node.stroke?.width,
 				opacity: node.opacity,
-				effects: getRenderableEffects(node),
+				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
 			});
 		}
 	} else if (node.type === 'text') {
@@ -235,17 +237,17 @@ const buildNodeCommandsFromBounds = (
 			width,
 			height,
 			text: node.text || '',
-			font: `${node.fontWeight || 'normal'} ${node.fontSize || 14}px ${node.fontFamily || 'sans-serif'}`,
-			fontSize: node.fontSize || 14,
-			textAlign: node.textAlign ?? 'left',
-			lineHeightPx: node.lineHeightPx,
-			letterSpacingPx: node.letterSpacingPx ?? 0,
-			textResizeMode: node.textResizeMode ?? 'auto-width',
-			fill: colorToText(node.fill),
+			font: `${resolvedStyle.fontWeight || 'normal'} ${resolvedStyle.fontSize || 14}px ${resolvedStyle.fontFamily || 'sans-serif'}`,
+			fontSize: resolvedStyle.fontSize || 14,
+			textAlign: resolvedStyle.textAlign ?? 'left',
+			lineHeightPx: resolvedStyle.lineHeightPx,
+			letterSpacingPx: resolvedStyle.letterSpacingPx ?? 0,
+			textResizeMode: resolvedStyle.textResizeMode ?? 'auto-width',
+			fill: colorToText(resolvedStyle.fill),
 			opacity: node.opacity,
-			effects: getRenderableEffects(node),
+			effects: getRenderableEffects(node, doc, resolvedStyle.effects),
 		});
-		if (overflowIndicatorIds?.has(node.id) && (node.textResizeMode ?? 'auto-width') === 'fixed') {
+		if (overflowIndicatorIds?.has(node.id) && (resolvedStyle.textResizeMode ?? 'auto-width') === 'fixed') {
 			commands.push({
 				type: 'textOverflowIndicator',
 				nodeId: node.id,
@@ -272,7 +274,7 @@ const buildNodeCommandsFromBounds = (
 				maskSrc,
 				outline,
 				opacity: node.opacity,
-				effects: getRenderableEffects(node),
+				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
 			});
 		}
 	} else if (node.type === 'boolean') {
@@ -298,7 +300,7 @@ const buildNodeCommandsFromBounds = (
 		const pathData = getNodePathData(node, doc);
 		const fallbackOperandId = node.children?.[0];
 		const fallbackOperand = fallbackOperandId ? doc.nodes[fallbackOperandId] : null;
-		const fill = node.fill ?? fallbackOperand?.fill;
+		const fill = resolvedStyle.fill ?? fallbackOperand?.fill;
 		const stroke = node.stroke ?? fallbackOperand?.stroke;
 		const strokeWidth = node.stroke?.width ?? fallbackOperand?.stroke?.width;
 		if (pathData && (fill || stroke)) {
@@ -315,13 +317,13 @@ const buildNodeCommandsFromBounds = (
 				strokeWidth,
 				opacity: node.opacity,
 				fillRule: pathData.fillRule,
-				effects: getRenderableEffects(node),
+				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
 			});
 		}
 	} else if (node.type === 'path') {
 		const pathData = getNodePathData(node, doc);
 		const allowFill = node.vector ? node.vector.closed : true;
-		const fill = allowFill ? node.fill : undefined;
+		const fill = allowFill ? resolvedStyle.fill : undefined;
 		if (pathData && (fill || node.stroke)) {
 			commands.push({
 				type: 'path',
@@ -336,7 +338,7 @@ const buildNodeCommandsFromBounds = (
 				strokeWidth: node.stroke?.width,
 				opacity: node.opacity,
 				fillRule: pathData.fillRule,
-				effects: getRenderableEffects(node),
+				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
 			});
 		} else if (fill) {
 			const color = colorToPaint(fill);
@@ -349,7 +351,7 @@ const buildNodeCommandsFromBounds = (
 				height,
 				fill: color,
 				opacity: node.opacity,
-				effects: getRenderableEffects(node),
+				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
 			});
 		}
 	} else if (node.type === 'componentInstance') {
@@ -374,9 +376,10 @@ const buildNodeCommandsFromBounds = (
 	}
 };
 
-const getRenderableEffects = (node: Node): RenderableShadowEffect[] | undefined => {
+const getRenderableEffects = (node: Node, doc: Document, resolvedEffects?: ShadowEffect[]): RenderableShadowEffect[] | undefined => {
 	if (!ENABLE_SHADOWS_V1) return undefined;
-	const effects = ENABLE_AUTO_SHADOWS_V2 ? compileShadowEffects(node) : normalizeShadowEffects(node.effects);
+	const effectNode = resolvedEffects ? { ...node, effects: resolvedEffects } : node;
+	const effects = ENABLE_AUTO_SHADOWS_V2 ? compileShadowEffects(effectNode, doc) : normalizeShadowEffects(effectNode.effects);
 	return effects.length > 0 ? effects : undefined;
 };
 

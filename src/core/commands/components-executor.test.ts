@@ -29,7 +29,7 @@ const makeNode = (id: string, overrides: Partial<Node>): Node => ({
 });
 
 const makeDoc = (): Document => ({
-	version: 8,
+	version: 9,
 	rootId: 'root',
 	pages: [{ id: 'page_1', name: 'Page 1', rootId: 'root' }],
 	activePageId: 'page_1',
@@ -38,6 +38,8 @@ const makeDoc = (): Document => ({
 	},
 	assets: {},
 	components: { definitions: {}, sets: {} },
+	styles: { paint: {}, text: {}, effect: {}, grid: {} },
+	variables: { collections: {}, tokens: {}, activeModeByCollection: {} },
 });
 
 const makeDefinition = (id: string, setId: string, text: string, variant: Record<string, string>): ComponentDefinition => ({
@@ -140,6 +142,37 @@ export const runComponentExecutorUnitTests = (): UnitTestResult => {
 		},
 	});
 	assertEqual(failures, 'variant switch rematerializes with override replay', doc.nodes[runtimeTitleId]?.text, 'Custom Copy');
+
+	doc = applyCommand(doc, {
+		...makeBaseCommand('setComponentInstanceOverride'),
+		type: 'setComponentInstanceOverride',
+		payload: {
+			id: instanceId,
+			sourceNodeId: 'title',
+			patch: { fillStyleId: 'paint_style_primary' },
+		},
+	});
+	assertEqual(
+		failures,
+		'style-link override applies to materialized child',
+		doc.nodes[runtimeTitleId]?.fillStyleId,
+		'paint_style_primary',
+	);
+
+	doc = applyCommand(doc, {
+		...makeBaseCommand('setComponentInstanceVariant'),
+		type: 'setComponentInstanceVariant',
+		payload: {
+			id: instanceId,
+			variant: { state: 'default' },
+		},
+	});
+	assertEqual(
+		failures,
+		'style-link override persists after rematerialization',
+		doc.nodes[runtimeTitleId]?.fillStyleId,
+		'paint_style_primary',
+	);
 
 	doc = applyCommand(doc, {
 		...makeBaseCommand('detachComponentInstance'),

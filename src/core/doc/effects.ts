@@ -1,5 +1,6 @@
 import { recordAutoShadowCompileDuration } from './performance';
-import type { Node, RenderableShadowEffect, ShadowBlendMode, ShadowEffect } from './types';
+import { resolveVariableTokenValue } from './styles';
+import type { Document, Node, RenderableShadowEffect, ShadowBlendMode, ShadowEffect } from './types';
 
 export type ShadowOverflow = 'visible' | 'clipped' | 'clip-content-only';
 
@@ -80,19 +81,25 @@ export const normalizeShadowEffects = (effects: ShadowEffect[] | undefined): Ren
 	return effects.filter(isRenderableShadowEffect).map(normalizeShadowEffect);
 };
 
-const readBoundValue = (node: Node, key: string | undefined): string | number | undefined => {
-	if (!key || !node.effectVariables) return undefined;
+const readBoundValue = (node: Node, key: string | undefined, doc?: Document): string | number | undefined => {
+	if (!key) return undefined;
+	const tokenValue = doc ? resolveVariableTokenValue(doc, key) : undefined;
+	if (typeof tokenValue === 'string' || typeof tokenValue === 'number') {
+		return tokenValue;
+	}
+	if (!node.effectVariables) return undefined;
 	return node.effectVariables[key];
 };
 
 const readBoundNumber = (
 	node: Node,
 	key: string | undefined,
+	doc: Document | undefined,
 	fallback: number,
 	min: number,
 	max: number,
 ): number => {
-	const raw = readBoundValue(node, key);
+	const raw = readBoundValue(node, key, doc);
 	if (typeof raw === 'number') {
 		return clamp(raw, min, max);
 	}
@@ -105,16 +112,21 @@ const readBoundNumber = (
 	return clamp(fallback, min, max);
 };
 
-const readBoundColor = (node: Node, key: string | undefined, fallback: string): string => {
-	const raw = readBoundValue(node, key);
+const readBoundColor = (node: Node, key: string | undefined, doc: Document | undefined, fallback: string): string => {
+	const raw = readBoundValue(node, key, doc);
 	if (typeof raw === 'string' && raw.trim()) {
 		return raw;
 	}
 	return fallback || DEFAULT_AUTO_COLOR;
 };
 
-const readBoundBlendMode = (node: Node, key: string | undefined, fallback: ShadowBlendMode): ShadowBlendMode => {
-	const raw = readBoundValue(node, key);
+const readBoundBlendMode = (
+	node: Node,
+	key: string | undefined,
+	doc: Document | undefined,
+	fallback: ShadowBlendMode,
+): ShadowBlendMode => {
+	const raw = readBoundValue(node, key, doc);
 	if (typeof raw === 'string' && isShadowBlendMode(raw)) {
 		return raw;
 	}
@@ -124,16 +136,17 @@ const readBoundBlendMode = (node: Node, key: string | undefined, fallback: Shado
 export const resolveEffectVariables = (
 	node: Node,
 	effect: Extract<ShadowEffect, { type: 'auto' }>,
+	doc?: Document,
 ): AutoShadowResolvedValues => {
 	const bindings = effect.bindings ?? {};
 	return {
-		elevation: readBoundNumber(node, bindings.elevation, effect.elevation, 0, 24),
-		angle: readBoundNumber(node, bindings.angle, effect.angle, -360, 360),
-		distance: readBoundNumber(node, bindings.distance, effect.distance, 0, 80),
-		softness: readBoundNumber(node, bindings.softness, effect.softness, 0, 100),
-		color: readBoundColor(node, bindings.color, effect.color),
-		opacity: readBoundNumber(node, bindings.opacity, effect.opacity, 0, 1),
-		blendMode: readBoundBlendMode(node, bindings.blendMode, effect.blendMode ?? DEFAULT_BLEND_MODE),
+		elevation: readBoundNumber(node, bindings.elevation, doc, effect.elevation, 0, 24),
+		angle: readBoundNumber(node, bindings.angle, doc, effect.angle, -360, 360),
+		distance: readBoundNumber(node, bindings.distance, doc, effect.distance, 0, 80),
+		softness: readBoundNumber(node, bindings.softness, doc, effect.softness, 0, 100),
+		color: readBoundColor(node, bindings.color, doc, effect.color),
+		opacity: readBoundNumber(node, bindings.opacity, doc, effect.opacity, 0, 1),
+		blendMode: readBoundBlendMode(node, bindings.blendMode, doc, effect.blendMode ?? DEFAULT_BLEND_MODE),
 	};
 };
 
@@ -197,7 +210,7 @@ export const compileAutoShadow = (
 	return [normalizeShadowEffect(ambient), normalizeShadowEffect(key)];
 };
 
-export const compileShadowEffects = (node: Node): RenderableShadowEffect[] => {
+export const compileShadowEffects = (node: Node, doc?: Document): RenderableShadowEffect[] => {
 	const effects = node.effects ?? [];
 	if (effects.length === 0) return [];
 
@@ -207,7 +220,7 @@ export const compileShadowEffects = (node: Node): RenderableShadowEffect[] => {
 	for (const effect of effects) {
 		if (effect.type === 'auto') {
 			const started = performance.now();
-			const resolved = resolveEffectVariables(node, effect);
+			const resolved = resolveEffectVariables(node, effect, doc);
 			compiled.push(...compileAutoShadow(effect, resolved));
 			autoCompileMs += performance.now() - started;
 			continue;

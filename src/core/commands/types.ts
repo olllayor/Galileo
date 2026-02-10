@@ -5,7 +5,13 @@ import type {
 	ComponentOverridePatch,
 	ComponentSet,
 	ComponentVariantMap,
+	EffectStyle,
+	GridStyle,
 	Node,
+	PaintStyle,
+	StyleVariableCollection,
+	StyleVariableToken,
+	TextStyle,
 } from '../doc/types';
 
 export interface BaseCommand {
@@ -280,6 +286,69 @@ export interface DetachComponentInstanceCommand extends BaseCommand {
 	};
 }
 
+export type SharedStyleKind = 'paint' | 'text' | 'effect' | 'grid';
+export type SharedStylePayloadByKind = {
+	paint: PaintStyle;
+	text: TextStyle;
+	effect: EffectStyle;
+	grid: GridStyle;
+};
+type UpsertSharedStylePayload = {
+	[K in SharedStyleKind]: {
+		kind: K;
+		style: SharedStylePayloadByKind[K];
+	};
+}[SharedStyleKind];
+
+export interface UpsertSharedStyleCommand extends BaseCommand {
+	type: 'upsertSharedStyle';
+	payload: UpsertSharedStylePayload;
+}
+
+export interface RemoveSharedStyleCommand extends BaseCommand {
+	type: 'removeSharedStyle';
+	payload: {
+		kind: SharedStyleKind;
+		id: string;
+	};
+}
+
+export interface UpsertVariableCollectionCommand extends BaseCommand {
+	type: 'upsertVariableCollection';
+	payload: {
+		collection: StyleVariableCollection;
+	};
+}
+
+export interface RemoveVariableCollectionCommand extends BaseCommand {
+	type: 'removeVariableCollection';
+	payload: {
+		collectionId: string;
+	};
+}
+
+export interface UpsertVariableTokenCommand extends BaseCommand {
+	type: 'upsertVariableToken';
+	payload: {
+		token: StyleVariableToken;
+	};
+}
+
+export interface RemoveVariableTokenCommand extends BaseCommand {
+	type: 'removeVariableToken';
+	payload: {
+		tokenId: string;
+	};
+}
+
+export interface SetVariableCollectionModeCommand extends BaseCommand {
+	type: 'setVariableCollectionMode';
+	payload: {
+		collectionId: string;
+		modeId: string;
+	};
+}
+
 export type Command =
 	| CreateNodeCommand
 	| DeleteNodeCommand
@@ -310,7 +379,14 @@ export type Command =
 	| InsertComponentInstanceCommand
 	| SetComponentInstanceVariantCommand
 	| SetComponentInstanceOverrideCommand
-	| DetachComponentInstanceCommand;
+	| DetachComponentInstanceCommand
+	| UpsertSharedStyleCommand
+	| RemoveSharedStyleCommand
+	| UpsertVariableCollectionCommand
+	| RemoveVariableCollectionCommand
+	| UpsertVariableTokenCommand
+	| RemoveVariableTokenCommand
+	| SetVariableCollectionModeCommand;
 
 export const isCommand = (value: unknown): value is Command => {
 	if (typeof value !== 'object' || value === null) {

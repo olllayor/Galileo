@@ -40,6 +40,7 @@ import { FontPickerModal } from './FontPickerModal';
 interface PropertiesPanelProps {
 	selectedNode: Node | null;
 	document: Document;
+	styles: Document['styles'];
 	width?: number;
 	collapsed?: boolean;
 	isResizing?: boolean;
@@ -78,6 +79,7 @@ interface PropertiesPanelProps {
 	onDetachComponentInstance?: (instanceId: string) => void;
 	onResetComponentOverride?: (instanceId: string, sourceNodeId: string) => void;
 	onResetAllComponentOverrides?: (instanceId: string) => void;
+	onCreateSharedStyleFromNode?: (nodeId: string, kind: 'paint' | 'text' | 'effect' | 'grid') => void;
 }
 
 const defaultLayout: Layout = {
@@ -159,6 +161,7 @@ type EffectVariableRow = { key: string; value: string };
 export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	selectedNode,
 	document,
+	styles,
 	width = panels.right.width,
 	collapsed = false,
 	isResizing = false,
@@ -181,6 +184,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	onDetachComponentInstance,
 	onResetComponentOverride,
 	onResetAllComponentOverrides,
+	onCreateSharedStyleFromNode,
 }) => {
 	const [draggedEffectIndex, setDraggedEffectIndex] = React.useState<number | null>(null);
 	const [fontPickerOpen, setFontPickerOpen] = React.useState(false);
@@ -481,6 +485,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 		key,
 		value: String(value),
 	}));
+	const paintStyles = Object.values(styles.paint).sort((a, b) => a.name.localeCompare(b.name));
+	const textStyles = Object.values(styles.text).sort((a, b) => a.name.localeCompare(b.name));
+	const effectStyles = Object.values(styles.effect).sort((a, b) => a.name.localeCompare(b.name));
+	const gridStyles = Object.values(styles.grid).sort((a, b) => a.name.localeCompare(b.name));
 
 	const updateEffects = (nextEffects: ShadowEffect[]) => {
 		handleInputChange('effects', nextEffects);
@@ -619,6 +627,229 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						<path d="M9 18l6-6-6-6" />
 					</svg>
 				</button>
+			</div>
+
+			<div style={{ marginBottom: spacing.lg }}>
+				<h4
+					style={{
+						margin: `0 0 ${spacing.sm} 0`,
+						fontSize: typography.fontSize.sm,
+						color: colors.text.secondary,
+						fontWeight: typography.fontWeight.medium,
+					}}
+				>
+					Shared Styles
+				</h4>
+				<div style={{ display: 'grid', gap: spacing.xs }}>
+					<div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.xs }}>
+						<select
+							value={selectedNode.fillStyleId ?? ''}
+							onChange={(event) => handleInputChange('fillStyleId', event.target.value || undefined)}
+							style={{
+								padding: `${spacing.xs} ${spacing.sm}`,
+								borderRadius: radii.sm,
+								border: `1px solid ${colors.border.default}`,
+								backgroundColor: colors.bg.secondary,
+								color: colors.text.primary,
+								fontSize: typography.fontSize.sm,
+							}}
+						>
+							<option value="">Fill style</option>
+							{paintStyles.map((style) => (
+								<option key={style.id} value={style.id}>
+									{style.name}
+								</option>
+							))}
+						</select>
+						<button
+							type="button"
+							onClick={() => onCreateSharedStyleFromNode?.(selectedNode.id, 'paint')}
+							style={{
+								padding: `${spacing.xs} ${spacing.sm}`,
+								borderRadius: radii.sm,
+								border: `1px solid ${colors.border.default}`,
+								backgroundColor: colors.bg.secondary,
+								color: colors.text.secondary,
+								fontSize: typography.fontSize.sm,
+								cursor: 'pointer',
+							}}
+						>
+							Create
+						</button>
+						<button
+							type="button"
+							onClick={() => handleInputChange('fillStyleId', undefined)}
+							style={{
+								padding: `${spacing.xs} ${spacing.sm}`,
+								borderRadius: radii.sm,
+								border: `1px solid ${colors.border.default}`,
+								backgroundColor: colors.bg.secondary,
+								color: colors.text.secondary,
+								fontSize: typography.fontSize.sm,
+								cursor: 'pointer',
+							}}
+						>
+							Detach
+						</button>
+					</div>
+					{selectedNode.type === 'text' && (
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.xs }}>
+							<select
+								value={selectedNode.textStyleId ?? ''}
+								onChange={(event) => handleInputChange('textStyleId', event.target.value || undefined)}
+								style={{
+									padding: `${spacing.xs} ${spacing.sm}`,
+									borderRadius: radii.sm,
+									border: `1px solid ${colors.border.default}`,
+									backgroundColor: colors.bg.secondary,
+									color: colors.text.primary,
+									fontSize: typography.fontSize.sm,
+								}}
+							>
+								<option value="">Text style</option>
+								{textStyles.map((style) => (
+									<option key={style.id} value={style.id}>
+										{style.name}
+									</option>
+								))}
+							</select>
+							<button
+								type="button"
+								onClick={() => onCreateSharedStyleFromNode?.(selectedNode.id, 'text')}
+								style={{
+									padding: `${spacing.xs} ${spacing.sm}`,
+									borderRadius: radii.sm,
+									border: `1px solid ${colors.border.default}`,
+									backgroundColor: colors.bg.secondary,
+									color: colors.text.secondary,
+									fontSize: typography.fontSize.sm,
+									cursor: 'pointer',
+								}}
+							>
+								Create
+							</button>
+							<button
+								type="button"
+								onClick={() => handleInputChange('textStyleId', undefined)}
+								style={{
+									padding: `${spacing.xs} ${spacing.sm}`,
+									borderRadius: radii.sm,
+									border: `1px solid ${colors.border.default}`,
+									backgroundColor: colors.bg.secondary,
+									color: colors.text.secondary,
+									fontSize: typography.fontSize.sm,
+									cursor: 'pointer',
+								}}
+							>
+								Detach
+							</button>
+						</div>
+					)}
+					<div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.xs }}>
+						<select
+							value={selectedNode.effectStyleId ?? ''}
+							onChange={(event) => handleInputChange('effectStyleId', event.target.value || undefined)}
+							style={{
+								padding: `${spacing.xs} ${spacing.sm}`,
+								borderRadius: radii.sm,
+								border: `1px solid ${colors.border.default}`,
+								backgroundColor: colors.bg.secondary,
+								color: colors.text.primary,
+								fontSize: typography.fontSize.sm,
+							}}
+						>
+							<option value="">Effect style</option>
+							{effectStyles.map((style) => (
+								<option key={style.id} value={style.id}>
+									{style.name}
+								</option>
+							))}
+						</select>
+						<button
+							type="button"
+							onClick={() => onCreateSharedStyleFromNode?.(selectedNode.id, 'effect')}
+							style={{
+								padding: `${spacing.xs} ${spacing.sm}`,
+								borderRadius: radii.sm,
+								border: `1px solid ${colors.border.default}`,
+								backgroundColor: colors.bg.secondary,
+								color: colors.text.secondary,
+								fontSize: typography.fontSize.sm,
+								cursor: 'pointer',
+							}}
+						>
+							Create
+						</button>
+						<button
+							type="button"
+							onClick={() => handleInputChange('effectStyleId', undefined)}
+							style={{
+								padding: `${spacing.xs} ${spacing.sm}`,
+								borderRadius: radii.sm,
+								border: `1px solid ${colors.border.default}`,
+								backgroundColor: colors.bg.secondary,
+								color: colors.text.secondary,
+								fontSize: typography.fontSize.sm,
+								cursor: 'pointer',
+							}}
+						>
+							Detach
+						</button>
+					</div>
+					{selectedNode.type === 'frame' && (
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.xs }}>
+							<select
+								value={selectedNode.gridStyleId ?? ''}
+								onChange={(event) => handleInputChange('gridStyleId', event.target.value || undefined)}
+								style={{
+									padding: `${spacing.xs} ${spacing.sm}`,
+									borderRadius: radii.sm,
+									border: `1px solid ${colors.border.default}`,
+									backgroundColor: colors.bg.secondary,
+									color: colors.text.primary,
+									fontSize: typography.fontSize.sm,
+								}}
+							>
+								<option value="">Grid style</option>
+								{gridStyles.map((style) => (
+									<option key={style.id} value={style.id}>
+										{style.name}
+									</option>
+								))}
+							</select>
+							<button
+								type="button"
+								onClick={() => onCreateSharedStyleFromNode?.(selectedNode.id, 'grid')}
+								style={{
+									padding: `${spacing.xs} ${spacing.sm}`,
+									borderRadius: radii.sm,
+									border: `1px solid ${colors.border.default}`,
+									backgroundColor: colors.bg.secondary,
+									color: colors.text.secondary,
+									fontSize: typography.fontSize.sm,
+									cursor: 'pointer',
+								}}
+							>
+								Create
+							</button>
+							<button
+								type="button"
+								onClick={() => handleInputChange('gridStyleId', undefined)}
+								style={{
+									padding: `${spacing.xs} ${spacing.sm}`,
+									borderRadius: radii.sm,
+									border: `1px solid ${colors.border.default}`,
+									backgroundColor: colors.bg.secondary,
+									color: colors.text.secondary,
+									fontSize: typography.fontSize.sm,
+									cursor: 'pointer',
+								}}
+							>
+								Detach
+							</button>
+						</div>
+					)}
+				</div>
 			</div>
 
 			{is3dIcon && imageMeta && (
@@ -2831,7 +3062,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								marginBottom: spacing.xs,
 							}}
 						>
-							<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary }}>Effect Variables</div>
+							<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary }}>Legacy Effect Variables</div>
 							<button
 								type="button"
 								onClick={addEffectVariable}
@@ -2850,7 +3081,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						</div>
 						{effectVariableRows.length === 0 && (
 							<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary }}>
-								No effect variables on this node.
+								No legacy effect variables on this node.
 							</div>
 						)}
 						{effectVariableRows.map((row) => (

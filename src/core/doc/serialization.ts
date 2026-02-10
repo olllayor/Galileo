@@ -1,6 +1,20 @@
-import { documentSchema, type ComponentDefinition, type ComponentSet, type Document, type Node } from './types';
+import {
+	documentSchema,
+	effectStyleSchema,
+	gridStyleSchema,
+	paintStyleSchema,
+	textStyleSchema,
+	type ComponentDefinition,
+	type ComponentSet,
+	type Document,
+	type Node,
+	type StyleLibrary,
+	type StyleVariableCollection,
+	type StyleVariableLibrary,
+	type StyleVariableToken,
+} from './types';
 
-export const CURRENT_DOCUMENT_VERSION = 8;
+export const CURRENT_DOCUMENT_VERSION = 9;
 
 export type DocumentParseResult =
   | { ok: true; doc: Document; warnings: string[] }
@@ -76,6 +90,9 @@ const migrateDocument = (raw: unknown): DocumentParseResult => {
 		const migratedNodes = Object.fromEntries(
 			Object.entries(rawNodes).map(([id, node]) => [id, migrateNode(node, version)]),
 		);
+		const styles = normalizeStyleLibrary((raw as { styles?: unknown }).styles);
+		const variables = normalizeVariableLibrary((raw as { variables?: unknown }).variables, warnings);
+		const migratedVariables = migrateLegacyEffectVariablesToVariableLibrary(migratedNodes, variables, warnings);
 
 		migrated = {
 			...rawObject,
@@ -86,7 +103,15 @@ const migrateDocument = (raw: unknown): DocumentParseResult => {
 				version < 7
 					? migrateLegacyComponents(migratedNodes)
 					: normalizeComponents((raw as { components?: unknown }).components),
+			styles,
+			variables: migratedVariables,
 		} as Document;
+	} else {
+		migrated = {
+			...(raw as Document),
+			styles: normalizeStyleLibrary((raw as { styles?: unknown }).styles),
+			variables: normalizeVariableLibrary((raw as { variables?: unknown }).variables, warnings),
+		};
 	}
 
 	migrated = normalizePages(migrated, warnings);
@@ -224,6 +249,222 @@ const normalizeNodeForComponentTemplate = (node: Record<string, unknown>): Recor
 type ComponentsLibraryLike = {
 	definitions: Record<string, ComponentDefinition>;
 	sets: Record<string, ComponentSet>;
+};
+
+type VariableCollectionLike = StyleVariableCollection;
+type VariableTokenLike = StyleVariableToken;
+type VariableLibraryLike = StyleVariableLibrary;
+
+const normalizeStyleRecord = <T>(
+	raw: unknown,
+	parse: (value: unknown) => T | undefined,
+): Record<string, T> => {
+	if (!raw || typeof raw !== 'object') {
+		return {};
+	}
+	const source = raw as Record<string, unknown>;
+	const next: Record<string, T> = {};
+	for (const [id, entry] of Object.entries(source)) {
+		const parsed = parse(entry);
+		if (!parsed) continue;
+		next[id] = parsed;
+	}
+	return next;
+};
+
+const normalizeStyleLibrary = (raw: unknown): StyleLibrary => {
+	if (!raw || typeof raw !== 'object') {
+		return { paint: {}, text: {}, effect: {}, grid: {} };
+	}
+	const value = raw as Record<string, unknown>;
+	const paint = normalizeStyleRecord(value.paint, (entry) => {
+		const parsed = paintStyleSchema.safeParse(entry);
+		return parsed.success ? parsed.data : undefined;
+	});
+	const text = normalizeStyleRecord(value.text, (entry) => {
+		const parsed = textStyleSchema.safeParse(entry);
+		return parsed.success ? parsed.data : undefined;
+	});
+	const effect = normalizeStyleRecord(value.effect, (entry) => {
+		const parsed = effectStyleSchema.safeParse(entry);
+		return parsed.success ? parsed.data : undefined;
+	});
+	const grid = normalizeStyleRecord(value.grid, (entry) => {
+		const parsed = gridStyleSchema.safeParse(entry);
+		return parsed.success ? parsed.data : undefined;
+	});
+	return { paint, text, effect, grid };
+};
+
+const normalizeVariableLibrary = (raw: unknown, warnings: string[]): VariableLibraryLike => {
+	const fallback: VariableLibraryLike = {
+		collections: {},
+		tokens: {},
+		activeModeByCollection: {},
+	};
+	if (!raw || typeof raw !== 'object') {
+		return fallback;
+	}
+	const value = raw as Record<string, unknown>;
+	const rawCollections =
+		value.collections && typeof value.collections === 'object'
+			? (value.collections as Record<string, Record<string, unknown>>)
+			: {};
+	const rawTokens =
+		value.tokens && typeof value.tokens === 'object' ? (value.tokens as Record<string, Record<string, unknown>>) : {};
+	const rawActiveModes =
+		value.activeModeByCollection && typeof value.activeModeByCollection === 'object'
+			? (value.activeModeByCollection as Record<string, unknown>)
+			: {};
+
+	const collections: Record<string, VariableCollectionLike> = {};
+	for (const [id, collection] of Object.entries(rawCollections)) {
+		if (!collection || typeof collection !== 'object') continue;
+		const modesRaw = Array.isArray(collection.modes) ? collection.modes : [];
+		const modes = modesRaw
+			.map((mode, index) => {
+				if (!mode || typeof mode !== 'object') return null;
+				const entry = mode as Record<string, unknown>;
+				const modeId = typeof entry.id === 'string' && entry.id.trim().length > 0 ? entry.id : `mode_${index + 1}`;
+				const modeName = typeof entry.name === 'string' && entry.name.trim().length > 0 ? entry.name : `Mode ${index + 1}`;
+				return { id: modeId, name: modeName };
+			})
+			.filter((mode): mode is { id: string; name: string } => Boolean(mode));
+		if (modes.length === 0) {
+			modes.push({ id: 'mode_default', name: 'Default' });
+		}
+		const defaultModeIdRaw = typeof collection.defaultModeId === 'string' ? collection.defaultModeId : undefined;
+		const defaultModeId = modes.some((mode) => mode.id === defaultModeIdRaw) ? defaultModeIdRaw : modes[0].id;
+		collections[id] = {
+			id,
+			name: typeof collection.name === 'string' && collection.name.trim().length > 0 ? collection.name : id,
+			modes,
+			defaultModeId,
+		};
+	}
+
+	const tokens: Record<string, VariableTokenLike> = {};
+	for (const [id, token] of Object.entries(rawTokens)) {
+		if (!token || typeof token !== 'object') continue;
+		const tokenType = token.type === 'color' || token.type === 'number' || token.type === 'string' ? token.type : 'string';
+		const valuesByModeRaw =
+			token.valuesByMode && typeof token.valuesByMode === 'object'
+				? (token.valuesByMode as Record<string, unknown>)
+				: {};
+		const valuesByMode = Object.fromEntries(
+			Object.entries(valuesByModeRaw)
+				.filter(([, value]) => typeof value === 'string' || typeof value === 'number')
+				.map(([modeId, value]) => [modeId, value as string | number]),
+		);
+		const collectionId = typeof token.collectionId === 'string' ? token.collectionId : '';
+		if (!collectionId) continue;
+		tokens[id] = {
+			id,
+			name: typeof token.name === 'string' && token.name.trim().length > 0 ? token.name : id,
+			collectionId,
+			type: tokenType,
+			valuesByMode,
+		};
+	}
+
+	const activeModeByCollection: Record<string, string> = {};
+	for (const [collectionId, collection] of Object.entries(collections)) {
+		const requested =
+			typeof rawActiveModes[collectionId] === 'string' ? (rawActiveModes[collectionId] as string) : collection.defaultModeId;
+		const fallbackModeId = collection.defaultModeId ?? collection.modes[0]?.id ?? 'mode_default';
+		const modeId = requested && collection.modes.some((mode) => mode.id === requested) ? requested : fallbackModeId;
+		activeModeByCollection[collectionId] = modeId;
+	}
+
+	if (Object.keys(collections).length > 0 && Object.keys(activeModeByCollection).length === 0) {
+		warnings.push('Variable active modes were missing and have been normalized');
+	}
+
+	return { collections, tokens, activeModeByCollection };
+};
+
+const inferVariableType = (value: string | number): 'color' | 'number' | 'string' => {
+	if (typeof value === 'number') return 'number';
+	const trimmed = value.trim();
+	if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(trimmed)) return 'color';
+	const parsed = Number(trimmed);
+	if (Number.isFinite(parsed)) return 'number';
+	return 'string';
+};
+
+const normalizeTokenValue = (value: string | number, type: 'color' | 'number' | 'string'): string | number => {
+	if (type === 'number') {
+		if (typeof value === 'number') return value;
+		const parsed = Number(value.trim());
+		return Number.isFinite(parsed) ? parsed : 0;
+	}
+	return typeof value === 'string' ? value : String(value);
+};
+
+const sanitizeIdSegment = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+const migrateLegacyEffectVariablesToVariableLibrary = (
+	nodes: Record<string, unknown>,
+	library: VariableLibraryLike,
+	warnings: string[],
+): VariableLibraryLike => {
+	const migratedCollectionId = 'legacy_effect_variables';
+	const migratedModeId = 'mode_default';
+	const migratedCollectionName = 'Legacy Effect Variables';
+
+	const next: VariableLibraryLike = {
+		collections: { ...library.collections },
+		tokens: { ...library.tokens },
+		activeModeByCollection: { ...library.activeModeByCollection },
+	};
+
+	let migratedCount = 0;
+	for (const rawNode of Object.values(nodes)) {
+		if (!rawNode || typeof rawNode !== 'object') continue;
+		const node = rawNode as Record<string, unknown>;
+		const effectVariablesRaw =
+			node.effectVariables && typeof node.effectVariables === 'object'
+				? (node.effectVariables as Record<string, unknown>)
+				: null;
+		if (!effectVariablesRaw) continue;
+
+		for (const [key, value] of Object.entries(effectVariablesRaw)) {
+			if (typeof value !== 'string' && typeof value !== 'number') continue;
+			if (!next.collections[migratedCollectionId]) {
+				next.collections[migratedCollectionId] = {
+					id: migratedCollectionId,
+					name: migratedCollectionName,
+					modes: [{ id: migratedModeId, name: 'Default' }],
+					defaultModeId: migratedModeId,
+				};
+				next.activeModeByCollection[migratedCollectionId] = migratedModeId;
+			}
+			let tokenId = `legacy/${sanitizeIdSegment(key)}`;
+			if (!tokenId || tokenId === 'legacy/') {
+				tokenId = `legacy/token_${Object.keys(next.tokens).length + 1}`;
+			}
+			if (next.tokens[tokenId]) {
+				continue;
+			}
+			const tokenType = inferVariableType(value);
+			next.tokens[tokenId] = {
+				id: tokenId,
+				name: key,
+				collectionId: migratedCollectionId,
+				type: tokenType,
+				valuesByMode: {
+					[migratedModeId]: normalizeTokenValue(value, tokenType),
+				},
+			};
+			migratedCount += 1;
+		}
+	}
+
+	if (migratedCount > 0) {
+		warnings.push(`Migrated ${migratedCount} legacy effect variable(s) into the default variables library`);
+	}
+
+	return next;
 };
 
 const normalizeComponents = (raw: unknown): ComponentsLibraryLike => {

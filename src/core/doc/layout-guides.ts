@@ -1,4 +1,6 @@
 import type { Bounds } from './geometry';
+import { resolveGridStyle } from './styles';
+import type { Document } from './types';
 import type { LayoutGuide, LayoutGuideType, Node } from './types';
 
 export type LayoutGuideLine = { orientation: 'vertical' | 'horizontal'; value: number };
@@ -23,9 +25,13 @@ const clampNonNegative = (value: number, fallback: number): number => {
 	return Math.max(0, value);
 };
 
-export const computeLayoutGuideLines = (frame: Node, frameBounds: Bounds): LayoutGuideLine[] => {
+export const resolveNodeLayoutGuides = (doc: Document, node: Node): LayoutGuide | undefined => {
+	return resolveGridStyle(doc, node.gridStyleId) ?? node.layoutGuides;
+};
+
+export const computeLayoutGuideLines = (frame: Node, frameBounds: Bounds, resolvedGuides?: LayoutGuide): LayoutGuideLine[] => {
 	if (frame.type !== 'frame') return [];
-	const guides = frame.layoutGuides;
+	const guides = resolvedGuides ?? frame.layoutGuides;
 	if (!guides) return [];
 	if (guides.visible === false) return [];
 
@@ -79,8 +85,8 @@ export const computeLayoutGuideLines = (frame: Node, frameBounds: Bounds): Layou
 	return lines;
 };
 
-export const buildLayoutGuideTargets = (frame: Node, frameBounds: Bounds): LayoutGuideTargets => {
-	const lines = computeLayoutGuideLines(frame, frameBounds);
+export const buildLayoutGuideTargets = (frame: Node, frameBounds: Bounds, resolvedGuides?: LayoutGuide): LayoutGuideTargets => {
+	const lines = computeLayoutGuideLines(frame, frameBounds, resolvedGuides);
 	const xSet = new Set<number>();
 	const ySet = new Set<number>();
 	for (const line of lines) {

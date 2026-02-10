@@ -36,6 +36,8 @@ import {
 	buildLayoutGuideTargets,
 	computeConstrainedBounds,
 	computeLayoutGuideLines,
+	resolveNodeLayoutGuides,
+	resolveNodeStyleProps,
 	buildComponentSetFromDefinition,
 	extractComponentDefinitionFromSelection,
 	findParentNode,
@@ -65,11 +67,17 @@ import type {
 	ImageMetaUnsplash,
 	ImageOutline,
 	Node,
+	EffectStyle,
+	GridStyle,
+	PaintStyle,
 	Page,
 	ShadowEffect,
+	StyleVariableCollection,
+	StyleVariableToken,
+	TextStyle,
 	VectorPoint,
 } from './core/doc/types';
-import type { Command } from './core/commands/types';
+import type { Command, SharedStyleKind } from './core/commands/types';
 import { layoutText } from './core/text/layout';
 import {
 	createProjectMeta,
@@ -1873,10 +1881,12 @@ export const App: React.FC = () => {
 	const layoutGuideState = useMemo(() => {
 		if (selectionIds.length !== 1) return { lines: [], bounds: null as Bounds | null };
 		const node = displayDocument.nodes[selectionIds[0]];
-		if (!node || node.type !== 'frame' || !node.layoutGuides) return { lines: [], bounds: null };
+		if (!node || node.type !== 'frame') return { lines: [], bounds: null };
+		const guides = resolveNodeLayoutGuides(displayDocument, node);
+		if (!guides) return { lines: [], bounds: null };
 		const bounds = boundsMap[node.id];
 		if (!bounds) return { lines: [], bounds: null };
-		return { lines: computeLayoutGuideLines(node, bounds), bounds };
+		return { lines: computeLayoutGuideLines(node, bounds, guides), bounds };
 	}, [selectionIds, displayDocument, boundsMap]);
 	const pluginMap = useMemo(() => {
 		return new Map(plugins.map((plugin) => [plugin.manifest.id, plugin]));
@@ -2042,14 +2052,16 @@ export const App: React.FC = () => {
 		(parentId: string | null): SnapTargets => {
 			if (!parentId) return { x: [], y: [] };
 			const parent = document.nodes[parentId];
-			if (!parent || parent.type !== 'frame' || !parent.layoutGuides) {
+			if (!parent || parent.type !== 'frame') {
 				return { x: [], y: [] };
 			}
+			const guides = resolveNodeLayoutGuides(document, parent);
+			if (!guides) return { x: [], y: [] };
 			const parentBounds = boundsMap[parentId];
 			if (!parentBounds) return { x: [], y: [] };
-			return buildLayoutGuideTargets(parent, parentBounds);
+			return buildLayoutGuideTargets(parent, parentBounds, guides);
 		},
-		[document.nodes, boundsMap],
+		[document, boundsMap],
 	);
 	const getEdgeCursorForNode = useCallback(
 		(nodeId: string, worldX: number, worldY: number): string => {
@@ -3254,8 +3266,8 @@ export const App: React.FC = () => {
 		[
 			applyPropsToSelection,
 			deleteNodes,
+			document,
 			documentParentMap,
-			document.nodes,
 			duplicateNodes,
 			groupNodes,
 			ungroupNodes,
@@ -4379,6 +4391,72 @@ export const App: React.FC = () => {
 		[],
 	);
 
+	useEffect(() => {
+		if (!ENABLE_TEXT_PARITY_V1) return;
+		if (textEditSession) return;
+
+		const remeasureCommands: Command[] = [];
+		for (const node of Object.values(document.nodes)) {
+			if (node.type !== 'text' || !node.textStyleId) continue;
+			const resolved = resolveNodeStyleProps(document, node);
+			const resizeMode = resolved.textResizeMode ?? node.textResizeMode ?? 'auto-width';
+			if (resizeMode === 'fixed') continue;
+
+			const measured = measureTextSize({
+				text: node.text ?? '',
+				fontSize: resolved.fontSize ?? node.fontSize ?? 16,
+				fontFamily: resolved.fontFamily ?? node.fontFamily ?? 'Inter, sans-serif',
+				fontWeight: resolved.fontWeight ?? node.fontWeight ?? 'normal',
+				textAlign: resolved.textAlign ?? node.textAlign ?? 'left',
+				lineHeightPx: resolved.lineHeightPx ?? node.lineHeightPx,
+				letterSpacingPx: resolved.letterSpacingPx ?? node.letterSpacingPx ?? 0,
+				textResizeMode: resizeMode,
+				width: node.size.width,
+				height: node.size.height,
+			});
+			const nextSize =
+				resizeMode === 'auto-height'
+					? { width: Math.max(1, Math.ceil(node.size.width)), height: measured.height }
+					: measured;
+			if (
+				Math.abs(nextSize.width - node.size.width) < 0.5 &&
+				Math.abs(nextSize.height - node.size.height) < 0.5
+			) {
+				continue;
+			}
+			remeasureCommands.push({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Remeasure text from style update',
+				type: 'setProps',
+				payload: {
+					id: node.id,
+					props: { size: nextSize },
+				},
+			});
+		}
+
+		if (remeasureCommands.length === 0) return;
+		executeCommand(
+			remeasureCommands.length === 1
+				? remeasureCommands[0]
+				: {
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'user',
+						description: 'Remeasure styled text nodes',
+						type: 'batch',
+						payload: { commands: remeasureCommands },
+					},
+		);
+	}, [
+		document,
+		executeCommand,
+		measureTextSize,
+		textEditSession,
+	]);
+
 	const startTextEditing = useCallback(
 		(
 			nodeId: string,
@@ -4513,6 +4591,13 @@ export const App: React.FC = () => {
 	}, [document, textEditSession]);
 
 	const editingTextNode = textEditSession ? document.nodes[textEditSession.nodeId] : null;
+	const editingTextStyle = useMemo(
+		() =>
+			editingTextNode && editingTextNode.type === 'text'
+				? resolveNodeStyleProps(document, editingTextNode)
+				: null,
+		[document, editingTextNode],
+	);
 	const hiddenCanvasNodeIds = useMemo(
 		() => (ENABLE_TEXT_PARITY_V1 && textEditSession ? [textEditSession.nodeId] : []),
 		[textEditSession],
@@ -4523,17 +4608,17 @@ export const App: React.FC = () => {
 		if (!editingTextNode || editingTextNode.type !== 'text') return null;
 		const measured = measureTextSize({
 			text: textEditSession.draftText,
-			fontSize: editingTextNode.fontSize ?? 16,
-			fontFamily: editingTextNode.fontFamily ?? 'Inter, sans-serif',
-			fontWeight: editingTextNode.fontWeight ?? 'normal',
-			textAlign: editingTextNode.textAlign ?? 'left',
-			lineHeightPx: editingTextNode.lineHeightPx,
-			letterSpacingPx: editingTextNode.letterSpacingPx ?? 0,
-			textResizeMode: editingTextNode.textResizeMode ?? 'auto-width',
+			fontSize: editingTextStyle?.fontSize ?? editingTextNode.fontSize ?? 16,
+			fontFamily: editingTextStyle?.fontFamily ?? editingTextNode.fontFamily ?? 'Inter, sans-serif',
+			fontWeight: editingTextStyle?.fontWeight ?? editingTextNode.fontWeight ?? 'normal',
+			textAlign: editingTextStyle?.textAlign ?? editingTextNode.textAlign ?? 'left',
+			lineHeightPx: editingTextStyle?.lineHeightPx ?? editingTextNode.lineHeightPx,
+			letterSpacingPx: editingTextStyle?.letterSpacingPx ?? editingTextNode.letterSpacingPx ?? 0,
+			textResizeMode: editingTextStyle?.textResizeMode ?? editingTextNode.textResizeMode ?? 'auto-width',
 			width: editingTextNode.size.width,
 			height: editingTextNode.size.height,
 		});
-		const mode = editingTextNode.textResizeMode ?? 'auto-width';
+		const mode = editingTextStyle?.textResizeMode ?? editingTextNode.textResizeMode ?? 'auto-width';
 		if (mode === 'fixed') {
 			return {
 				width: Math.max(1, editingTextNode.size.width),
@@ -4547,7 +4632,7 @@ export const App: React.FC = () => {
 			};
 		}
 		return measured;
-	}, [editingTextNode, measureTextSize, textEditSession]);
+	}, [editingTextNode, editingTextStyle, measureTextSize, textEditSession]);
 	const editingTextScreenRect = useMemo(() => {
 		if (!editingTextBounds || !editingTextSize) return null;
 		return {
@@ -4560,30 +4645,39 @@ export const App: React.FC = () => {
 	const activeTextEditSelectionBounds = useMemo(() => {
 		if (!ENABLE_TEXT_PARITY_V1 || !textEditSession) return null;
 		if (!editingTextBounds || !editingTextNode || editingTextNode.type !== 'text') return null;
-		const effectiveLineHeight = Math.max(1, editingTextNode.lineHeightPx ?? (editingTextNode.fontSize ?? 16) * 1.2);
+		const effectiveLineHeight = Math.max(
+			1,
+			editingTextStyle?.lineHeightPx ??
+				editingTextNode.lineHeightPx ??
+				(editingTextStyle?.fontSize ?? editingTextNode.fontSize ?? 16) * 1.2,
+		);
 		return {
 			x: editingTextBounds.x,
 			y: editingTextBounds.y,
 			width: Math.max(1, editingTextSize?.width ?? editingTextNode.size.width),
 			height: Math.max(1, effectiveLineHeight + 8),
 		};
-	}, [editingTextBounds, editingTextNode, editingTextSize, textEditSession]);
+	}, [editingTextBounds, editingTextNode, editingTextSize, editingTextStyle, textEditSession]);
 	const canvasSelectionBounds = activeTextEditSelectionBounds ?? selectionBounds;
-	const editingTextColor =
-		editingTextNode?.type === 'text' && editingTextNode.fill?.type === 'solid' ? editingTextNode.fill.value : '#f5f5f5';
+	const editingTextColor = useMemo(() => {
+		if (editingTextNode?.type !== 'text') return '#f5f5f5';
+		const fill = editingTextStyle?.fill ?? editingTextNode.fill;
+		return fill?.type === 'solid' ? fill.value : '#f5f5f5';
+	}, [editingTextNode, editingTextStyle]);
 	const selectedTextOverflow = useMemo(() => {
 		if (!ENABLE_TEXT_PARITY_V1 || !selectedNode || selectedNode.type !== 'text') return null;
-		if ((selectedNode.textResizeMode ?? 'auto-width') !== 'fixed') {
+		const resolved = resolveNodeStyleProps(displayDocument, selectedNode);
+		if ((resolved.textResizeMode ?? 'auto-width') !== 'fixed') {
 			return { isOverflowing: false };
 		}
 		const measured = measureTextSize({
 			text: selectedNode.text ?? '',
-			fontSize: selectedNode.fontSize ?? 16,
-			fontFamily: selectedNode.fontFamily ?? 'Inter, sans-serif',
-			fontWeight: selectedNode.fontWeight ?? 'normal',
-			textAlign: selectedNode.textAlign ?? 'left',
-			lineHeightPx: selectedNode.lineHeightPx,
-			letterSpacingPx: selectedNode.letterSpacingPx ?? 0,
+			fontSize: resolved.fontSize ?? 16,
+			fontFamily: resolved.fontFamily ?? 'Inter, sans-serif',
+			fontWeight: resolved.fontWeight ?? 'normal',
+			textAlign: resolved.textAlign ?? 'left',
+			lineHeightPx: resolved.lineHeightPx,
+			letterSpacingPx: resolved.letterSpacingPx ?? 0,
 			textResizeMode: 'auto-height',
 			width: selectedNode.size.width,
 			height: selectedNode.size.height,
@@ -4591,7 +4685,7 @@ export const App: React.FC = () => {
 		return {
 			isOverflowing: measured.height > selectedNode.size.height + 0.5,
 		};
-	}, [measureTextSize, selectedNode]);
+	}, [measureTextSize, selectedNode, displayDocument]);
 	const selectedTextOverflowIndicatorNodeIds = useMemo(() => {
 		if (!selectedNode || selectedNode.type !== 'text') return [];
 		if (!selectedTextOverflow?.isOverflowing) return [];
@@ -4791,6 +4885,7 @@ export const App: React.FC = () => {
 		[
 			displayDocument,
 			document,
+			documentParentMap,
 			parentMap,
 			getLayoutGuideTargetsForParent,
 			containerFocusId,
@@ -5236,6 +5331,7 @@ export const App: React.FC = () => {
 			getInsertionParentId,
 			getLocalPointForParent,
 			setTextCreationDragState,
+			activePageRootId,
 		],
 	);
 
@@ -6089,10 +6185,15 @@ export const App: React.FC = () => {
 				const overridePatch: Partial<ComponentOverridePatch> = {};
 				if (Object.prototype.hasOwnProperty.call(updates, 'text')) overridePatch.text = updates.text as string | undefined;
 				if (Object.prototype.hasOwnProperty.call(updates, 'fill')) overridePatch.fill = updates.fill as Node['fill'];
+				if (Object.prototype.hasOwnProperty.call(updates, 'fillStyleId')) overridePatch.fillStyleId = updates.fillStyleId as string | undefined;
 				if (Object.prototype.hasOwnProperty.call(updates, 'stroke')) overridePatch.stroke = updates.stroke as Node['stroke'];
 				if (Object.prototype.hasOwnProperty.call(updates, 'image')) overridePatch.image = updates.image as Node['image'];
 				if (Object.prototype.hasOwnProperty.call(updates, 'opacity')) overridePatch.opacity = updates.opacity as number | undefined;
 				if (Object.prototype.hasOwnProperty.call(updates, 'visible')) overridePatch.visible = updates.visible as boolean | undefined;
+				if (Object.prototype.hasOwnProperty.call(updates, 'textStyleId')) overridePatch.textStyleId = updates.textStyleId as string | undefined;
+				if (Object.prototype.hasOwnProperty.call(updates, 'effectStyleId'))
+					overridePatch.effectStyleId = updates.effectStyleId as string | undefined;
+				if (Object.prototype.hasOwnProperty.call(updates, 'gridStyleId')) overridePatch.gridStyleId = updates.gridStyleId as string | undefined;
 				if (Object.keys(overridePatch).length === 0) {
 					showToast('This layer is controlled by a component. Only override fields are editable.');
 					return;
@@ -6120,13 +6221,48 @@ export const App: React.FC = () => {
 			}
 
 			let nextUpdates = updates;
+			if (current) {
+				const mutableUpdates = { ...nextUpdates } as Record<string, unknown>;
+				const hasFillStyleUpdate = Object.prototype.hasOwnProperty.call(updates, 'fillStyleId');
+				const hasTextStyleUpdate = Object.prototype.hasOwnProperty.call(updates, 'textStyleId');
+				const hasEffectStyleUpdate = Object.prototype.hasOwnProperty.call(updates, 'effectStyleId');
+				const hasGridStyleUpdate = Object.prototype.hasOwnProperty.call(updates, 'gridStyleId');
+
+				if (Object.prototype.hasOwnProperty.call(updates, 'fill') && !hasFillStyleUpdate) {
+					mutableUpdates.fillStyleId = undefined;
+				}
+				if (
+					(Object.prototype.hasOwnProperty.call(updates, 'fontSize') ||
+						Object.prototype.hasOwnProperty.call(updates, 'fontFamily') ||
+						Object.prototype.hasOwnProperty.call(updates, 'fontWeight') ||
+						Object.prototype.hasOwnProperty.call(updates, 'textAlign') ||
+						Object.prototype.hasOwnProperty.call(updates, 'lineHeightPx') ||
+						Object.prototype.hasOwnProperty.call(updates, 'letterSpacingPx') ||
+						Object.prototype.hasOwnProperty.call(updates, 'textResizeMode')) &&
+					!hasTextStyleUpdate
+				) {
+					mutableUpdates.textStyleId = undefined;
+				}
+				if (Object.prototype.hasOwnProperty.call(updates, 'effects') && !hasEffectStyleUpdate) {
+					mutableUpdates.effectStyleId = undefined;
+				}
+				if (Object.prototype.hasOwnProperty.call(updates, 'layoutGuides') && !hasGridStyleUpdate) {
+					mutableUpdates.gridStyleId = undefined;
+				}
+				nextUpdates = mutableUpdates;
+			}
 			if (current?.type === 'text') {
+				const currentStyle = resolveNodeStyleProps(document, current);
 				const nextText = typeof updates.text === 'string' ? updates.text : (current.text ?? '');
-				const nextFontSize = typeof updates.fontSize === 'number' ? updates.fontSize : (current.fontSize ?? 16);
+				const nextFontSize = typeof updates.fontSize === 'number' ? updates.fontSize : (currentStyle.fontSize ?? current.fontSize ?? 16);
 				const nextFontFamily =
-					typeof updates.fontFamily === 'string' ? updates.fontFamily : (current.fontFamily ?? 'Inter, sans-serif');
+					typeof updates.fontFamily === 'string'
+						? updates.fontFamily
+						: (currentStyle.fontFamily ?? current.fontFamily ?? 'Inter, sans-serif');
 				const nextFontWeight =
-					typeof updates.fontWeight === 'string' ? updates.fontWeight : (current.fontWeight ?? 'normal');
+					typeof updates.fontWeight === 'string'
+						? updates.fontWeight
+						: (currentStyle.fontWeight ?? current.fontWeight ?? 'normal');
 				const hasLineHeightUpdate = Object.prototype.hasOwnProperty.call(updates, 'lineHeightPx');
 				const hasLetterSpacingUpdate = Object.prototype.hasOwnProperty.call(updates, 'letterSpacingPx');
 				const hasTextAlignUpdate = Object.prototype.hasOwnProperty.call(updates, 'textAlign');
@@ -6137,20 +6273,20 @@ export const App: React.FC = () => {
 					? typeof updates.lineHeightPx === 'number'
 						? updates.lineHeightPx
 						: undefined
-					: current.lineHeightPx;
+					: (currentStyle.lineHeightPx ?? current.lineHeightPx);
 				const nextLetterSpacingPx = hasLetterSpacingUpdate
 					? typeof updates.letterSpacingPx === 'number'
 						? updates.letterSpacingPx
 						: 0
-					: (current.letterSpacingPx ?? 0);
+					: (currentStyle.letterSpacingPx ?? current.letterSpacingPx ?? 0);
 				const nextTextAlign =
 					typeof updates.textAlign === 'string'
 						? (updates.textAlign as Node['textAlign'])
-						: (current.textAlign ?? 'left');
+						: (currentStyle.textAlign ?? current.textAlign ?? 'left');
 				const nextResizeMode =
 					typeof updates.textResizeMode === 'string'
 						? (updates.textResizeMode as Node['textResizeMode'])
-						: (current.textResizeMode ?? 'auto-width');
+						: (currentStyle.textResizeMode ?? current.textResizeMode ?? 'auto-width');
 				const requestedSize =
 					(nextUpdates as Partial<Node>).size && typeof (nextUpdates as Partial<Node>).size === 'object'
 						? ((nextUpdates as Partial<Node>).size as Node['size'])
@@ -6606,7 +6742,7 @@ export const App: React.FC = () => {
 		setSelection([instanceId]);
 		setLeftSidebarTab('assets');
 		showToast('Component created');
-	}, [selectionIds, documentParentMap, document, showToast, executeCommand, recordRecentComponentId, setSelection]);
+		}, [selectionIds, documentParentMap, document, showToast, executeCommand, recordRecentComponentId, setSelection, activePageRootId]);
 
 	const insertComponentInstanceFromAssets = useCallback(
 		(componentId: string, variant?: ComponentVariantMap) => {
@@ -6826,6 +6962,399 @@ export const App: React.FC = () => {
 				description: 'Reset all component overrides',
 				type: 'batch',
 				payload: { commands },
+			} as Command);
+		},
+		[document.nodes, executeCommand],
+	);
+
+	const upsertSharedStyle = useCallback(
+		(kind: SharedStyleKind, style: PaintStyle | TextStyle | EffectStyle | GridStyle) => {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Update shared style',
+				type: 'upsertSharedStyle',
+				payload: {
+					kind,
+					style,
+				},
+			} as Command);
+		},
+		[executeCommand],
+	);
+
+	const upsertVariableCollection = useCallback(
+		(collection: StyleVariableCollection) => {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Update variable collection',
+				type: 'upsertVariableCollection',
+				payload: { collection },
+			} as Command);
+		},
+		[executeCommand],
+	);
+
+	const removeVariableCollection = useCallback(
+		(collectionId: string) => {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Remove variable collection',
+				type: 'removeVariableCollection',
+				payload: { collectionId },
+			} as Command);
+		},
+		[executeCommand],
+	);
+
+	const upsertVariableToken = useCallback(
+		(token: StyleVariableToken) => {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Update variable token',
+				type: 'upsertVariableToken',
+				payload: { token },
+			} as Command);
+		},
+		[executeCommand],
+	);
+
+	const removeVariableToken = useCallback(
+		(tokenId: string) => {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Remove variable token',
+				type: 'removeVariableToken',
+				payload: { tokenId },
+			} as Command);
+		},
+		[executeCommand],
+	);
+
+	const setVariableCollectionMode = useCallback(
+		(collectionId: string, modeId: string) => {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Set variable mode',
+				type: 'setVariableCollectionMode',
+				payload: { collectionId, modeId },
+			} as Command);
+		},
+		[executeCommand],
+	);
+
+	const createSharedStyleFromNode = useCallback(
+		(nodeId: string, kind: SharedStyleKind) => {
+			const node = document.nodes[nodeId];
+			if (!node) return;
+			const styleId = generateId();
+			if (kind === 'paint') {
+				const fill = resolveNodeStyleProps(document, node).fill ?? node.fill;
+				if (!fill) {
+					showToast('No fill to capture.');
+					return;
+				}
+				executeCommand({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Create paint style',
+					type: 'batch',
+					payload: {
+						commands: [
+							{
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Upsert paint style',
+								type: 'upsertSharedStyle',
+								payload: {
+									kind,
+									style: {
+										id: styleId,
+										name: `${node.name ?? node.type} Fill`,
+										paint: fill,
+									},
+								},
+							},
+							{
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Link paint style',
+								type: 'setProps',
+								payload: { id: nodeId, props: { fillStyleId: styleId } },
+							},
+						],
+					},
+				} as Command);
+				return;
+			}
+			if (kind === 'text') {
+				if (node.type !== 'text') {
+					showToast('Select a text layer to capture a text style.');
+					return;
+				}
+				const resolved = resolveNodeStyleProps(document, node);
+				executeCommand({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Create text style',
+					type: 'batch',
+					payload: {
+						commands: [
+							{
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Upsert text style',
+								type: 'upsertSharedStyle',
+								payload: {
+									kind,
+									style: {
+										id: styleId,
+										name: `${node.name ?? 'Text'} Style`,
+										fill: resolved.fill ?? node.fill,
+										fontSize: resolved.fontSize ?? node.fontSize,
+										fontFamily: resolved.fontFamily ?? node.fontFamily,
+										fontWeight: resolved.fontWeight ?? node.fontWeight,
+										textAlign: resolved.textAlign ?? node.textAlign,
+										lineHeightPx: resolved.lineHeightPx ?? node.lineHeightPx,
+										letterSpacingPx: resolved.letterSpacingPx ?? node.letterSpacingPx,
+										textResizeMode: resolved.textResizeMode ?? node.textResizeMode,
+									},
+								},
+							},
+							{
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Link text style',
+								type: 'setProps',
+								payload: { id: nodeId, props: { textStyleId: styleId } },
+							},
+						],
+					},
+				} as Command);
+				return;
+			}
+			if (kind === 'effect') {
+				const effects = resolveNodeStyleProps(document, node).effects ?? node.effects;
+				if (!effects || effects.length === 0) {
+					showToast('No effects to capture.');
+					return;
+				}
+				executeCommand({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Create effect style',
+					type: 'batch',
+					payload: {
+						commands: [
+							{
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Upsert effect style',
+								type: 'upsertSharedStyle',
+								payload: {
+									kind,
+									style: {
+										id: styleId,
+										name: `${node.name ?? node.type} Effects`,
+										effects,
+									},
+								},
+							},
+							{
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Link effect style',
+								type: 'setProps',
+								payload: { id: nodeId, props: { effectStyleId: styleId } },
+							},
+						],
+					},
+				} as Command);
+				return;
+			}
+			if (kind === 'grid') {
+				if (node.type !== 'frame') {
+					showToast('Select a frame to capture a grid style.');
+					return;
+				}
+				const guides = resolveNodeLayoutGuides(document, node);
+				if (!guides) {
+					showToast('No layout guides to capture.');
+					return;
+				}
+				executeCommand({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Create grid style',
+					type: 'batch',
+					payload: {
+						commands: [
+							{
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Upsert grid style',
+								type: 'upsertSharedStyle',
+								payload: {
+									kind,
+									style: {
+										id: styleId,
+										name: `${node.name ?? 'Frame'} Grid`,
+										layoutGuides: guides,
+									},
+								},
+							},
+							{
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'user',
+								description: 'Link grid style',
+								type: 'setProps',
+								payload: { id: nodeId, props: { gridStyleId: styleId } },
+							},
+						],
+					},
+				} as Command);
+			}
+		},
+		[document, executeCommand, showToast],
+	);
+
+	const createSharedStyle = useCallback(
+		(kind: SharedStyleKind) => {
+			const id = generateId();
+			if (kind === 'paint') {
+				upsertSharedStyle(kind, {
+					id,
+					name: 'New Paint Style',
+					paint: { type: 'solid', value: '#888888' },
+				});
+				return;
+			}
+			if (kind === 'text') {
+				upsertSharedStyle(kind, {
+					id,
+					name: 'New Text Style',
+					fill: { type: 'solid', value: '#f5f5f5' },
+					fontSize: 16,
+					fontFamily: 'Inter, sans-serif',
+					fontWeight: 'normal',
+					textAlign: 'left',
+					letterSpacingPx: 0,
+					textResizeMode: 'auto-width',
+				});
+				return;
+			}
+			if (kind === 'effect') {
+				upsertSharedStyle(kind, {
+					id,
+					name: 'New Effect Style',
+					effects: [],
+				});
+				return;
+			}
+			upsertSharedStyle(kind, {
+				id,
+				name: 'New Grid Style',
+				layoutGuides: { type: 'grid', visible: true, grid: { size: 8 } },
+			});
+		},
+		[upsertSharedStyle],
+	);
+
+	const renameSharedStyle = useCallback(
+		(kind: SharedStyleKind, id: string, name: string) => {
+			if (kind === 'paint') {
+				const style = document.styles.paint[id];
+				if (!style) return;
+				upsertSharedStyle(kind, { ...style, name });
+				return;
+			}
+			if (kind === 'text') {
+				const style = document.styles.text[id];
+				if (!style) return;
+				upsertSharedStyle(kind, { ...style, name });
+				return;
+			}
+			if (kind === 'effect') {
+				const style = document.styles.effect[id];
+				if (!style) return;
+				upsertSharedStyle(kind, { ...style, name });
+				return;
+			}
+			const style = document.styles.grid[id];
+			if (!style) return;
+			upsertSharedStyle(kind, { ...style, name });
+		},
+		[document.styles, upsertSharedStyle],
+	);
+
+	const deleteSharedStyle = useCallback(
+		(kind: SharedStyleKind, styleId: string) => {
+			const detachField =
+				kind === 'paint'
+					? 'fillStyleId'
+					: kind === 'text'
+						? 'textStyleId'
+						: kind === 'effect'
+							? 'effectStyleId'
+							: 'gridStyleId';
+			const detachCommands = Object.values(document.nodes)
+				.filter((node) => (node as Record<string, unknown>)[detachField] === styleId)
+				.map(
+					(node) =>
+						({
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Detach deleted style',
+							type: 'setProps',
+							payload: {
+								id: node.id,
+								props: { [detachField]: undefined } as Partial<Node>,
+							},
+						}) as Command,
+				);
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Delete shared style',
+				type: 'batch',
+				payload: {
+					commands: [
+						{
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							description: 'Remove shared style',
+							type: 'removeSharedStyle',
+							payload: { kind, id: styleId },
+						},
+						...detachCommands,
+					] as Command[],
+				},
 			} as Command);
 		},
 		[document.nodes, executeCommand],
@@ -7948,13 +8477,14 @@ export const App: React.FC = () => {
 		copySelectionToClipboard,
 		copyEffects,
 		pasteEffects,
-		handleUpdateNode,
-		commitTextEditing,
-		cancelTextEditing,
-		startTextEditing,
-		transformSession,
-		contextMenu,
-		activePlugin,
+			handleUpdateNode,
+			commitTextEditing,
+			cancelTextEditing,
+			startTextEditing,
+			createComponentFromSelection,
+			transformSession,
+			contextMenu,
+			activePlugin,
 		pluginManagerOpen,
 		dragState,
 		dispatchEditorAction,
@@ -8178,6 +8708,14 @@ export const App: React.FC = () => {
 							onInsertComponent={insertComponentInstanceFromAssets}
 							onRevealMain={revealComponentMainOnCanvas}
 							onAddVariant={addComponentVariant}
+							onCreateStyle={createSharedStyle}
+							onRenameStyle={renameSharedStyle}
+							onRemoveStyle={deleteSharedStyle}
+							onUpsertVariableCollection={upsertVariableCollection}
+							onRemoveVariableCollection={removeVariableCollection}
+							onSetVariableMode={setVariableCollectionMode}
+							onUpsertVariableToken={upsertVariableToken}
+							onRemoveVariableToken={removeVariableToken}
 							recentComponentIds={recentComponentIds}
 							assetsFocusNonce={assetsFocusNonce}
 							isResizing={panelResizeState !== null}
@@ -8328,7 +8866,11 @@ export const App: React.FC = () => {
 											width: `${Math.max(1, editingTextScreenRect.width)}px`,
 											height: `${Math.max(
 												1,
-												(editingTextNode.lineHeightPx ?? (editingTextNode.fontSize ?? 16) * 1.2) * zoom + Math.max(2, 4 * zoom) * 2,
+												(editingTextStyle?.lineHeightPx ??
+													editingTextNode.lineHeightPx ??
+													(editingTextStyle?.fontSize ?? editingTextNode.fontSize ?? 16) * 1.2) *
+													zoom +
+													Math.max(2, 4 * zoom) * 2,
 											)}px`,
 											padding: `${Math.max(2, 4 * zoom)}px`,
 											border: 'none',
@@ -8337,15 +8879,20 @@ export const App: React.FC = () => {
 											background: 'transparent',
 											color: editingTextColor,
 											caretColor: editingTextColor,
-											fontFamily: editingTextNode.fontFamily ?? 'Inter, sans-serif',
-											fontWeight: editingTextNode.fontWeight ?? 'normal',
-											fontSize: `${Math.max(1, (editingTextNode.fontSize ?? 16) * zoom)}px`,
+											fontFamily: editingTextStyle?.fontFamily ?? editingTextNode.fontFamily ?? 'Inter, sans-serif',
+											fontWeight: editingTextStyle?.fontWeight ?? editingTextNode.fontWeight ?? 'normal',
+											fontSize: `${Math.max(
+												1,
+												(editingTextStyle?.fontSize ?? editingTextNode.fontSize ?? 16) * zoom,
+											)}px`,
 											lineHeight: `${Math.max(
 												1,
-												(editingTextNode.lineHeightPx ?? (editingTextNode.fontSize ?? 16) * 1.2) * zoom,
+												(editingTextStyle?.lineHeightPx ??
+													editingTextNode.lineHeightPx ??
+													(editingTextStyle?.fontSize ?? editingTextNode.fontSize ?? 16) * 1.2) * zoom,
 											)}px`,
-											letterSpacing: `${(editingTextNode.letterSpacingPx ?? 0) * zoom}px`,
-											textAlign: editingTextNode.textAlign ?? 'left',
+											letterSpacing: `${(editingTextStyle?.letterSpacingPx ?? editingTextNode.letterSpacingPx ?? 0) * zoom}px`,
+											textAlign: editingTextStyle?.textAlign ?? editingTextNode.textAlign ?? 'left',
 											overflow: 'hidden',
 											boxShadow: 'none',
 											margin: 0,
@@ -8409,6 +8956,7 @@ export const App: React.FC = () => {
 						<PropertiesPanel
 							selectedNode={selectedNode}
 							document={document}
+							styles={document.styles}
 							width={rightPanelWidth}
 							collapsed={rightPanelCollapsed}
 							isResizing={panelResizeState !== null}
@@ -8431,6 +8979,7 @@ export const App: React.FC = () => {
 								setComponentInstanceOverride(instanceId, sourceNodeId, undefined, true)
 							}
 							onResetAllComponentOverrides={resetAllComponentOverrides}
+							onCreateSharedStyleFromNode={createSharedStyleFromNode}
 							vectorTarget={
 								editablePathNode?.type === 'path'
 									? {

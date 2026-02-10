@@ -1,5 +1,15 @@
 import React from 'react';
-import type { ComponentDefinition, ComponentSet, ComponentVariantMap, ComponentsLibrary } from '../core/doc/types';
+import type {
+	ComponentDefinition,
+	ComponentSet,
+	ComponentVariantMap,
+	ComponentsLibrary,
+	StyleLibrary,
+	StyleVariableCollection,
+	StyleVariableLibrary,
+	StyleVariableToken,
+} from '../core/doc/types';
+import type { SharedStyleKind } from '../core/commands/types';
 import { colors, panels, radii, spacing, transitions, typography } from './design-system';
 
 type AssetSetEntry = {
@@ -10,6 +20,8 @@ type AssetSetEntry = {
 
 interface AssetsPanelProps {
 	components: ComponentsLibrary;
+	styles: StyleLibrary;
+	variables: StyleVariableLibrary;
 	width?: number;
 	collapsed?: boolean;
 	isResizing?: boolean;
@@ -18,6 +30,14 @@ interface AssetsPanelProps {
 	onInsertComponent: (componentId: string, variant?: ComponentVariantMap) => void;
 	onRevealMain: (componentId: string) => void;
 	onAddVariant: (setId: string, property: string, value: string) => void;
+	onCreateStyle: (kind: SharedStyleKind) => void;
+	onRenameStyle: (kind: SharedStyleKind, id: string, name: string) => void;
+	onRemoveStyle: (kind: SharedStyleKind, id: string) => void;
+	onUpsertVariableCollection: (collection: StyleVariableCollection) => void;
+	onRemoveVariableCollection: (collectionId: string) => void;
+	onSetVariableMode: (collectionId: string, modeId: string) => void;
+	onUpsertVariableToken: (token: StyleVariableToken) => void;
+	onRemoveVariableToken: (tokenId: string) => void;
 	recentComponentIds?: string[];
 	focusSearchNonce?: number;
 }
@@ -43,8 +63,34 @@ const buildAssetEntries = (components: ComponentsLibrary): AssetSetEntry[] => {
 		.sort((a, b) => a.set.name.localeCompare(b.set.name));
 };
 
+type StyleEntry = { id: string; name: string };
+
+const STYLE_KIND_LABELS: Record<SharedStyleKind, string> = {
+	paint: 'Paint',
+	text: 'Text',
+	effect: 'Effect',
+	grid: 'Grid',
+};
+
+const buildStyleEntries = (styles: StyleLibrary): Record<SharedStyleKind, StyleEntry[]> => ({
+	paint: Object.values(styles.paint)
+		.map((style) => ({ id: style.id, name: style.name }))
+		.sort((a, b) => a.name.localeCompare(b.name)),
+	text: Object.values(styles.text)
+		.map((style) => ({ id: style.id, name: style.name }))
+		.sort((a, b) => a.name.localeCompare(b.name)),
+	effect: Object.values(styles.effect)
+		.map((style) => ({ id: style.id, name: style.name }))
+		.sort((a, b) => a.name.localeCompare(b.name)),
+	grid: Object.values(styles.grid)
+		.map((style) => ({ id: style.id, name: style.name }))
+		.sort((a, b) => a.name.localeCompare(b.name)),
+});
+
 export const AssetsPanel: React.FC<AssetsPanelProps> = ({
 	components,
+	styles,
+	variables,
 	width = panels.left.width,
 	collapsed = false,
 	isResizing = false,
@@ -53,6 +99,14 @@ export const AssetsPanel: React.FC<AssetsPanelProps> = ({
 	onInsertComponent,
 	onRevealMain,
 	onAddVariant,
+	onCreateStyle,
+	onRenameStyle,
+	onRemoveStyle,
+	onUpsertVariableCollection,
+	onRemoveVariableCollection,
+	onSetVariableMode,
+	onUpsertVariableToken,
+	onRemoveVariableToken,
 	recentComponentIds = [],
 	focusSearchNonce = 0,
 }) => {
@@ -68,6 +122,11 @@ export const AssetsPanel: React.FC<AssetsPanelProps> = ({
 	}, [focusSearchNonce, collapsed]);
 
 	const entries = React.useMemo(() => buildAssetEntries(components), [components]);
+	const styleEntries = React.useMemo(() => buildStyleEntries(styles), [styles]);
+	const variableCollections = React.useMemo(
+		() => Object.values(variables.collections).sort((a, b) => a.name.localeCompare(b.name)),
+		[variables.collections],
+	);
 
 	const filteredEntries = React.useMemo(() => {
 		const query = search.trim().toLowerCase();
@@ -391,6 +450,308 @@ export const AssetsPanel: React.FC<AssetsPanelProps> = ({
 						</div>
 					);
 				})}
+
+				<div
+					style={{
+						padding: spacing.sm,
+						borderRadius: radii.sm,
+						border: `1px solid ${colors.border.default}`,
+						backgroundColor: colors.bg.tertiary,
+						display: 'grid',
+						gap: spacing.sm,
+					}}
+				>
+					<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+						<div style={{ fontSize: typography.fontSize.md, color: colors.text.primary }}>Shared Styles</div>
+					</div>
+					{(['paint', 'text', 'effect', 'grid'] as SharedStyleKind[]).map((kind) => (
+						<div key={kind} style={{ display: 'grid', gap: spacing.xs }}>
+							<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+								<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary, textTransform: 'uppercase' }}>
+									{STYLE_KIND_LABELS[kind]}
+								</div>
+								<button
+									type="button"
+									onClick={() => onCreateStyle(kind)}
+									style={{
+										padding: '2px 6px',
+										borderRadius: radii.sm,
+										border: `1px solid ${colors.border.default}`,
+										backgroundColor: colors.bg.secondary,
+										color: colors.text.secondary,
+										fontSize: typography.fontSize.xs,
+										cursor: 'pointer',
+									}}
+								>
+									+ Style
+								</button>
+							</div>
+							{styleEntries[kind].length === 0 ? (
+								<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary }}>No styles.</div>
+							) : (
+								styleEntries[kind].map((style) => (
+									<div key={style.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: spacing.xs }}>
+										<input
+											value={style.name}
+											onChange={(event) => onRenameStyle(kind, style.id, event.target.value)}
+											style={{
+												padding: `${spacing.xs} ${spacing.sm}`,
+												borderRadius: radii.sm,
+												border: `1px solid ${colors.border.default}`,
+												backgroundColor: colors.bg.secondary,
+												color: colors.text.primary,
+												fontSize: typography.fontSize.sm,
+											}}
+										/>
+										<button
+											type="button"
+											onClick={() => onRemoveStyle(kind, style.id)}
+											style={{
+												padding: `${spacing.xs} ${spacing.sm}`,
+												borderRadius: radii.sm,
+												border: `1px solid ${colors.border.default}`,
+												backgroundColor: colors.bg.secondary,
+												color: colors.text.secondary,
+												fontSize: typography.fontSize.sm,
+												cursor: 'pointer',
+											}}
+										>
+											Delete
+										</button>
+									</div>
+								))
+							)}
+						</div>
+					))}
+				</div>
+
+				<div
+					style={{
+						padding: spacing.sm,
+						borderRadius: radii.sm,
+						border: `1px solid ${colors.border.default}`,
+						backgroundColor: colors.bg.tertiary,
+						display: 'grid',
+						gap: spacing.sm,
+					}}
+				>
+					<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+						<div style={{ fontSize: typography.fontSize.md, color: colors.text.primary }}>Variables</div>
+						<button
+							type="button"
+							onClick={() => {
+								const collectionId = `collection_${Date.now().toString(36)}`;
+								const modeId = `mode_${Date.now().toString(36)}`;
+								onUpsertVariableCollection({
+									id: collectionId,
+									name: 'New Collection',
+									modes: [{ id: modeId, name: 'Default' }],
+									defaultModeId: modeId,
+								});
+								onSetVariableMode(collectionId, modeId);
+							}}
+							style={{
+								padding: '2px 6px',
+								borderRadius: radii.sm,
+								border: `1px solid ${colors.border.default}`,
+								backgroundColor: colors.bg.secondary,
+								color: colors.text.secondary,
+								fontSize: typography.fontSize.xs,
+								cursor: 'pointer',
+							}}
+						>
+							+ Collection
+						</button>
+					</div>
+					{variableCollections.length === 0 && (
+						<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary }}>No variable collections.</div>
+					)}
+					{variableCollections.map((collection) => {
+						const activeModeId =
+							variables.activeModeByCollection[collection.id] ?? collection.defaultModeId ?? collection.modes[0]?.id;
+						const collectionTokens = Object.values(variables.tokens)
+							.filter((token) => token.collectionId === collection.id)
+							.sort((a, b) => a.name.localeCompare(b.name));
+						return (
+							<div key={collection.id} style={{ display: 'grid', gap: spacing.xs, borderTop: `1px solid ${colors.border.subtle}`, paddingTop: spacing.xs }}>
+								<div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: spacing.xs }}>
+									<input
+										value={collection.name}
+										onChange={(event) => onUpsertVariableCollection({ ...collection, name: event.target.value })}
+										style={{
+											padding: `${spacing.xs} ${spacing.sm}`,
+											borderRadius: radii.sm,
+											border: `1px solid ${colors.border.default}`,
+											backgroundColor: colors.bg.secondary,
+											color: colors.text.primary,
+											fontSize: typography.fontSize.sm,
+										}}
+									/>
+									<button
+										type="button"
+										onClick={() => onRemoveVariableCollection(collection.id)}
+										style={{
+											padding: `${spacing.xs} ${spacing.sm}`,
+											borderRadius: radii.sm,
+											border: `1px solid ${colors.border.default}`,
+											backgroundColor: colors.bg.secondary,
+											color: colors.text.secondary,
+											fontSize: typography.fontSize.sm,
+											cursor: 'pointer',
+										}}
+									>
+										Delete
+									</button>
+								</div>
+								<div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: spacing.xs }}>
+									<select
+										value={activeModeId}
+										onChange={(event) => onSetVariableMode(collection.id, event.target.value)}
+										style={{
+											padding: `${spacing.xs} ${spacing.sm}`,
+											borderRadius: radii.sm,
+											border: `1px solid ${colors.border.default}`,
+											backgroundColor: colors.bg.secondary,
+											color: colors.text.primary,
+											fontSize: typography.fontSize.sm,
+										}}
+									>
+										{collection.modes.map((mode) => (
+											<option key={mode.id} value={mode.id}>
+												{mode.name}
+											</option>
+										))}
+									</select>
+									<button
+										type="button"
+										onClick={() => {
+											const modeId = `mode_${Date.now().toString(36)}`;
+											onUpsertVariableCollection({
+												...collection,
+												modes: [...collection.modes, { id: modeId, name: `Mode ${collection.modes.length + 1}` }],
+											});
+											onSetVariableMode(collection.id, modeId);
+										}}
+										style={{
+											padding: `${spacing.xs} ${spacing.sm}`,
+											borderRadius: radii.sm,
+											border: `1px solid ${colors.border.default}`,
+											backgroundColor: colors.bg.secondary,
+											color: colors.text.secondary,
+											fontSize: typography.fontSize.sm,
+											cursor: 'pointer',
+										}}
+									>
+										+ Mode
+									</button>
+								</div>
+								{collectionTokens.map((token) => {
+									const value = token.valuesByMode[activeModeId] ?? (token.type === 'number' ? 0 : '');
+									return (
+										<div key={token.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: spacing.xs }}>
+											<input
+												value={token.name}
+												onChange={(event) => onUpsertVariableToken({ ...token, name: event.target.value })}
+												style={{
+													padding: '4px 6px',
+													borderRadius: radii.sm,
+													border: `1px solid ${colors.border.default}`,
+													backgroundColor: colors.bg.secondary,
+													color: colors.text.primary,
+													fontSize: typography.fontSize.xs,
+												}}
+											/>
+											<input
+												value={String(value)}
+												onChange={(event) => {
+													const raw = event.target.value;
+													const nextValue = token.type === 'number' ? Number(raw) : raw;
+													onUpsertVariableToken({
+														...token,
+														valuesByMode: {
+															...token.valuesByMode,
+															[activeModeId]: token.type === 'number' && !Number.isFinite(nextValue) ? 0 : nextValue,
+														},
+													});
+												}}
+												style={{
+													padding: '4px 6px',
+													borderRadius: radii.sm,
+													border: `1px solid ${colors.border.default}`,
+													backgroundColor: colors.bg.secondary,
+													color: colors.text.primary,
+													fontSize: typography.fontSize.xs,
+												}}
+											/>
+											<select
+												value={token.type}
+												onChange={(event) =>
+													onUpsertVariableToken({
+														...token,
+														type: event.target.value as StyleVariableToken['type'],
+													})
+												}
+												style={{
+													padding: '4px 6px',
+													borderRadius: radii.sm,
+													border: `1px solid ${colors.border.default}`,
+													backgroundColor: colors.bg.secondary,
+													color: colors.text.primary,
+													fontSize: typography.fontSize.xs,
+												}}
+											>
+												<option value="color">color</option>
+												<option value="number">number</option>
+												<option value="string">string</option>
+											</select>
+											<button
+												type="button"
+												onClick={() => onRemoveVariableToken(token.id)}
+												style={{
+													padding: '4px 6px',
+													borderRadius: radii.sm,
+													border: `1px solid ${colors.border.default}`,
+													backgroundColor: colors.bg.secondary,
+													color: colors.text.secondary,
+													fontSize: typography.fontSize.xs,
+													cursor: 'pointer',
+												}}
+											>
+												Del
+											</button>
+										</div>
+									);
+								})}
+								<button
+									type="button"
+									onClick={() => {
+										const tokenId = `token_${Date.now().toString(36)}`;
+										const modeId = activeModeId ?? collection.modes[0]?.id;
+										if (!modeId) return;
+										onUpsertVariableToken({
+											id: tokenId,
+											name: 'token',
+											collectionId: collection.id,
+											type: 'string',
+											valuesByMode: { [modeId]: '' },
+										});
+									}}
+									style={{
+										padding: `${spacing.xs} ${spacing.sm}`,
+										borderRadius: radii.sm,
+										border: `1px solid ${colors.border.default}`,
+										backgroundColor: colors.bg.secondary,
+										color: colors.text.secondary,
+										fontSize: typography.fontSize.sm,
+										cursor: 'pointer',
+									}}
+								>
+									+ Token
+								</button>
+							</div>
+						);
+					})}
+				</div>
 			</div>
 		</div>
 	);

@@ -37,7 +37,7 @@ const makeNode = (id: string, overrides: Partial<Node>): Node => ({
 });
 
 const makeDoc = (): Document => ({
-	version: 8,
+	version: 9,
 	rootId: 'root',
 	pages: [{ id: 'page_1', name: 'Page 1', rootId: 'root' }],
 	activePageId: 'page_1',
@@ -49,6 +49,8 @@ const makeDoc = (): Document => ({
 		definitions: {},
 		sets: {},
 	},
+	styles: { paint: {}, text: {}, effect: {}, grid: {} },
+	variables: { collections: {}, tokens: {}, activeModeByCollection: {} },
 });
 
 const makeVariantDefinition = (id: string, setId: string, text: string, variant: Record<string, string>): ComponentDefinition => ({
@@ -189,7 +191,7 @@ export const runComponentsUnitTests = (): UnitTestResult => {
 	const parsedLegacy = parseDocumentText(JSON.stringify(legacyDoc));
 	assert(failures, 'v6 migration succeeds', parsedLegacy.ok);
 	if (parsedLegacy.ok) {
-		assertEqual(failures, 'migrates to version 8', parsedLegacy.doc.version, 8);
+		assertEqual(failures, 'migrates to version 9', parsedLegacy.doc.version, 9);
 		assert(failures, 'synthesizes component set', Boolean(parsedLegacy.doc.components.sets.legacy_set));
 	}
 

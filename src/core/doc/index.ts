@@ -8,6 +8,7 @@ export * from './serialization';
 export * from './constraints';
 export * from './layout-guides';
 export * from './effects';
+export * from './styles';
 export * from './vector';
 export * from './components';
 export * from './boolean/solve';

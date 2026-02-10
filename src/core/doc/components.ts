@@ -8,7 +8,18 @@ import type {
 	Node,
 } from './types';
 
-export const COMPONENT_OVERRIDEABLE_FIELDS = ['text', 'fill', 'stroke', 'image', 'opacity', 'visible'] as const;
+export const COMPONENT_OVERRIDEABLE_FIELDS = [
+	'text',
+	'fill',
+	'fillStyleId',
+	'stroke',
+	'image',
+	'opacity',
+	'visible',
+	'textStyleId',
+	'effectStyleId',
+	'gridStyleId',
+] as const;
 type ComponentOverrideableField = (typeof COMPONENT_OVERRIDEABLE_FIELDS)[number];
 
 const deepClone = <T>(value: T): T => {
@@ -264,10 +275,14 @@ const applyOverridePatch = (node: Node, patch?: ComponentOverridePatch): Node =>
 		...node,
 		...(patch.text !== undefined ? { text: patch.text } : {}),
 		...(patch.fill !== undefined ? { fill: deepClone(patch.fill) } : {}),
+		...(patch.fillStyleId !== undefined ? { fillStyleId: patch.fillStyleId } : {}),
 		...(patch.stroke !== undefined ? { stroke: deepClone(patch.stroke) } : {}),
 		...(patch.image !== undefined ? { image: deepClone(patch.image) } : {}),
 		...(patch.opacity !== undefined ? { opacity: patch.opacity } : {}),
 		...(patch.visible !== undefined ? { visible: patch.visible } : {}),
+		...(patch.textStyleId !== undefined ? { textStyleId: patch.textStyleId } : {}),
+		...(patch.effectStyleId !== undefined ? { effectStyleId: patch.effectStyleId } : {}),
+		...(patch.gridStyleId !== undefined ? { gridStyleId: patch.gridStyleId } : {}),
 	};
 };
 

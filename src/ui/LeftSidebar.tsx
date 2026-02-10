@@ -1,5 +1,13 @@
 import React from 'react';
-import type { ComponentVariantMap, ComponentsLibrary, Document, Page } from '../core/doc/types';
+import type {
+	ComponentVariantMap,
+	ComponentsLibrary,
+	Document,
+	Page,
+	StyleVariableCollection,
+	StyleVariableToken,
+} from '../core/doc/types';
+import type { SharedStyleKind } from '../core/commands/types';
 import { colors, panels, radii, spacing, typography } from './design-system';
 import { AssetsPanel } from './AssetsPanel';
 import { LayersPanel } from './LayersPanel';
@@ -35,6 +43,14 @@ interface LeftSidebarProps {
 	onInsertComponent: (componentId: string, variant?: ComponentVariantMap) => void;
 	onRevealMain: (componentId: string) => void;
 	onAddVariant: (setId: string, property: string, value: string) => void;
+	onCreateStyle: (kind: SharedStyleKind) => void;
+	onRenameStyle: (kind: SharedStyleKind, id: string, name: string) => void;
+	onRemoveStyle: (kind: SharedStyleKind, id: string) => void;
+	onUpsertVariableCollection: (collection: StyleVariableCollection) => void;
+	onRemoveVariableCollection: (collectionId: string) => void;
+	onSetVariableMode: (collectionId: string, modeId: string) => void;
+	onUpsertVariableToken: (token: StyleVariableToken) => void;
+	onRemoveVariableToken: (tokenId: string) => void;
 	recentComponentIds?: string[];
 	assetsFocusNonce?: number;
 }
@@ -85,6 +101,14 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 	onInsertComponent,
 	onRevealMain,
 	onAddVariant,
+	onCreateStyle,
+	onRenameStyle,
+	onRemoveStyle,
+	onUpsertVariableCollection,
+	onRemoveVariableCollection,
+	onSetVariableMode,
+	onUpsertVariableToken,
+	onRemoveVariableToken,
 	recentComponentIds = [],
 	assetsFocusNonce = 0,
 }) => {
@@ -141,6 +165,8 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 			) : (
 				<AssetsPanel
 					components={components}
+					styles={document.styles}
+					variables={document.variables}
 					width={width}
 					collapsed={collapsed}
 					isResizing={isResizing}
@@ -149,6 +175,14 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 					onInsertComponent={onInsertComponent}
 					onRevealMain={onRevealMain}
 					onAddVariant={onAddVariant}
+					onCreateStyle={onCreateStyle}
+					onRenameStyle={onRenameStyle}
+					onRemoveStyle={onRemoveStyle}
+					onUpsertVariableCollection={onUpsertVariableCollection}
+					onRemoveVariableCollection={onRemoveVariableCollection}
+					onSetVariableMode={onSetVariableMode}
+					onUpsertVariableToken={onUpsertVariableToken}
+					onRemoveVariableToken={onRemoveVariableToken}
 					recentComponentIds={recentComponentIds}
 					focusSearchNonce={assetsFocusNonce}
 				/>

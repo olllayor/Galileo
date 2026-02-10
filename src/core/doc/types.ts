@@ -269,6 +269,97 @@ export const layoutGuideSchema = z.object({
 export type LayoutGuideType = z.infer<typeof layoutGuideTypeSchema>;
 export type LayoutGuide = z.infer<typeof layoutGuideSchema>;
 
+export const styleVariableTypeSchema = z.enum(['color', 'number', 'string']);
+export const styleVariableValueSchema = z.union([z.string(), z.number()]);
+export const styleVariableModeSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+});
+export const styleVariableCollectionSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	modes: z.array(styleVariableModeSchema).min(1),
+	defaultModeId: z.string().optional(),
+});
+export const styleVariableTokenSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	collectionId: z.string(),
+	type: styleVariableTypeSchema,
+	valuesByMode: z.record(styleVariableValueSchema),
+});
+
+export const paintStyleBindingSchema = z.object({
+	solidValueTokenId: z.string().optional(),
+});
+
+export const paintStyleSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	paint: colorSchema,
+	bindings: paintStyleBindingSchema.optional(),
+});
+
+export const textStyleBindingSchema = z.object({
+	fillTokenId: z.string().optional(),
+	fontSizeTokenId: z.string().optional(),
+	fontFamilyTokenId: z.string().optional(),
+	fontWeightTokenId: z.string().optional(),
+	lineHeightTokenId: z.string().optional(),
+	letterSpacingTokenId: z.string().optional(),
+});
+
+export const textStyleSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	fill: colorSchema.optional(),
+	fontSize: z.number().optional(),
+	fontFamily: z.string().optional(),
+	fontWeight: z.enum(['normal', 'bold', '500', '600']).optional(),
+	textAlign: textAlignSchema.optional(),
+	lineHeightPx: z.number().optional(),
+	letterSpacingPx: z.number().optional(),
+	textResizeMode: textResizeModeSchema.optional(),
+	bindings: textStyleBindingSchema.optional(),
+});
+
+export const effectStyleSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	effects: shadowEffectSchema.array(),
+});
+
+export const gridStyleSchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	layoutGuides: layoutGuideSchema,
+});
+
+export const styleLibrarySchema = z.object({
+	paint: z.record(z.string(), paintStyleSchema),
+	text: z.record(z.string(), textStyleSchema),
+	effect: z.record(z.string(), effectStyleSchema),
+	grid: z.record(z.string(), gridStyleSchema),
+});
+
+export const styleVariableLibrarySchema = z.object({
+	collections: z.record(z.string(), styleVariableCollectionSchema),
+	tokens: z.record(z.string(), styleVariableTokenSchema),
+	activeModeByCollection: z.record(z.string(), z.string()),
+});
+
+export type StyleVariableType = z.infer<typeof styleVariableTypeSchema>;
+export type StyleVariableValue = z.infer<typeof styleVariableValueSchema>;
+export type StyleVariableMode = z.infer<typeof styleVariableModeSchema>;
+export type StyleVariableCollection = z.infer<typeof styleVariableCollectionSchema>;
+export type StyleVariableToken = z.infer<typeof styleVariableTokenSchema>;
+export type PaintStyle = z.infer<typeof paintStyleSchema>;
+export type TextStyle = z.infer<typeof textStyleSchema>;
+export type EffectStyle = z.infer<typeof effectStyleSchema>;
+export type GridStyle = z.infer<typeof gridStyleSchema>;
+export type StyleLibrary = z.infer<typeof styleLibrarySchema>;
+export type StyleVariableLibrary = z.infer<typeof styleVariableLibrarySchema>;
+
 export const vectorHandleSchema = z.object({
 	x: z.number(),
 	y: z.number(),
@@ -318,9 +409,13 @@ export const componentOverridePatchSchema = z
 	.object({
 		text: z.string().optional(),
 		fill: colorSchema.optional(),
+		fillStyleId: z.string().optional(),
 		stroke: strokeSchema.optional(),
 		opacity: z.number().optional(),
 		visible: z.boolean().optional(),
+		textStyleId: z.string().optional(),
+		effectStyleId: z.string().optional(),
+		gridStyleId: z.string().optional(),
 		image: z
 			.object({
 				src: z.string().optional(),
@@ -372,11 +467,13 @@ export const nodeSchema = z.object({
 	layout: layoutSchema.optional(),
 
 	fill: colorSchema.optional(),
+	fillStyleId: z.string().optional(),
 	stroke: strokeSchema.optional(),
 	opacity: z.number().optional(),
 	cornerRadius: z.number().optional(),
 
 	text: z.string().optional(),
+	textStyleId: z.string().optional(),
 	fontSize: z.number().optional(),
 	fontFamily: z.string().optional(),
 	fontWeight: z.enum(['normal', 'bold', '500', '600']).optional(),
@@ -419,10 +516,12 @@ export const nodeSchema = z.object({
 	clipContent: z.boolean().optional(),
 	shadowOverflow: z.enum(['visible', 'clipped', 'clip-content-only']).optional(),
 	effects: shadowEffectSchema.array().optional(),
+	effectStyleId: z.string().optional(),
 	effectBindings: shadowEffectBindingSchema.optional(),
 	effectVariables: z.record(z.union([z.string(), z.number()])).optional(),
 	constraints: constraintsSchema.optional(),
 	layoutGuides: layoutGuideSchema.optional(),
+	gridStyleId: z.string().optional(),
 	layoutSizing: layoutSizingSchema.optional(),
 });
 
@@ -483,12 +582,14 @@ export const documentSchema = z.object({
 	nodes: z.record(z.string(), nodeSchema),
 	assets: z.record(z.string(), assetSchema),
 	components: componentsLibrarySchema,
+	styles: styleLibrarySchema,
+	variables: styleVariableLibrarySchema,
 });
 
 export type Document = z.infer<typeof documentSchema>;
 
 export const createDocument = (): Document => ({
-	version: 8,
+	version: 9,
 	rootId: 'root',
 	pages: [
 		{
@@ -513,6 +614,17 @@ export const createDocument = (): Document => ({
 	components: {
 		definitions: {},
 		sets: {},
+	},
+	styles: {
+		paint: {},
+		text: {},
+		effect: {},
+		grid: {},
+	},
+	variables: {
+		collections: {},
+		tokens: {},
+		activeModeByCollection: {},
 	},
 });
 

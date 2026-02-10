@@ -1,3 +1,4 @@
+import { createDocument } from './types';
 import type { Node, ShadowEffect } from './types';
 import {
 	compileAutoShadow,
@@ -131,6 +132,40 @@ export const runEffectsUnitTests = (): UnitTestResult => {
 	const invalidResolved = resolveEffectVariables(invalidBindingNode, invalidBoundAuto);
 	assertEqual(failures, 'invalid number binding falls back to local', invalidResolved.elevation, 7);
 	assertEqual(failures, 'invalid blend binding falls back to local', invalidResolved.blendMode, 'screen');
+
+	const tokenDoc = createDocument();
+	tokenDoc.variables.collections.theme = {
+		id: 'theme',
+		name: 'Theme',
+		modes: [{ id: 'default', name: 'Default' }],
+		defaultModeId: 'default',
+	};
+	tokenDoc.variables.activeModeByCollection.theme = 'default';
+	tokenDoc.variables.tokens.autoElev = {
+		id: 'autoElev',
+		name: 'Auto Elevation',
+		collectionId: 'theme',
+		type: 'number',
+		valuesByMode: {
+			default: 22,
+		},
+	};
+	const tokenFallbackNode = makeFrameNode({
+		effectVariables: {
+			autoElev: 3,
+		},
+	});
+	const tokenBoundAuto: Extract<ShadowEffect, { type: 'auto' }> = {
+		...boundAuto,
+		elevation: 9,
+		bindings: {
+			elevation: 'autoElev',
+		},
+	};
+	const tokenResolved = resolveEffectVariables(tokenFallbackNode, tokenBoundAuto, tokenDoc);
+	assertEqual(failures, 'token binding resolves before legacy fallback', tokenResolved.elevation, 22);
+	const fallbackResolved = resolveEffectVariables(tokenFallbackNode, tokenBoundAuto);
+	assertEqual(failures, 'legacy fallback still resolves without document token library', fallbackResolved.elevation, 3);
 
 	const mixedNode = makeFrameNode({
 		effects: [

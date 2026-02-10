@@ -31,7 +31,7 @@ const makeDoc = (): Document => {
 	const pageOne: Page = { id: 'page_1', name: 'Page 1', rootId: 'root' };
 	const pageTwo: Page = { id: 'page_2', name: 'Page 2', rootId: 'root_2' };
 	return {
-		version: 8,
+		version: 9,
 		rootId: 'root',
 		pages: [pageOne, pageTwo],
 		activePageId: 'page_1',
@@ -42,6 +42,8 @@ const makeDoc = (): Document => {
 		},
 		assets: {},
 		components: { definitions: {}, sets: {} },
+		styles: { paint: {}, text: {}, effect: {}, grid: {} },
+		variables: { collections: {}, tokens: {}, activeModeByCollection: {} },
 	};
 };
 

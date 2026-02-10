@@ -1,6 +1,17 @@
 import { produce, enablePatches, Patch } from 'immer';
 import type { Command } from './types';
-import type { Asset, ComponentsLibrary, Document, Node, Page, VectorData, VectorPoint, VectorSegment } from '../doc/types';
+import type {
+	Asset,
+	ComponentsLibrary,
+	Document,
+	Node,
+	Page,
+	StyleLibrary,
+	StyleVariableLibrary,
+	VectorData,
+	VectorPoint,
+	VectorSegment,
+} from '../doc/types';
 import { buildVectorPathData } from '../doc/vector';
 import { resolveBooleanNodePath } from '../doc/boolean/solve';
 import { invalidateBooleanGeometryCache } from '../doc/geometry-cache';
@@ -20,6 +31,8 @@ type DraftDocument = {
 	nodes: Record<string, Node>;
 	assets: Record<string, Asset>;
 	components: ComponentsLibrary;
+	styles: StyleLibrary;
+	variables: StyleVariableLibrary;
 };
 
 enablePatches();
@@ -34,6 +47,7 @@ export const applyCommand = (doc: Document, cmd: Command): Document => {
 
 const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 	ensurePagesMetadata(draft);
+	ensureStyleVariableLibraries(draft);
 
 	switch (cmd.type) {
 		case 'createNode': {
@@ -626,6 +640,77 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			}
 			break;
 		}
+
+		case 'upsertSharedStyle': {
+			const { kind, style } = cmd.payload;
+			if (kind === 'paint') {
+				draft.styles.paint[style.id] = style;
+			} else if (kind === 'text') {
+				draft.styles.text[style.id] = style;
+			} else if (kind === 'effect') {
+				draft.styles.effect[style.id] = style;
+			} else if (kind === 'grid') {
+				draft.styles.grid[style.id] = style;
+			}
+			break;
+		}
+
+		case 'removeSharedStyle': {
+			const { kind, id } = cmd.payload;
+			if (kind === 'paint') {
+				delete draft.styles.paint[id];
+			} else if (kind === 'text') {
+				delete draft.styles.text[id];
+			} else if (kind === 'effect') {
+				delete draft.styles.effect[id];
+			} else if (kind === 'grid') {
+				delete draft.styles.grid[id];
+			}
+			break;
+		}
+
+		case 'upsertVariableCollection': {
+			const { collection } = cmd.payload;
+			draft.variables.collections[collection.id] = collection;
+			const fallbackModeId = collection.defaultModeId ?? collection.modes[0]?.id;
+			if (fallbackModeId && !draft.variables.activeModeByCollection[collection.id]) {
+				draft.variables.activeModeByCollection[collection.id] = fallbackModeId;
+			}
+			break;
+		}
+
+		case 'removeVariableCollection': {
+			const { collectionId } = cmd.payload;
+			delete draft.variables.collections[collectionId];
+			delete draft.variables.activeModeByCollection[collectionId];
+			for (const [tokenId, token] of Object.entries(draft.variables.tokens)) {
+				if (token.collectionId === collectionId) {
+					delete draft.variables.tokens[tokenId];
+				}
+			}
+			break;
+		}
+
+		case 'upsertVariableToken': {
+			const { token } = cmd.payload;
+			draft.variables.tokens[token.id] = token;
+			break;
+		}
+
+		case 'removeVariableToken': {
+			const { tokenId } = cmd.payload;
+			delete draft.variables.tokens[tokenId];
+			break;
+		}
+
+		case 'setVariableCollectionMode': {
+			const { collectionId, modeId } = cmd.payload;
+			const collection = draft.variables.collections[collectionId];
+			if (!collection) break;
+			if (!collection.modes.some((mode) => mode.id === modeId)) break;
+			draft.variables.activeModeByCollection[collectionId] = modeId;
+			break;
+		}
 	}
 };
 
@@ -637,6 +722,8 @@ const asDocument = (draft: DraftDocument): Document => ({
 	nodes: draft.nodes,
 	assets: draft.assets,
 	components: draft.components,
+	styles: draft.styles,
+	variables: draft.variables,
 });
 
 const ensurePagesMetadata = (draft: DraftDocument): void => {
@@ -662,6 +749,23 @@ const ensureComponentsLibrary = (draft: DraftDocument): void => {
 	if (!draft.components.sets) {
 		draft.components.sets = {};
 	}
+};
+
+const ensureStyleVariableLibraries = (draft: DraftDocument): void => {
+	if (!draft.styles) {
+		draft.styles = { paint: {}, text: {}, effect: {}, grid: {} };
+	}
+	if (!draft.styles.paint) draft.styles.paint = {};
+	if (!draft.styles.text) draft.styles.text = {};
+	if (!draft.styles.effect) draft.styles.effect = {};
+	if (!draft.styles.grid) draft.styles.grid = {};
+
+	if (!draft.variables) {
+		draft.variables = { collections: {}, tokens: {}, activeModeByCollection: {} };
+	}
+	if (!draft.variables.collections) draft.variables.collections = {};
+	if (!draft.variables.tokens) draft.variables.tokens = {};
+	if (!draft.variables.activeModeByCollection) draft.variables.activeModeByCollection = {};
 };
 
 const deleteNodeSubtree = (draft: DraftDocument, nodeId: string): void => {
