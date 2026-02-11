@@ -1,5 +1,5 @@
 import type { Bounds } from '../../core/doc';
-import type { Asset, Color, Node, Stroke } from '../../core/doc/types';
+import type { Asset, Color, LayerBlendMode, Node, PaintLayer, Stroke, StrokeLayer } from '../../core/doc/types';
 import type { ClipboardPayloadV2 } from '../clipboard/types';
 import { parseDataUrl } from '../utils/data-url';
 import type { FigmaImportWarning, SvgImportResult } from '../types';
@@ -35,17 +35,144 @@ const isHiddenElement = (element: Element): boolean => {
 	);
 };
 
-const parseFill = (value: string | null | undefined): Color | undefined => {
+const parseCoordinate = (value: string | null | undefined, fallback: number): number => {
+	if (!value) return fallback;
+	const trimmed = value.trim();
+	if (trimmed.endsWith('%')) {
+		return parseNumber(trimmed.slice(0, -1), fallback * 100) / 100;
+	}
+	return parseNumber(trimmed, fallback);
+};
+
+const applyOpacityToColor = (color: string, opacity: number): string => {
+	const clamped = Math.max(0, Math.min(1, opacity));
+	if (clamped >= 0.999) return color;
+	const hex = color.trim();
+	if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex)) {
+		const normalized =
+			hex.length === 4
+				? `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`
+				: hex;
+		const r = Number.parseInt(normalized.slice(1, 3), 16);
+		const g = Number.parseInt(normalized.slice(3, 5), 16);
+		const b = Number.parseInt(normalized.slice(5, 7), 16);
+		return `rgba(${r}, ${g}, ${b}, ${clamped})`;
+	}
+	const rgb = hex.match(/^rgba?\\(([^)]+)\\)$/i);
+	if (rgb) {
+		const parts = rgb[1]
+			.split(',')
+			.map((part) => Number.parseFloat(part.trim()))
+			.filter((entry) => Number.isFinite(entry));
+		if (parts.length >= 3) {
+			const baseAlpha = parts.length >= 4 ? parts[3] : 1;
+			return `rgba(${Math.round(parts[0])}, ${Math.round(parts[1])}, ${Math.round(parts[2])}, ${Math.max(0, Math.min(1, baseAlpha * clamped))})`;
+		}
+	}
+	return color;
+};
+
+const normalizeStopColor = (stop: Element): string => {
+	const style = parseStyleMap(stop);
+	const color = stop.getAttribute('stop-color') ?? style['stop-color'] ?? '#000000';
+	const opacity = parseNumber(stop.getAttribute('stop-opacity') ?? style['stop-opacity'] ?? '1', 1);
+	return applyOpacityToColor(color, opacity);
+};
+
+const buildGradientMap = (svgRoot: SVGSVGElement): Record<string, Color> => {
+	const gradients: Record<string, Color> = {};
+	const gradientElements = Array.from(svgRoot.querySelectorAll('linearGradient, radialGradient'));
+	for (const gradientEl of gradientElements) {
+		const id = gradientEl.getAttribute('id');
+		if (!id) continue;
+		const tag = gradientEl.tagName.toLowerCase();
+		const stops = Array.from(gradientEl.querySelectorAll('stop'))
+			.map((stop) => ({
+				offset: Math.max(
+					0,
+					Math.min(
+						1,
+						parseCoordinate(stop.getAttribute('offset') ?? parseStyleMap(stop).offset ?? '0', 0),
+					),
+				),
+				color: normalizeStopColor(stop),
+			}))
+			.sort((a, b) => a.offset - b.offset);
+		if (stops.length === 0) continue;
+		if (tag === 'radialgradient') {
+			gradients[id] = {
+				type: 'gradient',
+				kind: 'radial',
+				stops,
+				center: {
+					x: parseCoordinate(gradientEl.getAttribute('cx') ?? '50%', 0.5),
+					y: parseCoordinate(gradientEl.getAttribute('cy') ?? '50%', 0.5),
+				},
+				radius: parseCoordinate(gradientEl.getAttribute('r') ?? '50%', 0.5),
+			};
+			continue;
+		}
+		gradients[id] = {
+			type: 'gradient',
+			kind: 'linear',
+			stops,
+			from: {
+				x: parseCoordinate(gradientEl.getAttribute('x1') ?? '0%', 0),
+				y: parseCoordinate(gradientEl.getAttribute('y1') ?? '50%', 0.5),
+			},
+			to: {
+				x: parseCoordinate(gradientEl.getAttribute('x2') ?? '100%', 1),
+				y: parseCoordinate(gradientEl.getAttribute('y2') ?? '50%', 0.5),
+			},
+		};
+	}
+	return gradients;
+};
+
+const extractUrlRefId = (value: string): string | null => {
+	const match = value.match(/url\(\s*#([^)]+)\)/i);
+	return match?.[1]?.trim() ?? null;
+};
+
+const parseFill = (value: string | null | undefined, gradientsById: Record<string, Color>): Color | undefined => {
 	if (!value || value === 'none') return undefined;
+	const refId = extractUrlRefId(value);
+	if (refId && gradientsById[refId]) {
+		return gradientsById[refId];
+	}
 	return { type: 'solid', value };
 };
 
-const parseStroke = (stroke: string | null | undefined, width: string | null | undefined): Stroke | undefined => {
+const parseStroke = (
+	stroke: string | null | undefined,
+	width: string | null | undefined,
+	element: Element,
+	style: Record<string, string>,
+	gradientsById: Record<string, Color>,
+): Stroke | undefined => {
 	if (!stroke || stroke === 'none') return undefined;
+	const color = parseFill(stroke, gradientsById);
+	if (!color) return undefined;
+	const dashPatternRaw = element.getAttribute('stroke-dasharray') ?? style['stroke-dasharray'];
+	const dashPattern = dashPatternRaw
+		? dashPatternRaw
+				.split(/[ ,]+/)
+				.map((entry) => Number.parseFloat(entry))
+				.filter((entry) => Number.isFinite(entry) && entry >= 0)
+		: undefined;
+	const strokeCapRaw = (element.getAttribute('stroke-linecap') ?? style['stroke-linecap'] ?? '').toLowerCase();
+	const strokeJoinRaw = (element.getAttribute('stroke-linejoin') ?? style['stroke-linejoin'] ?? '').toLowerCase();
 	return {
-		color: { type: 'solid', value: stroke },
+		color,
 		width: Math.max(0, parseNumber(width, 1)),
-		style: 'solid',
+		style: dashPattern && dashPattern.length > 0 ? (dashPattern[0] <= 1.5 ? 'dotted' : 'dashed') : 'solid',
+		cap: strokeCapRaw === 'round' || strokeCapRaw === 'square' ? (strokeCapRaw as StrokeLayer['cap']) : 'butt',
+		join:
+			strokeJoinRaw === 'round' || strokeJoinRaw === 'bevel' || strokeJoinRaw === 'miter'
+				? (strokeJoinRaw as StrokeLayer['join'])
+				: 'miter',
+		dashPattern: dashPattern && dashPattern.length > 0 ? dashPattern : undefined,
+		dashOffset: parseNumber(element.getAttribute('stroke-dashoffset') ?? style['stroke-dashoffset'], 0),
 	};
 };
 
@@ -74,16 +201,49 @@ const normalizeFontWeight = (value: string | null | undefined): 'normal' | 'bold
 	return 'normal';
 };
 
-const readPaint = (element: Element): { fill?: Color; stroke?: Stroke; opacity?: number } => {
+const parseBlendMode = (value: string | undefined): LayerBlendMode | undefined => {
+	if (!value) return undefined;
+	const normalized = value.trim().toLowerCase();
+	if (
+		normalized === 'normal' ||
+		normalized === 'multiply' ||
+		normalized === 'screen' ||
+		normalized === 'overlay' ||
+		normalized === 'darken' ||
+		normalized === 'lighten' ||
+		normalized === 'color-dodge' ||
+		normalized === 'color-burn' ||
+		normalized === 'hard-light' ||
+		normalized === 'soft-light' ||
+		normalized === 'difference' ||
+		normalized === 'exclusion' ||
+		normalized === 'hue' ||
+		normalized === 'saturation' ||
+		normalized === 'color' ||
+		normalized === 'luminosity'
+	) {
+		return normalized;
+	}
+	return undefined;
+};
+
+const readPaint = (
+	element: Element,
+	gradientsById: Record<string, Color>,
+): { fill?: Color; stroke?: Stroke; opacity?: number; blendMode?: LayerBlendMode } => {
 	const style = parseStyleMap(element);
-	const fill = parseFill(element.getAttribute('fill') ?? style.fill);
+	const fill = parseFill(element.getAttribute('fill') ?? style.fill, gradientsById);
 	const stroke = parseStroke(
 		element.getAttribute('stroke') ?? style.stroke,
 		element.getAttribute('stroke-width') ?? style['stroke-width'],
+		element,
+		style,
+		gradientsById,
 	);
 	const opacityRaw = element.getAttribute('opacity') ?? style.opacity;
 	const opacity = opacityRaw ? parseNumber(opacityRaw, 1) : undefined;
-	return { fill, stroke, opacity };
+	const blendMode = parseBlendMode(style['mix-blend-mode']);
+	return { fill, stroke, opacity, blendMode };
 };
 
 const parseViewBox = (svg: SVGSVGElement): Bounds => {
@@ -306,6 +466,39 @@ const finalizeGroupBounds = (nodes: Record<string, Node>, groupId: string): void
 	};
 };
 
+const fillToLayers = (fill: Color | undefined, generateId: () => string): PaintLayer[] | undefined => {
+	if (!fill) return undefined;
+	return [
+		{
+			id: generateId(),
+			visible: true,
+			opacity: 1,
+			blendMode: 'normal',
+			paint: fill,
+		},
+	];
+};
+
+const strokeToLayers = (stroke: Stroke | undefined, generateId: () => string): StrokeLayer[] | undefined => {
+	if (!stroke || stroke.width <= 0) return undefined;
+	return [
+		{
+			id: generateId(),
+			visible: stroke.visible ?? true,
+			opacity: stroke.opacity ?? 1,
+			blendMode: stroke.blendMode ?? 'normal',
+			paint: stroke.color,
+			width: stroke.width,
+			align: stroke.align ?? 'center',
+			cap: stroke.cap ?? 'butt',
+			join: stroke.join ?? 'miter',
+			miterLimit: stroke.miterLimit,
+			dashPattern: stroke.dashPattern,
+			dashOffset: stroke.dashOffset,
+		},
+	];
+};
+
 export const mapSvgToClipboardPayload = (svgText: string, options: MapSvgOptions): SvgToClipboardMapResult => {
 	const parsed = parseSvgDocument(svgText);
 	if (!parsed) {
@@ -322,6 +515,7 @@ export const mapSvgToClipboardPayload = (svgText: string, options: MapSvgOptions
 	const warnings: FigmaImportWarning[] = [...parsed.warnings];
 	const viewBox = parseViewBox(parsed.svgElement);
 	const clipPathBoundsById = buildClipPathBoundsIndex(parsed.svgElement);
+	const gradientsById = buildGradientMap(parsed.svgElement);
 	const rootId = options.generateId();
 	nodes[rootId] = {
 		id: rootId,
@@ -368,9 +562,11 @@ export const mapSvgToClipboardPayload = (svgText: string, options: MapSvgOptions
 			return;
 		}
 
-		const { fill, stroke, opacity } = readPaint(element);
-		const nodeId = options.generateId();
-		let node: Node | null = null;
+			const { fill, stroke, opacity, blendMode } = readPaint(element, gradientsById);
+			const fills = fillToLayers(fill, options.generateId);
+			const strokes = strokeToLayers(stroke, options.generateId);
+			const nodeId = options.generateId();
+			let node: Node | null = null;
 
 		if (tag === 'rect') {
 			const x = parseNumber(element.getAttribute('x')) + nextOffset.x;
@@ -380,16 +576,19 @@ export const mapSvgToClipboardPayload = (svgText: string, options: MapSvgOptions
 				type: 'rectangle',
 				name: 'Rectangle',
 				position: { x, y },
-				size: {
-					width: Math.max(1, parseNumber(element.getAttribute('width'), 1)),
-					height: Math.max(1, parseNumber(element.getAttribute('height'), 1)),
-				},
-				fill,
-				stroke,
-				opacity,
-				cornerRadius: parseNumber(element.getAttribute('rx')),
-				visible: true,
-			};
+					size: {
+						width: Math.max(1, parseNumber(element.getAttribute('width'), 1)),
+						height: Math.max(1, parseNumber(element.getAttribute('height'), 1)),
+					},
+					fill,
+					fills,
+					stroke,
+					strokes,
+					blendMode,
+					opacity,
+					cornerRadius: parseNumber(element.getAttribute('rx')),
+					visible: true,
+				};
 		} else if (tag === 'circle' || tag === 'ellipse') {
 			const cx = parseNumber(element.getAttribute('cx')) + nextOffset.x;
 			const cy = parseNumber(element.getAttribute('cy')) + nextOffset.y;
@@ -397,15 +596,18 @@ export const mapSvgToClipboardPayload = (svgText: string, options: MapSvgOptions
 			const ry = tag === 'circle' ? parseNumber(element.getAttribute('r')) : parseNumber(element.getAttribute('ry'));
 			node = {
 				id: nodeId,
-				type: 'ellipse',
-				name: 'Ellipse',
-				position: { x: cx - rx, y: cy - ry },
-				size: { width: Math.max(1, rx * 2), height: Math.max(1, ry * 2) },
-				fill,
-				stroke,
-				opacity,
-				visible: true,
-			};
+					type: 'ellipse',
+					name: 'Ellipse',
+					position: { x: cx - rx, y: cy - ry },
+					size: { width: Math.max(1, rx * 2), height: Math.max(1, ry * 2) },
+					fill,
+					fills,
+					stroke,
+					strokes,
+					blendMode,
+					opacity,
+					visible: true,
+				};
 		} else if (tag === 'path' || tag === 'line' || tag === 'polyline' || tag === 'polygon') {
 			let pathData = element.getAttribute('d') ?? '';
 			if (!pathData && tag === 'line') {
@@ -424,14 +626,17 @@ export const mapSvgToClipboardPayload = (svgText: string, options: MapSvgOptions
 					id: nodeId,
 					type: 'path',
 					name: 'Path',
-					position: { x: bounds.x + nextOffset.x, y: bounds.y + nextOffset.y },
-					size: { width: bounds.width, height: bounds.height },
-					path: pathData,
-					fill,
-					stroke,
-					opacity,
-					visible: true,
-				};
+						position: { x: bounds.x + nextOffset.x, y: bounds.y + nextOffset.y },
+						size: { width: bounds.width, height: bounds.height },
+						path: pathData,
+						fill,
+						fills,
+						stroke,
+						strokes,
+						blendMode,
+						opacity,
+						visible: true,
+					};
 			}
 		} else if (tag === 'text') {
 			const fontSize = Math.max(1, parseNumber(element.getAttribute('font-size'), 16));
@@ -446,12 +651,16 @@ export const mapSvgToClipboardPayload = (svgText: string, options: MapSvgOptions
 				size: { width: Math.max(1, text.length * fontSize * 0.6), height: fontSize * 1.2 },
 				text,
 				fontSize,
-				fontFamily: element.getAttribute('font-family') ?? undefined,
-				fontWeight: normalizeFontWeight(element.getAttribute('font-weight')),
-				fill: fill ?? { type: 'solid', value: '#000000' },
-				opacity,
-				visible: true,
-			};
+					fontFamily: element.getAttribute('font-family') ?? undefined,
+					fontWeight: normalizeFontWeight(element.getAttribute('font-weight')),
+					fill: fill ?? { type: 'solid', value: '#000000' },
+					fills: fills ?? fillToLayers(fill ?? { type: 'solid', value: '#000000' }, options.generateId),
+					stroke,
+					strokes,
+					blendMode,
+					opacity,
+					visible: true,
+				};
 		} else if (tag === 'image') {
 			const x = parseNumber(element.getAttribute('x')) + nextOffset.x;
 			const y = parseNumber(element.getAttribute('y')) + nextOffset.y;
@@ -478,29 +687,31 @@ export const mapSvgToClipboardPayload = (svgText: string, options: MapSvgOptions
 						name: 'Image',
 						position: { x, y },
 						size: { width, height },
-						image: {
-							assetId,
-							mime: parsedData.mime,
-						},
-						opacity,
-						visible: true,
-						aspectRatioLocked: true,
-					};
-				} else {
+							image: {
+								assetId,
+								mime: parsedData.mime,
+							},
+							blendMode,
+							opacity,
+							visible: true,
+							aspectRatioLocked: true,
+						};
+					} else {
 					node = {
 						id: nodeId,
 						type: 'image',
 						name: 'Image',
 						position: { x, y },
 						size: { width, height },
-						image: {
-							src: href,
-						},
-						opacity,
-						visible: true,
-						aspectRatioLocked: true,
-					};
-				}
+							image: {
+								src: href,
+							},
+							blendMode,
+							opacity,
+							visible: true,
+							aspectRatioLocked: true,
+						};
+					}
 			}
 		}
 

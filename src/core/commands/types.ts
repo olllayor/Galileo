@@ -2,6 +2,7 @@ import type {
 	Asset,
 	BooleanOp,
 	ComponentDefinition,
+	DocumentAppearance,
 	ComponentOverridePatch,
 	ComponentSet,
 	ComponentVariantMap,
@@ -368,6 +369,13 @@ export interface SetVariableCollectionModeCommand extends BaseCommand {
 	};
 }
 
+export interface SetDocumentAppearanceCommand extends BaseCommand {
+	type: 'setDocumentAppearance';
+	payload: {
+		appearance: DocumentAppearance;
+	};
+}
+
 export type Command =
 	| CreateNodeCommand
 	| DeleteNodeCommand
@@ -407,7 +415,8 @@ export type Command =
 	| RemoveVariableCollectionCommand
 	| UpsertVariableTokenCommand
 	| RemoveVariableTokenCommand
-	| SetVariableCollectionModeCommand;
+	| SetVariableCollectionModeCommand
+	| SetDocumentAppearanceCommand;
 
 export const isCommand = (value: unknown): value is Command => {
 	if (typeof value !== 'object' || value === null) {

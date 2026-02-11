@@ -100,6 +100,90 @@ button:focus-visible {
   box-shadow: 0 0 0 2px rgba(24, 160, 251, 0.4);
 }
 
+.gal-form-field {
+  width: 100%;
+}
+
+.gal-select-field {
+  transition: border-color 110ms ease, box-shadow 110ms ease, background-color 110ms ease;
+}
+
+.gal-select-field:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.gal-select-field:focus-visible {
+  border-color: var(--border-focus) !important;
+  box-shadow: 0 0 0 2px rgba(24, 160, 251, 0.22);
+}
+
+.gal-select-field:disabled {
+  opacity: 0.6;
+}
+
+.gal-select-field option {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  text-transform: none;
+}
+
+.paint-popover-range {
+  width: 100%;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background-color: rgba(255, 255, 255, 0.06);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.paint-popover-range:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(24, 160, 251, 0.25);
+}
+
+.paint-popover-range-hue {
+  background: linear-gradient(90deg, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%);
+}
+
+.paint-popover-range::-webkit-slider-runnable-track {
+  height: 14px;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.paint-popover-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -1px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  background: #dedede;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.48);
+}
+
+.paint-popover-range-hue::-webkit-slider-thumb {
+  background: #ff2e2e;
+}
+
+.paint-popover-range::-moz-range-track {
+  height: 14px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.paint-popover-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  background: #dedede;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.48);
+}
+
 /* Figma-style scrollbars */
 ::-webkit-scrollbar {
   width: 8px;

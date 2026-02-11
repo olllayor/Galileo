@@ -1,6 +1,7 @@
 import React from 'react';
 import type { PrototypeInteraction, PrototypePageGraph, PrototypeTransition } from '../core/doc/types';
 import { colors, panels, radii, spacing, transitions, typography } from './design-system';
+import { SelectField } from './controls/SelectField';
 
 type PrototypeTrigger = 'click' | 'hover';
 
@@ -59,24 +60,6 @@ const PanelSection: React.FC<{ title: string; children: React.ReactNode }> = ({ 
 	</div>
 );
 
-const labelStyle: React.CSSProperties = {
-	display: 'block',
-	fontSize: typography.fontSize.sm,
-	color: colors.text.tertiary,
-	marginBottom: spacing.xs,
-};
-
-const selectStyle: React.CSSProperties = {
-	width: '100%',
-	backgroundColor: colors.bg.tertiary,
-	border: `1px solid ${colors.border.subtle}`,
-	borderRadius: radii.sm,
-	color: colors.text.primary,
-	fontSize: typography.fontSize.sm,
-	padding: `6px ${spacing.sm}`,
-	outline: 'none',
-};
-
 const buttonStyle: React.CSSProperties = {
 	width: '100%',
 	padding: `8px ${spacing.sm}`,
@@ -105,51 +88,35 @@ const TriggerRow: React.FC<{
 
 	return (
 		<div style={{ marginBottom: spacing.md }}>
-			<div style={labelStyle}>{trigger === 'click' ? 'On Click' : 'On Hover'}</div>
-			<select
-				value={targetFrameId}
-				onChange={(event) => {
-					const value = event.target.value;
-					if (!value) {
-						onSetInteraction(sourceFrameId, trigger, undefined);
-						return;
-					}
+				<SelectField
+					label={trigger === 'click' ? 'On Click' : 'On Hover'}
+					value={targetFrameId}
+					onChange={(value) => {
+						if (!value) {
+							onSetInteraction(sourceFrameId, trigger, undefined);
+							return;
+						}
 					onSetInteraction(sourceFrameId, trigger, {
 						targetFrameId: value,
 						transition,
 					});
 				}}
-				style={selectStyle}
-			>
-				<option value="">No destination</option>
-				{frames.map((frame) => (
-					<option key={frame.id} value={frame.id}>
-						{frame.name}
-					</option>
-				))}
-			</select>
+				options={[{ value: '', label: 'No destination' }, ...frames.map((frame) => ({ value: frame.id, label: frame.name }))]}
+			/>
 			<div style={{ height: spacing.sm }} />
-			<select
+			<SelectField
 				value={transition}
-				onChange={(event) => {
+				onChange={(nextTransition) => {
 					if (!targetFrameId) return;
 					onSetInteraction(sourceFrameId, trigger, {
 						targetFrameId,
-						transition: event.target.value as PrototypeTransition,
+						transition: nextTransition as PrototypeTransition,
 					});
 				}}
 				disabled={!targetFrameId}
-				style={{
-					...selectStyle,
-					opacity: targetFrameId ? 1 : 0.5,
-				}}
-			>
-				{TRANSITION_OPTIONS.map((option) => (
-					<option key={option.value} value={option.value}>
-						{option.label}
-					</option>
-				))}
-			</select>
+				hint={!targetFrameId ? 'Choose a destination first.' : undefined}
+				options={TRANSITION_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+			/>
 		</div>
 	);
 };
@@ -254,19 +221,12 @@ export const PrototypePanel: React.FC<PrototypePanelProps> = ({
 			</div>
 
 			<PanelSection title="Flow Start">
-				<label style={labelStyle}>Start Frame</label>
-				<select
+				<SelectField
+					label="Start Frame"
 					value={pagePrototype?.startFrameId ?? ''}
-					onChange={(event) => onSetStartFrame(pageId, event.target.value || undefined)}
-					style={selectStyle}
-				>
-					<option value="">None</option>
-					{frames.map((frame) => (
-						<option key={frame.id} value={frame.id}>
-							{frame.name}
-						</option>
-					))}
-				</select>
+					onChange={(value) => onSetStartFrame(pageId, value || undefined)}
+					options={[{ value: '', label: 'None' }, ...frames.map((frame) => ({ value: frame.id, label: frame.name }))]}
+				/>
 			</PanelSection>
 
 			<PanelSection title="Interactions">

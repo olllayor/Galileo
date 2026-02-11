@@ -19,8 +19,9 @@ import {
 	type StyleVariableLibrary,
 	type StyleVariableToken,
 } from './types';
+import { normalizeNodeAppearance } from './appearance';
 
-export const CURRENT_DOCUMENT_VERSION = 10;
+export const CURRENT_DOCUMENT_VERSION = 12;
 
 export type DocumentParseResult =
   | { ok: true; doc: Document; warnings: string[] }
@@ -95,7 +96,7 @@ const migrateDocument = (raw: unknown): DocumentParseResult => {
 		const rawNodes = (rawObject.nodes ?? {}) as Record<string, unknown>;
 		const migratedNodes = Object.fromEntries(
 			Object.entries(rawNodes).map(([id, node]) => [id, migrateNode(node, version)]),
-		);
+		) as Record<string, Node>;
 		const styles = normalizeStyleLibrary((raw as { styles?: unknown }).styles);
 		const variables = normalizeVariableLibrary((raw as { variables?: unknown }).variables, warnings);
 		const migratedVariables = migrateLegacyEffectVariablesToVariableLibrary(migratedNodes, variables, warnings);
@@ -111,14 +112,22 @@ const migrateDocument = (raw: unknown): DocumentParseResult => {
 					: normalizeComponents((raw as { components?: unknown }).components),
 			styles,
 			variables: migratedVariables,
+			appearance: normalizeDocumentAppearance((raw as { appearance?: unknown }).appearance),
 		} as Document;
-	} else {
-		migrated = {
-			...(raw as Document),
-			styles: normalizeStyleLibrary((raw as { styles?: unknown }).styles),
-			variables: normalizeVariableLibrary((raw as { variables?: unknown }).variables, warnings),
-		};
-	}
+		} else {
+			const rawObject = raw as Record<string, unknown>;
+			const rawNodes = (rawObject.nodes ?? {}) as Record<string, unknown>;
+			const migratedNodes = Object.fromEntries(
+				Object.entries(rawNodes).map(([id, node]) => [id, migrateNode(node, version)]),
+			) as Record<string, Node>;
+			migrated = {
+				...(raw as Document),
+				nodes: migratedNodes,
+				styles: normalizeStyleLibrary((raw as { styles?: unknown }).styles),
+				variables: normalizeVariableLibrary((raw as { variables?: unknown }).variables, warnings),
+				appearance: normalizeDocumentAppearance((raw as { appearance?: unknown }).appearance),
+			};
+		}
 
 	migrated = normalizePages(migrated, warnings);
 	migrated = normalizePrototypeGraph(migrated, warnings);
@@ -135,6 +144,31 @@ const migrateDocument = (raw: unknown): DocumentParseResult => {
   }
 
   return { ok: true, doc: parsed.data, warnings };
+};
+
+const normalizeSwatchList = (value: unknown): string[] => {
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((entry) => normalizeColorString(entry))
+		.filter((entry): entry is string => typeof entry === 'string')
+		.slice(0, 64);
+};
+
+const normalizeDocumentAppearance = (rawAppearance: unknown): Document['appearance'] => {
+	const fallbackSamples = ['#ffffff', '#d9d9d9', '#000000', '#ff5e5b', '#00a884', '#3a7bff'];
+	if (!rawAppearance || typeof rawAppearance !== 'object') {
+		return {
+			recentSwatches: [],
+			sampleSwatches: fallbackSamples,
+		};
+	}
+	const appearance = rawAppearance as Record<string, unknown>;
+	const recentSwatches = normalizeSwatchList(appearance.recentSwatches);
+	const sampleSwatches = normalizeSwatchList(appearance.sampleSwatches);
+	return {
+		recentSwatches,
+		sampleSwatches: sampleSwatches.length > 0 ? sampleSwatches : fallbackSamples,
+	};
 };
 
 const normalizePages = (doc: Document, warnings: string[]): Document => {
@@ -290,6 +324,250 @@ const normalizePrototypeGraph = (doc: Document, warnings: string[]): Document =>
 	};
 };
 
+const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+
+const normalizeColorString = (value: unknown): string | undefined => {
+	if (typeof value === 'string' && value.trim().length > 0) {
+		return value;
+	}
+	if (value && typeof value === 'object') {
+		const record = value as Record<string, unknown>;
+		if (record.type === 'solid' && typeof record.value === 'string' && record.value.trim().length > 0) {
+			return record.value;
+		}
+		if (
+			typeof record.r === 'number' &&
+			typeof record.g === 'number' &&
+			typeof record.b === 'number' &&
+			Number.isFinite(record.r) &&
+			Number.isFinite(record.g) &&
+			Number.isFinite(record.b)
+		) {
+			const r = Math.round(clamp01(record.r) * 255);
+			const g = Math.round(clamp01(record.g) * 255);
+			const b = Math.round(clamp01(record.b) * 255);
+			return `rgb(${r}, ${g}, ${b})`;
+		}
+	}
+	return undefined;
+};
+
+const normalizePoint = (value: unknown): { x: number; y: number } | undefined => {
+	if (!value || typeof value !== 'object') return undefined;
+	const point = value as Record<string, unknown>;
+	if (typeof point.x !== 'number' || typeof point.y !== 'number') return undefined;
+	if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return undefined;
+	return { x: point.x, y: point.y };
+};
+
+const normalizeGradientStops = (rawStops: unknown): Array<{ offset: number; color: string }> => {
+	if (!Array.isArray(rawStops) || rawStops.length === 0) {
+		return [];
+	}
+
+	const total = rawStops.length;
+	const normalized = rawStops
+		.map((stop, index) => {
+			if (typeof stop === 'string' && stop.trim().length > 0) {
+				return {
+					offset: total > 1 ? index / (total - 1) : 0,
+					color: stop,
+				};
+			}
+			if (!stop || typeof stop !== 'object') {
+				return null;
+			}
+			const entry = stop as Record<string, unknown>;
+			const rawOffset =
+				(typeof entry.offset === 'number' ? entry.offset : undefined) ??
+				(typeof entry.position === 'number' ? entry.position : undefined) ??
+				(typeof entry.t === 'number' ? entry.t : undefined) ??
+				(total > 1 ? index / (total - 1) : 0);
+			const normalizedOffset = rawOffset > 1 && rawOffset <= 100 ? rawOffset / 100 : rawOffset;
+			const color =
+				normalizeColorString(entry.color) ??
+				normalizeColorString(entry.value) ??
+				normalizeColorString(entry.paint) ??
+				normalizeColorString(entry.fill);
+			if (!color) return null;
+			return {
+				offset: clamp01(Number.isFinite(normalizedOffset) ? normalizedOffset : 0),
+				color,
+			};
+		})
+		.filter((stop): stop is { offset: number; color: string } => Boolean(stop));
+
+	if (normalized.length === 0) {
+		return [];
+	}
+	normalized.sort((a, b) => a.offset - b.offset);
+	if (normalized.length === 1) {
+		normalized.push({ offset: 1, color: normalized[0].color });
+	}
+	return normalized;
+};
+
+const normalizeColorLike = (rawColor: unknown): Record<string, unknown> | undefined => {
+	if (!rawColor) return undefined;
+	if (typeof rawColor === 'string') {
+		return { type: 'solid', value: rawColor };
+	}
+	if (typeof rawColor !== 'object') return undefined;
+	const color = rawColor as Record<string, unknown>;
+	const type = typeof color.type === 'string' ? color.type.toLowerCase() : '';
+	if (type === 'solid') {
+		const value = normalizeColorString(color.value);
+		return value ? { type: 'solid', value } : undefined;
+	}
+	if (type === 'pattern') {
+		const pattern =
+			color.pattern === 'grid' || color.pattern === 'dots' || color.pattern === 'stripes' || color.pattern === 'noise'
+				? color.pattern
+				: 'grid';
+		const fg = normalizeColorString(color.fg) ?? '#ffffff';
+		const bg = normalizeColorString(color.bg) ?? '#1f1f1f';
+		const scale = typeof color.scale === 'number' && Number.isFinite(color.scale) ? Math.max(0.1, color.scale) : 1;
+		const rotation =
+			typeof color.rotation === 'number' && Number.isFinite(color.rotation)
+				? color.rotation
+				: typeof color.angle === 'number' && Number.isFinite(color.angle)
+					? color.angle
+					: 0;
+		const next: Record<string, unknown> = {
+			type: 'pattern',
+			pattern,
+			fg,
+			bg,
+			scale,
+			rotation,
+		};
+		if (typeof color.opacity === 'number' && Number.isFinite(color.opacity)) {
+			next.opacity = clamp01(color.opacity);
+		}
+		return next;
+	}
+	if (type === 'image') {
+		const assetId = typeof color.assetId === 'string' && color.assetId.trim().length > 0 ? color.assetId : undefined;
+		if (!assetId) return undefined;
+		const fit = color.fit === 'fit' || color.fit === 'tile' ? color.fit : 'fill';
+		const next: Record<string, unknown> = {
+			type: 'image',
+			assetId,
+			fit,
+		};
+		if (typeof color.opacity === 'number' && Number.isFinite(color.opacity)) next.opacity = clamp01(color.opacity);
+		if (typeof color.tileScale === 'number' && Number.isFinite(color.tileScale)) next.tileScale = Math.max(0.01, color.tileScale);
+		if (typeof color.tileOffsetX === 'number' && Number.isFinite(color.tileOffsetX)) next.tileOffsetX = color.tileOffsetX;
+		if (typeof color.tileOffsetY === 'number' && Number.isFinite(color.tileOffsetY)) next.tileOffsetY = color.tileOffsetY;
+		if (typeof color.rotation === 'number' && Number.isFinite(color.rotation)) next.rotation = color.rotation;
+		return next;
+	}
+	const stops = normalizeGradientStops(color.stops);
+	if (type === 'gradient' || stops.length > 0) {
+		const rawKind = color.kind ?? color.gradientType ?? color.mode ?? color.style;
+		const kind = rawKind === 'radial' ? 'radial' : 'linear';
+		const next: Record<string, unknown> = {
+			type: 'gradient',
+			kind,
+			stops: stops.length > 0 ? stops : [{ offset: 0, color: '#000000' }, { offset: 1, color: '#ffffff' }],
+		};
+		const from = normalizePoint(color.from ?? color.start ?? color.p0 ?? color.handleStart);
+		const to = normalizePoint(color.to ?? color.end ?? color.p1 ?? color.handleEnd);
+		const center = normalizePoint(color.center ?? color.mid);
+		if (from) next.from = from;
+		if (to) next.to = to;
+		if (center) next.center = center;
+		if (typeof color.radius === 'number' && Number.isFinite(color.radius)) next.radius = color.radius;
+		if (typeof color.innerRadius === 'number' && Number.isFinite(color.innerRadius)) next.innerRadius = color.innerRadius;
+		if (typeof color.angle === 'number' && Number.isFinite(color.angle)) next.angle = color.angle;
+		return next;
+	}
+	return undefined;
+};
+
+const normalizeLegacyStroke = (rawStroke: unknown): Record<string, unknown> | undefined => {
+	if (!rawStroke || typeof rawStroke !== 'object') return undefined;
+	const stroke = rawStroke as Record<string, unknown>;
+	const color = normalizeColorLike(stroke.color);
+	if (!color) return undefined;
+	const width = typeof stroke.width === 'number' && Number.isFinite(stroke.width) ? Math.max(0, stroke.width) : 0;
+	const style =
+		stroke.style === 'dashed' || stroke.style === 'dotted' || stroke.style === 'solid' ? stroke.style : 'solid';
+	const next: Record<string, unknown> = { color, width, style };
+	if (stroke.align === 'inside' || stroke.align === 'center' || stroke.align === 'outside') next.align = stroke.align;
+	if (stroke.cap === 'butt' || stroke.cap === 'round' || stroke.cap === 'square') next.cap = stroke.cap;
+	if (stroke.join === 'miter' || stroke.join === 'round' || stroke.join === 'bevel') next.join = stroke.join;
+	if (typeof stroke.miterLimit === 'number' && Number.isFinite(stroke.miterLimit)) next.miterLimit = stroke.miterLimit;
+	if (Array.isArray(stroke.dashPattern)) {
+		next.dashPattern = stroke.dashPattern.filter((entry) => typeof entry === 'number' && Number.isFinite(entry) && entry >= 0);
+	}
+	if (typeof stroke.dashOffset === 'number' && Number.isFinite(stroke.dashOffset)) next.dashOffset = stroke.dashOffset;
+	if (typeof stroke.opacity === 'number' && Number.isFinite(stroke.opacity)) next.opacity = clamp01(stroke.opacity);
+	if (typeof stroke.visible === 'boolean') next.visible = stroke.visible;
+	return next;
+};
+
+const normalizePaintLayerLike = (rawLayer: unknown, index: number): Record<string, unknown> | undefined => {
+	if (!rawLayer || typeof rawLayer !== 'object') {
+		const paint = normalizeColorLike(rawLayer);
+		if (!paint) return undefined;
+		return { id: `fill_${index + 1}`, paint, visible: true, opacity: 1, blendMode: 'normal' };
+	}
+	const layer = rawLayer as Record<string, unknown>;
+	const paint = normalizeColorLike(layer.paint ?? layer.color ?? layer.fill);
+	if (!paint) return undefined;
+	const next: Record<string, unknown> = {
+		id: typeof layer.id === 'string' && layer.id.trim().length > 0 ? layer.id : `fill_${index + 1}`,
+		paint,
+		visible: typeof layer.visible === 'boolean' ? layer.visible : true,
+		opacity: typeof layer.opacity === 'number' && Number.isFinite(layer.opacity) ? clamp01(layer.opacity) : 1,
+		blendMode: typeof layer.blendMode === 'string' ? layer.blendMode : 'normal',
+	};
+	return next;
+};
+
+const normalizeStrokeLayerLike = (rawLayer: unknown, index: number): Record<string, unknown> | undefined => {
+	if (!rawLayer || typeof rawLayer !== 'object') return undefined;
+	const layer = rawLayer as Record<string, unknown>;
+	const paint = normalizeColorLike(layer.paint ?? layer.color);
+	if (!paint) return undefined;
+	const width =
+		typeof layer.width === 'number' && Number.isFinite(layer.width)
+			? Math.max(0, layer.width)
+			: typeof layer.strokeWeight === 'number' && Number.isFinite(layer.strokeWeight)
+				? Math.max(0, layer.strokeWeight)
+				: 0;
+	const next: Record<string, unknown> = {
+		id: typeof layer.id === 'string' && layer.id.trim().length > 0 ? layer.id : `stroke_${index + 1}`,
+		paint,
+		width,
+		visible: typeof layer.visible === 'boolean' ? layer.visible : true,
+		opacity: typeof layer.opacity === 'number' && Number.isFinite(layer.opacity) ? clamp01(layer.opacity) : 1,
+		blendMode: typeof layer.blendMode === 'string' ? layer.blendMode : 'normal',
+	};
+	if (layer.align === 'inside' || layer.align === 'center' || layer.align === 'outside') next.align = layer.align;
+	if (layer.cap === 'butt' || layer.cap === 'round' || layer.cap === 'square') next.cap = layer.cap;
+	if (layer.join === 'miter' || layer.join === 'round' || layer.join === 'bevel') next.join = layer.join;
+	if (typeof layer.miterLimit === 'number' && Number.isFinite(layer.miterLimit)) next.miterLimit = layer.miterLimit;
+	if (Array.isArray(layer.dashPattern)) {
+		next.dashPattern = layer.dashPattern.filter((entry) => typeof entry === 'number' && Number.isFinite(entry) && entry >= 0);
+	}
+	if (typeof layer.dashOffset === 'number' && Number.isFinite(layer.dashOffset)) next.dashOffset = layer.dashOffset;
+	return next;
+};
+
+const normalizeMaskSettings = (rawMask: unknown): Record<string, unknown> | undefined => {
+	if (!rawMask || typeof rawMask !== 'object') return undefined;
+	const mask = rawMask as Record<string, unknown>;
+	const mode = mask.mode === 'luminance' ? 'luminance' : 'alpha';
+	const enabled = mask.enabled !== false;
+	const next: Record<string, unknown> = { mode, enabled };
+	if (typeof mask.sourceNodeId === 'string' && mask.sourceNodeId.trim().length > 0) {
+		next.sourceNodeId = mask.sourceNodeId;
+	}
+	return next;
+};
+
 const migrateNode = (rawNode: unknown, version: number): unknown => {
 	if (!rawNode || typeof rawNode !== 'object') {
 		return rawNode;
@@ -321,7 +599,56 @@ const migrateNode = (rawNode: unknown, version: number): unknown => {
 		node.variant = normalizeVariantMap(node.variant);
 	}
 
-	return node;
+	if (node.fill !== undefined) {
+		node.fill = normalizeColorLike(node.fill);
+	}
+	if (node.stroke !== undefined) {
+		node.stroke = normalizeLegacyStroke(node.stroke);
+	}
+	if (Array.isArray(node.fills)) {
+		node.fills = node.fills
+			.map((layer, index) => normalizePaintLayerLike(layer, index))
+			.filter((layer): layer is Record<string, unknown> => Boolean(layer));
+	}
+	if (Array.isArray(node.strokes)) {
+		node.strokes = node.strokes
+			.map((layer, index) => normalizeStrokeLayerLike(layer, index))
+			.filter((layer): layer is Record<string, unknown> => Boolean(layer));
+	}
+	if (version < 11) {
+		if (!Array.isArray(node.fills) || node.fills.length === 0) {
+			const normalizedFill = normalizeColorLike(node.fill);
+			if (normalizedFill) {
+				node.fills = [{ id: 'fill_1', visible: true, opacity: 1, blendMode: 'normal', paint: normalizedFill }];
+			}
+		}
+		if (!Array.isArray(node.strokes) || node.strokes.length === 0) {
+			const normalizedStroke = normalizeLegacyStroke(node.stroke);
+			if (normalizedStroke && normalizedStroke.color && typeof normalizedStroke.width === 'number') {
+				node.strokes = [
+					{
+						id: 'stroke_1',
+						visible: true,
+						opacity: normalizedStroke.opacity ?? 1,
+						blendMode: normalizedStroke.blendMode ?? 'normal',
+						paint: normalizedStroke.color,
+						width: normalizedStroke.width,
+						align: normalizedStroke.align ?? 'center',
+						cap: normalizedStroke.cap ?? 'butt',
+						join: normalizedStroke.join ?? 'miter',
+						miterLimit: normalizedStroke.miterLimit,
+						dashPattern: normalizedStroke.dashPattern,
+						dashOffset: normalizedStroke.dashOffset,
+					},
+				];
+			}
+		}
+	}
+	if (node.mask !== undefined) {
+		node.mask = normalizeMaskSettings(node.mask);
+	}
+
+	return normalizeNodeAppearance(node as Node);
 };
 
 const normalizeVariantMap = (value: unknown): Record<string, string> | undefined => {

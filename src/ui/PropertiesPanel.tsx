@@ -24,6 +24,7 @@ import type {
 	ImageOutline,
 	ShadowBlendMode,
 	ShadowEffect,
+	DocumentAppearance,
 } from '../core/doc/types';
 import {
 	ENABLE_AUTO_SHADOWS_V2,
@@ -36,6 +37,7 @@ import {
 import { colors, spacing, typography, radii, transitions, panels } from './design-system';
 import { ScrubbableNumberInput } from './ScrubbableNumberInput';
 import { FontPickerModal } from './FontPickerModal';
+import { AppearanceSection } from './appearance/AppearanceSection';
 
 interface PropertiesPanelProps {
 	selectedNode: Node | null;
@@ -80,6 +82,8 @@ interface PropertiesPanelProps {
 	onResetComponentOverride?: (instanceId: string, sourceNodeId: string) => void;
 	onResetAllComponentOverrides?: (instanceId: string) => void;
 	onCreateSharedStyleFromNode?: (nodeId: string, kind: 'paint' | 'text' | 'effect' | 'grid') => void;
+	onUpdateDocumentAppearance?: (appearance: DocumentAppearance) => void;
+	onPickImageAssetForPaint?: () => Promise<string | null>;
 }
 
 const defaultLayout: Layout = {
@@ -185,6 +189,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	onResetComponentOverride,
 	onResetAllComponentOverrides,
 	onCreateSharedStyleFromNode,
+	onUpdateDocumentAppearance,
+	onPickImageAssetForPaint,
 }) => {
 	const [draggedEffectIndex, setDraggedEffectIndex] = React.useState<number | null>(null);
 	const [fontPickerOpen, setFontPickerOpen] = React.useState(false);
@@ -642,8 +648,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 				</h4>
 				<div style={{ display: 'grid', gap: spacing.xs }}>
 					<div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.xs }}>
-						<select
-							value={selectedNode.fillStyleId ?? ''}
+						<select className="gal-select-field" value={selectedNode.fillStyleId ?? ''}
 							onChange={(event) => handleInputChange('fillStyleId', event.target.value || undefined)}
 							style={{
 								padding: `${spacing.xs} ${spacing.sm}`,
@@ -694,8 +699,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					</div>
 					{selectedNode.type === 'text' && (
 						<div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.xs }}>
-							<select
-								value={selectedNode.textStyleId ?? ''}
+							<select className="gal-select-field" value={selectedNode.textStyleId ?? ''}
 								onChange={(event) => handleInputChange('textStyleId', event.target.value || undefined)}
 								style={{
 									padding: `${spacing.xs} ${spacing.sm}`,
@@ -746,8 +750,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						</div>
 					)}
 					<div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.xs }}>
-						<select
-							value={selectedNode.effectStyleId ?? ''}
+						<select className="gal-select-field" value={selectedNode.effectStyleId ?? ''}
 							onChange={(event) => handleInputChange('effectStyleId', event.target.value || undefined)}
 							style={{
 								padding: `${spacing.xs} ${spacing.sm}`,
@@ -798,8 +801,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					</div>
 					{selectedNode.type === 'frame' && (
 						<div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.xs }}>
-							<select
-								value={selectedNode.gridStyleId ?? ''}
+							<select className="gal-select-field" value={selectedNode.gridStyleId ?? ''}
 								onChange={(event) => handleInputChange('gridStyleId', event.target.value || undefined)}
 								style={{
 									padding: `${spacing.xs} ${spacing.sm}`,
@@ -1035,8 +1037,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 							>
 								Operation
 							</label>
-							<select
-								value={booleanData.op}
+							<select className="gal-select-field" value={booleanData.op}
 								onChange={(event) =>
 									onUpdateNode(selectedNode.id, {
 										booleanData: {
@@ -1158,8 +1159,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								>
 									{property}
 								</label>
-								<select
-									value={componentContext.currentVariant[property] ?? ''}
+								<select className="gal-select-field" value={componentContext.currentVariant[property] ?? ''}
 									onChange={(event) =>
 										onSetComponentVariant?.(componentContext.instanceId, {
 											...componentContext.currentVariant,
@@ -1492,8 +1492,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								>
 									Horizontal
 								</label>
-								<select
-									value={currentConstraints.horizontal}
+								<select className="gal-select-field" value={currentConstraints.horizontal}
 									onChange={(e) =>
 										handleInputChange('constraints', {
 											...currentConstraints,
@@ -1527,8 +1526,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								>
 									Vertical
 								</label>
-								<select
-									value={currentConstraints.vertical}
+								<select className="gal-select-field" value={currentConstraints.vertical}
 									onChange={(e) =>
 										handleInputChange('constraints', {
 											...currentConstraints,
@@ -1717,8 +1715,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						>
 							Shadow overflow
 						</label>
-						<select
-							value={shadowOverflow}
+						<select className="gal-select-field" value={shadowOverflow}
 							onChange={(e) =>
 								handleShadowOverflowChange(e.target.value as 'visible' | 'clipped' | 'clip-content-only')
 							}
@@ -1774,8 +1771,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								>
 									Direction
 								</label>
-								<select
-									value={layout.direction}
+								<select className="gal-select-field" value={layout.direction}
 									onChange={(e) => handleLayoutChange({ direction: e.target.value as Layout['direction'] })}
 									style={{
 										width: '100%',
@@ -1834,8 +1830,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 							>
 								Main axis align
 							</label>
-							<select
-								value={layout.alignment}
+							<select className="gal-select-field" value={layout.alignment}
 								onChange={(e) => handleLayoutChange({ alignment: e.target.value as Layout['alignment'] })}
 								style={{
 									width: '100%',
@@ -1863,8 +1858,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 							>
 								Cross axis align
 							</label>
-							<select
-								value={layout.crossAlignment ?? 'center'}
+							<select className="gal-select-field" value={layout.crossAlignment ?? 'center'}
 								onChange={(e) =>
 									handleLayoutChange({ crossAlignment: e.target.value as Layout['crossAlignment'] })
 								}
@@ -1986,8 +1980,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								>
 									Horizontal
 								</label>
-								<select
-									value={layoutSizing.horizontal}
+								<select className="gal-select-field" value={layoutSizing.horizontal}
 									onChange={(e) =>
 										handleInputChange('layoutSizing', {
 											...layoutSizing,
@@ -2020,8 +2013,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								>
 									Vertical
 								</label>
-								<select
-									value={layoutSizing.vertical}
+								<select className="gal-select-field" value={layoutSizing.vertical}
 									onChange={(e) =>
 										handleInputChange('layoutSizing', {
 											...layoutSizing,
@@ -2081,8 +2073,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								/>
 								Show guides
 							</label>
-							<select
-								value={layoutGuideType}
+							<select className="gal-select-field" value={layoutGuideType}
 								disabled={!hasLayoutGuides}
 								onChange={(e) =>
 									handleInputChange(
@@ -2838,8 +2829,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									>
 										Blend mode
 									</label>
-									<select
-										value={effect.blendMode ?? 'normal'}
+									<select className="gal-select-field" value={effect.blendMode ?? 'normal'}
 										onChange={(e) => updateEffectPatch(index, { blendMode: e.target.value as ShadowBlendMode })}
 										style={{
 											width: '100%',
@@ -2998,8 +2988,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									<label style={{ display: 'block', fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: '4px' }}>
 										Blend mode
 									</label>
-									<select
-										value={effect.blendMode ?? 'normal'}
+									<select className="gal-select-field" value={effect.blendMode ?? 'normal'}
 										onChange={(e) => updateEffectPatch(index, { blendMode: e.target.value as ShadowBlendMode })}
 										style={{
 											width: '100%',
@@ -3333,84 +3322,14 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 				)}
 
 			<div style={{ marginBottom: spacing.lg }}>
-				<h4
-					style={{
-						margin: `0 0 ${spacing.sm} 0`,
-						fontSize: typography.fontSize.sm,
-						color: colors.text.secondary,
-						fontWeight: typography.fontWeight.medium,
-					}}
-				>
-					Fill
-				</h4>
-				<label
-					style={{
-						display: 'flex',
-						alignItems: 'center',
-						gap: spacing.sm,
-						fontSize: typography.fontSize.md,
-						color: colors.text.secondary,
-						marginBottom: spacing.sm,
-					}}
-				>
-					<input
-						type="checkbox"
-						checked={selectedNode.visible !== false}
-						onChange={(e) => handleInputChange('visible', e.target.checked)}
-						style={{ accentColor: colors.accent.primary }}
-					/>
-					Visible
-				</label>
-
-				{selectedNode.fill ? (
-					<div style={{ display: 'grid', gap: spacing.sm }}>
-						<input
-							type="color"
-							value={selectedNode.fill.type === 'solid' ? selectedNode.fill.value : defaultFill}
-							onChange={(e) => handleInputChange('fill', { type: 'solid', value: e.target.value })}
-							style={{
-								width: '100%',
-								height: '28px',
-								border: `1px solid ${colors.border.default}`,
-								borderRadius: radii.sm,
-								cursor: 'pointer',
-								backgroundColor: colors.bg.tertiary,
-							}}
-						/>
-						<button
-							type="button"
-							onClick={() => handleInputChange('fill', undefined)}
-							style={{
-								padding: spacing.xs,
-								borderRadius: radii.sm,
-								border: `1px solid ${colors.border.default}`,
-								backgroundColor: colors.bg.tertiary,
-								color: colors.text.secondary,
-								fontSize: typography.fontSize.md,
-								cursor: 'pointer',
-							}}
-						>
-							Remove Fill
-						</button>
-					</div>
-				) : (
-					<button
-						type="button"
-						onClick={() => handleInputChange('fill', { type: 'solid', value: defaultFill })}
-						style={{
-							padding: spacing.xs,
-							borderRadius: radii.sm,
-							border: `1px solid ${colors.border.default}`,
-							backgroundColor: colors.bg.tertiary,
-							color: colors.text.secondary,
-							fontSize: typography.fontSize.md,
-							cursor: 'pointer',
-							width: '100%',
-						}}
-					>
-						Add Fill
-					</button>
-				)}
+				<AppearanceSection
+					node={selectedNode}
+					document={document}
+					onUpdateNode={onUpdateNode}
+					defaultFill={defaultFill}
+					onUpdateDocumentAppearance={onUpdateDocumentAppearance}
+					onPickImageAsset={onPickImageAssetForPaint}
+				/>
 			</div>
 
 			{selectedNode.type === 'text' && (
@@ -3583,8 +3502,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 							>
 								Weight
 							</label>
-							<select
-								value={selectedNode.fontWeight ?? 'normal'}
+							<select className="gal-select-field" value={selectedNode.fontWeight ?? 'normal'}
 								onChange={(e) => handleInputChange('fontWeight', e.target.value)}
 								style={{
 									width: '100%',

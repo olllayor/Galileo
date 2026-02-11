@@ -1,11 +1,64 @@
 import { z } from 'zod';
 
+export const layerBlendModeSchema = z.enum([
+	'normal',
+	'multiply',
+	'screen',
+	'overlay',
+	'darken',
+	'lighten',
+	'color-dodge',
+	'color-burn',
+	'hard-light',
+	'soft-light',
+	'difference',
+	'exclusion',
+	'hue',
+	'saturation',
+	'color',
+	'luminosity',
+]);
+export type LayerBlendMode = z.infer<typeof layerBlendModeSchema>;
+
+const gradientStopSchema = z.object({
+	offset: z.number(),
+	color: z.string(),
+});
+
 const gradientSchema = z
 	.object({
 		type: z.literal('gradient'),
-		stops: z.any().array(),
+		kind: z.enum(['linear', 'radial']).optional(),
+		stops: gradientStopSchema.array().min(1),
+		from: z.object({ x: z.number(), y: z.number() }).optional(),
+		to: z.object({ x: z.number(), y: z.number() }).optional(),
+		center: z.object({ x: z.number(), y: z.number() }).optional(),
+		radius: z.number().optional(),
+		innerRadius: z.number().optional(),
+		angle: z.number().optional(),
 	})
 	.passthrough();
+
+const patternSchema = z.object({
+	type: z.literal('pattern'),
+	pattern: z.enum(['grid', 'dots', 'stripes', 'noise']),
+	fg: z.string(),
+	bg: z.string(),
+	scale: z.number(),
+	rotation: z.number(),
+	opacity: z.number().optional(),
+});
+
+const imagePaintSchema = z.object({
+	type: z.literal('image'),
+	assetId: z.string(),
+	fit: z.enum(['fill', 'fit', 'tile']),
+	opacity: z.number().optional(),
+	tileScale: z.number().optional(),
+	tileOffsetX: z.number().optional(),
+	tileOffsetY: z.number().optional(),
+	rotation: z.number().optional(),
+});
 
 export const colorSchema = z.union([
 	z.object({
@@ -13,6 +66,8 @@ export const colorSchema = z.union([
 		value: z.string(),
 	}),
 	gradientSchema,
+	patternSchema,
+	imagePaintSchema,
 ]);
 
 export type Color = z.infer<typeof colorSchema>;
@@ -21,9 +76,50 @@ export const strokeSchema = z.object({
 	color: colorSchema,
 	width: z.number(),
 	style: z.enum(['solid', 'dashed', 'dotted']),
+	align: z.enum(['inside', 'center', 'outside']).optional(),
+	cap: z.enum(['butt', 'round', 'square']).optional(),
+	join: z.enum(['miter', 'round', 'bevel']).optional(),
+	miterLimit: z.number().optional(),
+	dashPattern: z.array(z.number()).optional(),
+	dashOffset: z.number().optional(),
+	opacity: z.number().optional(),
+	blendMode: layerBlendModeSchema.optional(),
+	visible: z.boolean().optional(),
 });
 
 export type Stroke = z.infer<typeof strokeSchema>;
+
+export const paintLayerSchema = z.object({
+	id: z.string(),
+	visible: z.boolean().optional(),
+	opacity: z.number().optional(),
+	blendMode: layerBlendModeSchema.optional(),
+	paint: colorSchema,
+});
+export type PaintLayer = z.infer<typeof paintLayerSchema>;
+
+export const strokeLayerSchema = z.object({
+	id: z.string(),
+	visible: z.boolean().optional(),
+	opacity: z.number().optional(),
+	blendMode: layerBlendModeSchema.optional(),
+	paint: colorSchema,
+	width: z.number(),
+	align: z.enum(['inside', 'center', 'outside']).optional(),
+	cap: z.enum(['butt', 'round', 'square']).optional(),
+	join: z.enum(['miter', 'round', 'bevel']).optional(),
+	miterLimit: z.number().optional(),
+	dashPattern: z.array(z.number()).optional(),
+	dashOffset: z.number().optional(),
+});
+export type StrokeLayer = z.infer<typeof strokeLayerSchema>;
+
+export const maskSettingsSchema = z.object({
+	sourceNodeId: z.string().optional(),
+	mode: z.enum(['alpha', 'luminance']),
+	enabled: z.boolean(),
+});
+export type MaskSettings = z.infer<typeof maskSettingsSchema>;
 
 export const shadowBlendModeSchema = z.enum(['normal', 'multiply', 'screen', 'overlay']);
 export type ShadowBlendMode = z.infer<typeof shadowBlendModeSchema>;
@@ -409,8 +505,12 @@ export const componentOverridePatchSchema = z
 	.object({
 		text: z.string().optional(),
 		fill: colorSchema.optional(),
+		fills: paintLayerSchema.array().optional(),
 		fillStyleId: z.string().optional(),
 		stroke: strokeSchema.optional(),
+		strokes: strokeLayerSchema.array().optional(),
+		blendMode: layerBlendModeSchema.optional(),
+		mask: maskSettingsSchema.optional(),
 		opacity: z.number().optional(),
 		visible: z.boolean().optional(),
 		textStyleId: z.string().optional(),
@@ -467,8 +567,12 @@ export const nodeSchema = z.object({
 	layout: layoutSchema.optional(),
 
 	fill: colorSchema.optional(),
+	fills: paintLayerSchema.array().optional(),
 	fillStyleId: z.string().optional(),
 	stroke: strokeSchema.optional(),
+	strokes: strokeLayerSchema.array().optional(),
+	blendMode: layerBlendModeSchema.optional(),
+	mask: maskSettingsSchema.optional(),
 	opacity: z.number().optional(),
 	cornerRadius: z.number().optional(),
 
@@ -602,11 +706,17 @@ export const prototypeGraphSchema = z.object({
 	pages: z.record(z.string(), prototypePageGraphSchema),
 });
 
+export const documentAppearanceSchema = z.object({
+	recentSwatches: z.array(z.string()),
+	sampleSwatches: z.array(z.string()),
+});
+
 export type PrototypeTransition = z.infer<typeof prototypeTransitionSchema>;
 export type PrototypeInteraction = z.infer<typeof prototypeInteractionSchema>;
 export type PrototypeSourceInteractions = z.infer<typeof prototypeSourceInteractionsSchema>;
 export type PrototypePageGraph = z.infer<typeof prototypePageGraphSchema>;
 export type PrototypeGraph = z.infer<typeof prototypeGraphSchema>;
+export type DocumentAppearance = z.infer<typeof documentAppearanceSchema>;
 
 export const createEmptyPrototypePageGraph = (): PrototypePageGraph => ({
 	interactionsBySource: {},
@@ -626,13 +736,14 @@ export const documentSchema = z.object({
 	components: componentsLibrarySchema,
 	styles: styleLibrarySchema,
 	variables: styleVariableLibrarySchema,
+	appearance: documentAppearanceSchema.optional(),
 	prototype: prototypeGraphSchema,
 });
 
 export type Document = z.infer<typeof documentSchema>;
 
 export const createDocument = (): Document => ({
-	version: 10,
+	version: 12,
 	rootId: 'root',
 	pages: [
 		{
@@ -668,6 +779,10 @@ export const createDocument = (): Document => ({
 		collections: {},
 		tokens: {},
 		activeModeByCollection: {},
+	},
+	appearance: {
+		recentSwatches: [],
+		sampleSwatches: ['#ffffff', '#d9d9d9', '#000000', '#ff5e5b', '#00a884', '#3a7bff'],
 	},
 	prototype: createEmptyPrototypeGraph(['page_1']),
 });

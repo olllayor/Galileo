@@ -1,5 +1,6 @@
 import type { Document, Node } from './types';
 import { generateId } from './id';
+import { normalizeNodeAppearance } from './appearance';
 export * from './geometry';
 export * from './geometry-cache';
 export * from './spatial-index';
@@ -11,6 +12,7 @@ export * from './effects';
 export * from './styles';
 export * from './vector';
 export * from './components';
+export * from './appearance';
 export * from './boolean/solve';
 export * from '../feature-flags';
 
@@ -22,14 +24,14 @@ export const createNode = (
 ): Document => {
 	const id = (node as { id?: string }).id || generateId();
 
-	const newNode: Node = {
+	const newNode: Node = normalizeNodeAppearance({
 		id,
 		type: node.type,
 		position: node.position || { x: 0, y: 0 },
 		size: node.size || { width: 100, height: 100 },
 		children: [],
 		...(node as Record<string, unknown>),
-	};
+	} as Node);
 
 	const parent = doc.nodes[parentId];
 	if (!parent) {
@@ -131,10 +133,10 @@ export const updateNode = (doc: Document, nodeId: string, updates: Partial<Node>
 		...doc,
 		nodes: {
 			...doc.nodes,
-			[nodeId]: {
+			[nodeId]: normalizeNodeAppearance({
 				...node,
 				...updates,
-			},
+			}),
 		},
 	};
 };

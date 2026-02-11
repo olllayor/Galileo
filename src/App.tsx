@@ -67,6 +67,7 @@ import type {
 	ComponentVariantMap,
 	Constraints,
 	Document,
+	DocumentAppearance,
 	ImageMeta,
 	ImageMetaUnsplash,
 	ImageOutline,
@@ -149,6 +150,7 @@ import {
 	buildAssetIdRemapForPaste,
 	buildClipboardPayloadV2,
 	remapNodeAssetIdsForPaste,
+	remapNodeReferencesForPaste,
 	toClipboardPayloadV2,
 } from './interop/clipboard/paste';
 import { mapSvgToClipboardPayload, rasterizeSvgToDataUrl } from './interop/svg/map-svg-to-galileo';
@@ -2381,6 +2383,83 @@ export const App: React.FC = () => {
 		],
 	);
 
+	const pickImageAssetForPaint = useCallback(async (): Promise<string | null> => {
+		if (typeof window === 'undefined' || typeof window.document === 'undefined') {
+			return null;
+		}
+		return await new Promise((resolve) => {
+			const input = window.document.createElement('input');
+			input.type = 'file';
+			input.accept = 'image/*';
+			input.onchange = async () => {
+				const file = input.files?.[0];
+				if (!file) {
+					resolve(null);
+					return;
+				}
+				const reader = new FileReader();
+				reader.onerror = () => resolve(null);
+				reader.onload = async () => {
+					const dataUrl = typeof reader.result === 'string' ? reader.result : null;
+					if (!dataUrl) {
+						resolve(null);
+						return;
+					}
+					const parsed = parseDataUrl(dataUrl);
+					if (!parsed) {
+						resolve(null);
+						return;
+					}
+					let size: { width: number; height: number } | null = null;
+					try {
+						size = await getImageSize(dataUrl);
+					} catch {
+						size = null;
+					}
+					if (!size) {
+						resolve(null);
+						return;
+					}
+					const assetId = generateId();
+					executeCommand({
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'user',
+						description: 'Create paint image asset',
+						type: 'createAsset',
+						payload: {
+							id: assetId,
+							asset: {
+								type: 'image',
+								mime: parsed.mime,
+								dataBase64: parsed.dataBase64,
+								width: size.width,
+								height: size.height,
+							},
+						},
+					} as Command);
+					resolve(assetId);
+				};
+				reader.readAsDataURL(file);
+			};
+			input.click();
+		});
+	}, [executeCommand]);
+
+	const updateDocumentAppearance = useCallback(
+		(appearance: DocumentAppearance) => {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Update paint swatches',
+				type: 'setDocumentAppearance',
+				payload: { appearance },
+			} as Command);
+		},
+		[executeCommand],
+	);
+
 	const clearBackgroundRemoval = useCallback(
 		(nodeId: string) => {
 			const node = document.nodes[nodeId];
@@ -2687,11 +2766,15 @@ export const App: React.FC = () => {
 				return nextId;
 			};
 
-			const cloneNode = (oldId: string, parentId: string, isRoot: boolean, index?: number) => {
-				const node = normalizedPayload.nodes[oldId];
-				if (!node) return;
-				const remappedNode = remapNodeAssetIdsForPaste(node, assetIdMap);
-				const newId = ensureId(oldId);
+				const cloneNode = (oldId: string, parentId: string, isRoot: boolean, index?: number) => {
+					const node = normalizedPayload.nodes[oldId];
+					if (!node) return;
+					const remappedAssetNode = remapNodeAssetIdsForPaste(node, assetIdMap);
+					const remappedNode = remapNodeReferencesForPaste(remappedAssetNode, (candidateId) => {
+						if (!normalizedPayload.nodes[candidateId]) return undefined;
+						return ensureId(candidateId);
+					});
+					const newId = ensureId(oldId);
 				const { children } = remappedNode;
 				const rest = Object.fromEntries(
 					Object.entries(remappedNode).filter(([key]) => key !== 'id' && key !== 'children'),
@@ -6250,8 +6333,13 @@ export const App: React.FC = () => {
 				const overridePatch: Partial<ComponentOverridePatch> = {};
 				if (Object.prototype.hasOwnProperty.call(updates, 'text')) overridePatch.text = updates.text as string | undefined;
 				if (Object.prototype.hasOwnProperty.call(updates, 'fill')) overridePatch.fill = updates.fill as Node['fill'];
+				if (Object.prototype.hasOwnProperty.call(updates, 'fills')) overridePatch.fills = updates.fills as Node['fills'];
 				if (Object.prototype.hasOwnProperty.call(updates, 'fillStyleId')) overridePatch.fillStyleId = updates.fillStyleId as string | undefined;
 				if (Object.prototype.hasOwnProperty.call(updates, 'stroke')) overridePatch.stroke = updates.stroke as Node['stroke'];
+				if (Object.prototype.hasOwnProperty.call(updates, 'strokes')) overridePatch.strokes = updates.strokes as Node['strokes'];
+				if (Object.prototype.hasOwnProperty.call(updates, 'blendMode'))
+					overridePatch.blendMode = updates.blendMode as Node['blendMode'];
+				if (Object.prototype.hasOwnProperty.call(updates, 'mask')) overridePatch.mask = updates.mask as Node['mask'];
 				if (Object.prototype.hasOwnProperty.call(updates, 'image')) overridePatch.image = updates.image as Node['image'];
 				if (Object.prototype.hasOwnProperty.call(updates, 'opacity')) overridePatch.opacity = updates.opacity as number | undefined;
 				if (Object.prototype.hasOwnProperty.call(updates, 'visible')) overridePatch.visible = updates.visible as boolean | undefined;
@@ -6293,7 +6381,11 @@ export const App: React.FC = () => {
 				const hasEffectStyleUpdate = Object.prototype.hasOwnProperty.call(updates, 'effectStyleId');
 				const hasGridStyleUpdate = Object.prototype.hasOwnProperty.call(updates, 'gridStyleId');
 
-				if (Object.prototype.hasOwnProperty.call(updates, 'fill') && !hasFillStyleUpdate) {
+				if (
+					(Object.prototype.hasOwnProperty.call(updates, 'fill') ||
+						Object.prototype.hasOwnProperty.call(updates, 'fills')) &&
+					!hasFillStyleUpdate
+				) {
 					mutableUpdates.fillStyleId = undefined;
 				}
 				if (
@@ -9330,6 +9422,8 @@ export const App: React.FC = () => {
 								}
 								onResetAllComponentOverrides={resetAllComponentOverrides}
 								onCreateSharedStyleFromNode={createSharedStyleFromNode}
+								onUpdateDocumentAppearance={updateDocumentAppearance}
+								onPickImageAssetForPaint={pickImageAssetForPaint}
 								vectorTarget={
 									editablePathNode?.type === 'path'
 										? {

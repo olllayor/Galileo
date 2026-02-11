@@ -8,6 +8,7 @@ import type {
 	Page,
 	StyleLibrary,
 	StyleVariableLibrary,
+	DocumentAppearance,
 	VectorData,
 	VectorPoint,
 	VectorSegment,
@@ -22,6 +23,7 @@ import {
 	normalizeComponentVariant,
 	resolveComponentDefinition,
 } from '../doc/components';
+import { normalizeNodeAppearance } from '../doc/appearance';
 
 type DraftDocument = {
 	version: number;
@@ -33,6 +35,7 @@ type DraftDocument = {
 	components: ComponentsLibrary;
 	styles: StyleLibrary;
 	variables: StyleVariableLibrary;
+	appearance?: DocumentAppearance;
 	prototype: Document['prototype'];
 };
 
@@ -49,17 +52,18 @@ export const applyCommand = (doc: Document, cmd: Command): Document => {
 const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 	ensurePagesMetadata(draft);
 	ensureStyleVariableLibraries(draft);
+	ensureDocumentAppearance(draft);
 	ensurePrototypeGraph(draft);
 
 	switch (cmd.type) {
-		case 'createNode': {
-			const { id, parentId, node, index } = cmd.payload;
-			const newNode = {
-				...node,
-				id,
-				children: [],
-			};
-			draft.nodes[id] = newNode;
+			case 'createNode': {
+				const { id, parentId, node, index } = cmd.payload;
+				const newNode = normalizeNodeAppearance({
+					...node,
+					id,
+					children: [],
+				} as Node);
+				draft.nodes[id] = newNode;
 
 			const parent = draft.nodes[parentId];
 			if (parent) {
@@ -115,16 +119,18 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			break;
 		}
 
-		case 'setProps': {
-			const { id, props } = cmd.payload;
-			const node = draft.nodes[id];
-			if (node) {
-				Object.assign(node, props);
-				if (node.type === 'boolean') {
-					refreshBooleanNodeMetadata(draft, id);
+			case 'setProps': {
+				const { id, props } = cmd.payload;
+				const node = draft.nodes[id];
+				if (node) {
+					Object.assign(node, props);
+					const normalized = normalizeNodeAppearance(node);
+					Object.assign(node, normalized);
+					if (node.type === 'boolean') {
+						refreshBooleanNodeMetadata(draft, id);
+					}
 				}
-			}
-			break;
+				break;
 		}
 
 		case 'reorderChild': {
@@ -260,26 +266,26 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			const insertIndex =
 				typeof index === 'number' ? index : Math.max(0, parent.children.indexOf(orderedOperandIds[0]));
 
-			const booleanNode: Node = {
-				id,
-				type: 'boolean',
-				name: 'Boolean',
-				position: { x: minX, y: minY },
+				const booleanNode: Node = normalizeNodeAppearance({
+					id,
+					type: 'boolean',
+					name: 'Boolean',
+					position: { x: minX, y: minY },
 				size: { width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) },
 				children: orderedOperandIds,
 				visible: true,
 				fill: firstOperand?.fill,
 				stroke: firstOperand?.stroke,
 				opacity: firstOperand?.opacity,
-				booleanData: {
-					op,
-					operandIds: orderedOperandIds,
-					status: 'ok',
-					tolerance:
-						typeof tolerance === 'number' && Number.isFinite(tolerance) && tolerance > 0 ? tolerance : 0.001,
-				},
-			};
-			draft.nodes[id] = booleanNode;
+					booleanData: {
+						op,
+						operandIds: orderedOperandIds,
+						status: 'ok',
+						tolerance:
+							typeof tolerance === 'number' && Number.isFinite(tolerance) && tolerance > 0 ? tolerance : 0.001,
+					},
+				});
+				draft.nodes[id] = booleanNode;
 
 			for (const operandId of orderedOperandIds) {
 				const operand = draft.nodes[operandId];
@@ -651,13 +657,13 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			const definition = resolveComponentDefinition(draft.components, componentId, normalizedVariant);
 			if (!definition) break;
 			const templateRoot = definition.templateNodes[definition.templateRootId];
-			const materialized = materializeComponentInstance(definition, id, {});
-			for (const [runtimeId, runtimeNode] of Object.entries(materialized.nodes)) {
-				if (isMainPreview) {
-					runtimeNode.locked = true;
+				const materialized = materializeComponentInstance(definition, id, {});
+				for (const [runtimeId, runtimeNode] of Object.entries(materialized.nodes)) {
+					if (isMainPreview) {
+						runtimeNode.locked = true;
+					}
+					draft.nodes[runtimeId] = normalizeNodeAppearance(runtimeNode);
 				}
-				draft.nodes[runtimeId] = runtimeNode;
-			}
 			draft.nodes[id] = {
 				id,
 				type: 'componentInstance',
@@ -761,6 +767,14 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			break;
 		}
 
+		case 'setDocumentAppearance': {
+			draft.appearance = {
+				recentSwatches: cmd.payload.appearance.recentSwatches.slice(0, 64),
+				sampleSwatches: cmd.payload.appearance.sampleSwatches.slice(0, 64),
+			};
+			break;
+		}
+
 	}
 };
 
@@ -774,6 +788,7 @@ const asDocument = (draft: DraftDocument): Document => ({
 	components: draft.components,
 	styles: draft.styles,
 	variables: draft.variables,
+	appearance: draft.appearance,
 	prototype: draft.prototype,
 });
 
@@ -829,6 +844,22 @@ const ensurePrototypeGraph = (draft: DraftDocument): void => {
 	for (const page of draft.pages) {
 		ensurePrototypePageGraph(draft, page.id);
 	}
+};
+
+const ensureDocumentAppearance = (draft: DraftDocument): void => {
+	if (!draft.appearance) {
+		draft.appearance = {
+			recentSwatches: [],
+			sampleSwatches: ['#ffffff', '#d9d9d9', '#000000', '#ff5e5b', '#00a884', '#3a7bff'],
+		};
+		return;
+	}
+	draft.appearance.recentSwatches = Array.isArray(draft.appearance.recentSwatches)
+		? draft.appearance.recentSwatches.slice(0, 64)
+		: [];
+	draft.appearance.sampleSwatches = Array.isArray(draft.appearance.sampleSwatches)
+		? draft.appearance.sampleSwatches.slice(0, 64)
+		: ['#ffffff', '#d9d9d9', '#000000', '#ff5e5b', '#00a884', '#3a7bff'];
 };
 
 const ensurePrototypePageGraph = (draft: DraftDocument, pageId: string): Document['prototype']['pages'][string] => {
@@ -937,7 +968,7 @@ const rematerializeComponentInstanceDraft = (draft: DraftDocument, instanceId: s
 
 	const materialized = materializeComponentInstance(definition, instanceId, instance.componentOverrides ?? {});
 	for (const [runtimeId, runtimeNode] of Object.entries(materialized.nodes)) {
-		draft.nodes[runtimeId] = runtimeNode;
+		draft.nodes[runtimeId] = normalizeNodeAppearance(runtimeNode);
 	}
 	instance.children = [...materialized.rootChildIds];
 	const templateRoot = definition.templateNodes[definition.templateRootId];

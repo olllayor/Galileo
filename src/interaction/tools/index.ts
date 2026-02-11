@@ -1,5 +1,5 @@
 import type { Document, Node } from '../../core/doc/types';
-import { createNode, findParentNode } from '../../core/doc';
+import { createNode, findParentNode, getNodeStrokeWidthsForHitTesting } from '../../core/doc';
 import type { WorldBoundsMap } from '../../core/doc';
 import { getNodePathData } from '../../core/doc/vector';
 import type { VectorPoint } from '../../core/doc/types';
@@ -343,6 +343,7 @@ const hitTestNodeShape = (
 	context: HitTestContext,
 	sizeOverride?: { width: number; height: number },
 ): HitKind | null => {
+	const allowFill = hasVisibleFill(node);
 	switch (node.type) {
 		case 'frame':
 			return hitTestRect(node, localPoint, transform, context, true, sizeOverride);
@@ -350,9 +351,9 @@ const hitTestNodeShape = (
 		case 'componentInstance':
 			return hitTestRect(node, localPoint, transform, context, true, sizeOverride);
 		case 'rectangle':
-			return hitTestRect(node, localPoint, transform, context, Boolean(node.fill), sizeOverride);
+			return hitTestRect(node, localPoint, transform, context, allowFill, sizeOverride);
 		case 'ellipse':
-			return hitTestEllipse(node, localPoint, transform, context, Boolean(node.fill), sizeOverride);
+			return hitTestEllipse(node, localPoint, transform, context, allowFill, sizeOverride);
 		case 'path':
 			return hitTestPath(
 				doc,
@@ -360,16 +361,21 @@ const hitTestNodeShape = (
 				localPoint,
 				transform,
 				context,
-				Boolean(node.fill) && (node.vector ? node.vector.closed : true),
+				allowFill && (node.vector ? node.vector.closed : true),
 				sizeOverride,
 			);
 		case 'boolean':
-			return hitTestPath(doc, node, localPoint, transform, context, Boolean(node.fill), sizeOverride);
+			return hitTestPath(doc, node, localPoint, transform, context, allowFill, sizeOverride);
 		case 'text':
 			return hitTestText(node, localPoint, transform, context, sizeOverride);
 		default:
 			return null;
 	}
+};
+
+const hasVisibleFill = (node: Node): boolean => {
+	if (node.fills?.some((layer) => layer.visible !== false)) return true;
+	return Boolean(node.fill);
 };
 
 const hitTestRect = (
@@ -531,7 +537,8 @@ const hitTestText = (
 
 const getEdgeThickness = (node: Node, context: HitTestContext, transform: WorldTransform): number => {
 	const zoomSafe = context.zoom > 0 ? context.zoom : 1;
-	const strokeWidth = Number.isFinite(node.stroke?.width) ? node.stroke!.width : 0;
+	const strokeWidths = getNodeStrokeWidthsForHitTesting(node);
+	const strokeWidth = strokeWidths.length > 0 ? Math.max(...strokeWidths) : 0;
 	const edgeMinWorld = context.edgeMinPx / zoomSafe;
 	const hitSlopWorld = context.hitSlopPx / zoomSafe;
 	const edgeWorld = Math.max(strokeWidth / 2, edgeMinWorld) + hitSlopWorld;

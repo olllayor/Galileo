@@ -6,8 +6,8 @@ import {
 	recordShadowRenderDuration,
 } from '../../core/doc';
 import { layoutText } from '../../core/text/layout';
-import type { RenderableShadowEffect } from '../../core/doc/types';
-import type { DrawCommand, GradientPaint, Paint } from '../draw-list';
+import type { LayerBlendMode, RenderableShadowEffect } from '../../core/doc/types';
+import type { DrawCommand, FillLayerPaint, GradientPaint, ImagePaintResolved, Paint, PatternPaint, StrokeLayerPaint } from '../draw-list';
 
 type DrawableCommand = Extract<DrawCommand, { type: 'rect' | 'text' | 'ellipse' | 'image' | 'path' }>;
 
@@ -25,11 +25,36 @@ type OutlineRaster = {
 const SHADOW_CACHE_LIMIT = 120;
 const OUTLINE_CACHE_LIMIT = 120;
 
+const mapLayerBlendModeToComposite = (blendMode: LayerBlendMode | undefined): GlobalCompositeOperation => {
+	switch (blendMode) {
+		case 'multiply':
+		case 'screen':
+		case 'overlay':
+		case 'darken':
+		case 'lighten':
+		case 'color-dodge':
+		case 'color-burn':
+		case 'hard-light':
+		case 'soft-light':
+		case 'difference':
+		case 'exclusion':
+		case 'hue':
+		case 'saturation':
+		case 'color':
+		case 'luminosity':
+			return blendMode;
+		case 'normal':
+		default:
+			return 'source-over';
+	}
+};
+
 export class CanvasRenderer {
 	private ctx: CanvasRenderingContext2D;
 	private width: number;
 	private height: number;
 	private imageCache: Map<string, HTMLImageElement>;
+	private patternTileCache: Map<string, HTMLCanvasElement>;
 	private shadowRasterCache: Map<string, ShadowRaster>;
 	private outlineRasterCache: Map<string, OutlineRaster>;
 	private onInvalidate?: () => void;
@@ -43,6 +68,7 @@ export class CanvasRenderer {
 		this.width = canvas.width;
 		this.height = canvas.height;
 		this.imageCache = new Map();
+		this.patternTileCache = new Map();
 		this.shadowRasterCache = new Map();
 		this.outlineRasterCache = new Map();
 		this.onInvalidate = onInvalidate;
@@ -66,6 +92,15 @@ export class CanvasRenderer {
 	}
 
 	private executeCommand(command: DrawCommand): void {
+		const commandBlendMode =
+			'blendMode' in command && typeof command.blendMode === 'string'
+				? mapLayerBlendModeToComposite(command.blendMode as LayerBlendMode)
+				: null;
+		if (commandBlendMode) {
+			this.ctx.save();
+			this.ctx.globalCompositeOperation = commandBlendMode;
+		}
+
 		const opacity = 'opacity' in command ? command.opacity : undefined;
 		if (typeof opacity === 'number') {
 			this.ctx.save();
@@ -95,6 +130,9 @@ export class CanvasRenderer {
 		}
 
 		if (typeof opacity === 'number') {
+			this.ctx.restore();
+		}
+		if (commandBlendMode) {
 			this.ctx.restore();
 		}
 	}
@@ -334,6 +372,69 @@ export class CanvasRenderer {
 		return tinted;
 	}
 
+	private hasMaskFill(command: Extract<DrawableCommand, { type: 'rect' | 'ellipse' | 'path' }>): boolean {
+		if (Array.isArray(command.fills) && command.fills.some((layer) => layer.visible !== false)) {
+			return true;
+		}
+		return Boolean(command.fill);
+	}
+
+	private getMaskStrokeLayers(command: Extract<DrawableCommand, { type: 'rect' | 'ellipse' | 'path' }>): StrokeLayerPaint[] {
+		if (Array.isArray(command.strokes) && command.strokes.length > 0) {
+			return command.strokes.filter((layer) => layer.visible !== false && layer.width > 0);
+		}
+		if (command.stroke && command.strokeWidth && command.strokeWidth > 0) {
+			return [
+				{
+					paint: command.stroke,
+					width: command.strokeWidth,
+					align: 'center',
+					opacity: 1,
+					visible: true,
+					blendMode: 'normal',
+				},
+			];
+		}
+		return [];
+	}
+
+	private applyMaskStrokeStyle(
+		ctx: CanvasRenderingContext2D,
+		layer: Pick<StrokeLayerPaint, 'width' | 'align' | 'cap' | 'join' | 'miterLimit' | 'dashPattern' | 'dashOffset'>,
+	): void {
+		const baseWidth = Math.max(0, layer.width);
+		const widthMultiplier = layer.align === 'inside' || layer.align === 'outside' ? 2 : 1;
+		ctx.lineWidth = Math.max(0.0001, baseWidth * widthMultiplier);
+		ctx.lineCap = layer.cap ?? 'butt';
+		ctx.lineJoin = layer.join ?? 'miter';
+		ctx.miterLimit = typeof layer.miterLimit === 'number' ? Math.max(0, layer.miterLimit) : 10;
+		const dash = Array.isArray(layer.dashPattern)
+			? layer.dashPattern.filter((value) => Number.isFinite(value) && value >= 0)
+			: [];
+		ctx.setLineDash(dash);
+		ctx.lineDashOffset = typeof layer.dashOffset === 'number' ? layer.dashOffset : 0;
+	}
+
+	private drawShapeAlphaMask(
+		ctx: CanvasRenderingContext2D,
+		path: Path2D,
+		fillRule: CanvasFillRule,
+		hasFill: boolean,
+		strokeLayers: StrokeLayerPaint[],
+	): void {
+		const hasStroke = strokeLayers.length > 0;
+		ctx.fillStyle = '#ffffff';
+		ctx.strokeStyle = '#ffffff';
+		if (hasFill || !hasStroke) {
+			ctx.fill(path, fillRule);
+		}
+		for (const layer of strokeLayers) {
+			if (!layer.width || layer.width <= 0) continue;
+			this.applyMaskStrokeStyle(ctx, layer);
+			ctx.stroke(path);
+		}
+	}
+
 	private drawCommandAlphaMask(
 		ctx: CanvasRenderingContext2D,
 		command: DrawableCommand,
@@ -349,25 +450,16 @@ export class CanvasRenderer {
 			const x = command.x - originX + inset;
 			const y = command.y - originY + inset;
 
-			ctx.beginPath();
+			const path = new Path2D();
 			if (command.cornerRadius && command.cornerRadius > 0) {
 				const radius = Math.max(0, Math.min(command.cornerRadius - inset, width / 2, height / 2));
-				ctx.roundRect(x, y, width, height, radius);
+				path.roundRect(x, y, width, height, radius);
 			} else {
-				ctx.rect(x, y, width, height);
+				path.rect(x, y, width, height);
 			}
-
-			const hasFill = Boolean(command.fill);
-			const hasStroke = Boolean(command.stroke && command.strokeWidth && command.strokeWidth > 0);
-			ctx.fillStyle = '#ffffff';
-			ctx.strokeStyle = '#ffffff';
-			if (hasFill || !hasStroke) {
-				ctx.fill();
-			}
-			if (hasStroke) {
-				ctx.lineWidth = command.strokeWidth ?? 1;
-				ctx.stroke();
-			}
+			const hasFill = this.hasMaskFill(command);
+			const strokeLayers = this.getMaskStrokeLayers(command);
+			this.drawShapeAlphaMask(ctx, path, 'nonzero', hasFill, strokeLayers);
 			return true;
 		}
 
@@ -379,39 +471,21 @@ export class CanvasRenderer {
 			const x = command.x - originX;
 			const y = command.y - originY;
 
-			ctx.beginPath();
-			ctx.ellipse(x, y, radiusX, radiusY, 0, 0, Math.PI * 2);
-
-			const hasFill = Boolean(command.fill);
-			const hasStroke = Boolean(command.stroke && command.strokeWidth && command.strokeWidth > 0);
-			ctx.fillStyle = '#ffffff';
-			ctx.strokeStyle = '#ffffff';
-			if (hasFill || !hasStroke) {
-				ctx.fill();
-			}
-			if (hasStroke) {
-				ctx.lineWidth = command.strokeWidth ?? 1;
-				ctx.stroke();
-			}
+			const path = new Path2D();
+			path.ellipse(x, y, radiusX, radiusY, 0, 0, Math.PI * 2);
+			const hasFill = this.hasMaskFill(command);
+			const strokeLayers = this.getMaskStrokeLayers(command);
+			this.drawShapeAlphaMask(ctx, path, 'nonzero', hasFill, strokeLayers);
 			return true;
 		}
 
 		if (command.type === 'path') {
-			const path = new Path2D(command.d);
-			ctx.save();
-			ctx.translate(command.x - originX, command.y - originY);
-			const hasFill = Boolean(command.fill);
-			const hasStroke = Boolean(command.stroke && command.strokeWidth && command.strokeWidth > 0);
-			ctx.fillStyle = '#ffffff';
-			ctx.strokeStyle = '#ffffff';
-			if (hasFill || !hasStroke) {
-				ctx.fill(path, command.fillRule ?? 'nonzero');
-			}
-			if (hasStroke) {
-				ctx.lineWidth = command.strokeWidth ?? 1;
-				ctx.stroke(path);
-			}
-			ctx.restore();
+			const rawPath = new Path2D(command.d);
+			const translatedPath = new Path2D();
+			translatedPath.addPath(rawPath, new DOMMatrix().translate(command.x - originX, command.y - originY));
+			const hasFill = this.hasMaskFill(command);
+			const strokeLayers = this.getMaskStrokeLayers(command);
+			this.drawShapeAlphaMask(ctx, translatedPath, command.fillRule ?? 'nonzero', hasFill, strokeLayers);
 			return true;
 		}
 
@@ -456,20 +530,27 @@ export class CanvasRenderer {
 			return false;
 		}
 
-		const offscreen = this.createCanvas(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
-		const octx = offscreen.getContext('2d');
-		if (!octx) {
-			return false;
-		}
+			const offscreen = this.createCanvas(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
+			const octx = offscreen.getContext('2d');
+			if (!octx) {
+				return false;
+			}
+			const maskMode = command.mask?.mode === 'luminance' ? 'luminance' : 'alpha';
 
-		octx.clearRect(0, 0, offscreen.width, offscreen.height);
-		octx.drawImage(img, 0, 0, offscreen.width, offscreen.height);
-		octx.globalCompositeOperation = 'destination-in';
-		octx.drawImage(mask, 0, 0, offscreen.width, offscreen.height);
-		octx.globalCompositeOperation = 'source-over';
-		ctx.drawImage(offscreen, x, y, width, height);
-		return true;
-	}
+			octx.clearRect(0, 0, offscreen.width, offscreen.height);
+			octx.drawImage(img, 0, 0, offscreen.width, offscreen.height);
+			octx.globalCompositeOperation = 'destination-in';
+			if (maskMode === 'luminance') {
+				const luminanceMask = this.createLuminanceMaskCanvas(mask, offscreen.width, offscreen.height);
+				if (!luminanceMask) return false;
+				octx.drawImage(luminanceMask, 0, 0, offscreen.width, offscreen.height);
+			} else {
+				octx.drawImage(mask, 0, 0, offscreen.width, offscreen.height);
+			}
+			octx.globalCompositeOperation = 'source-over';
+			ctx.drawImage(offscreen, x, y, width, height);
+			return true;
+		}
 
 	private getCommandBounds(command: DrawableCommand): { x: number; y: number; width: number; height: number } | null {
 		if (command.type === 'rect' || command.type === 'image' || command.type === 'path' || command.type === 'text') {
@@ -663,29 +744,159 @@ export class CanvasRenderer {
 	}
 
 	private drawRect(command: Extract<DrawCommand, { type: 'rect' }>): void {
-		const { x, y, width, height, fill, stroke, strokeWidth, cornerRadius } = command;
-
-		this.ctx.beginPath();
-
+		const { x, y, width, height, fill, stroke, strokeWidth, cornerRadius, fills, strokes } = command;
+		const path = new Path2D();
 		if (cornerRadius && cornerRadius > 0) {
 			const r = Math.min(cornerRadius, width / 2, height / 2);
-			this.ctx.roundRect(x, y, width, height, r);
+			path.roundRect(x, y, width, height, r);
 		} else {
-			this.ctx.rect(x, y, width, height);
+			path.rect(x, y, width, height);
 		}
+		const bounds = { x, y, width, height };
+		this.drawFillLayers(path, bounds, fill, fills);
+		this.drawStrokeLayers(path, bounds, stroke, strokeWidth, strokes);
+	}
 
-		const fillStyle = this.resolvePaint(fill, { x, y, width, height });
-		if (fillStyle) {
+	private drawFillLayers(
+		path: Path2D,
+		bounds: { x: number; y: number; width: number; height: number },
+		legacyFill: Paint | undefined,
+		layers: FillLayerPaint[] | undefined,
+		fillRule: CanvasFillRule = 'nonzero',
+	): void {
+		const fillLayers =
+			layers && layers.length > 0
+				? layers.filter((layer) => layer.visible !== false)
+				: legacyFill
+					? [{ paint: legacyFill, opacity: 1, visible: true, blendMode: 'normal' } satisfies FillLayerPaint]
+					: [];
+		for (const layer of fillLayers) {
+			const fillStyle = this.resolvePaint(layer.paint, bounds);
+			if (!fillStyle) continue;
+			this.ctx.save();
+			this.ctx.globalCompositeOperation = mapLayerBlendModeToComposite(layer.blendMode);
+			if (typeof layer.opacity === 'number') {
+				this.ctx.globalAlpha *= Math.max(0, Math.min(1, layer.opacity));
+			}
+			const intrinsicOpacity = this.getPaintOpacity(layer.paint);
+			if (typeof intrinsicOpacity === 'number') {
+				this.ctx.globalAlpha *= intrinsicOpacity;
+			}
 			this.ctx.fillStyle = fillStyle;
-			this.ctx.fill();
+			this.ctx.fill(path, fillRule);
+			this.ctx.restore();
 		}
+	}
 
-		const strokeStyle = this.resolvePaint(stroke, { x, y, width, height });
-		if (strokeStyle && strokeWidth && strokeWidth > 0) {
-			this.ctx.strokeStyle = strokeStyle;
-			this.ctx.lineWidth = strokeWidth;
-			this.ctx.stroke();
+	private drawStrokeLayers(
+		path: Path2D,
+		bounds: { x: number; y: number; width: number; height: number },
+		legacyStroke: Paint | undefined,
+		legacyStrokeWidth: number | undefined,
+		layers: StrokeLayerPaint[] | undefined,
+		fillRule: CanvasFillRule = 'nonzero',
+	): void {
+		const strokeLayers =
+			layers && layers.length > 0
+				? layers.filter((layer) => layer.visible !== false && layer.width > 0)
+				: legacyStroke && legacyStrokeWidth && legacyStrokeWidth > 0
+					? [
+							{
+								paint: legacyStroke,
+								width: legacyStrokeWidth,
+								align: 'center',
+								opacity: 1,
+								visible: true,
+								blendMode: 'normal',
+							} satisfies StrokeLayerPaint,
+						]
+					: [];
+
+		for (const layer of strokeLayers) {
+			const strokeStyle = this.resolvePaint(layer.paint, bounds);
+			if (!strokeStyle || !layer.width || layer.width <= 0) continue;
+			this.ctx.save();
+			this.ctx.globalCompositeOperation = mapLayerBlendModeToComposite(layer.blendMode);
+			if (typeof layer.opacity === 'number') {
+				this.ctx.globalAlpha *= Math.max(0, Math.min(1, layer.opacity));
+			}
+			const intrinsicOpacity = this.getPaintOpacity(layer.paint);
+			if (typeof intrinsicOpacity === 'number') {
+				this.ctx.globalAlpha *= intrinsicOpacity;
+			}
+			const align = layer.align ?? 'center';
+			if (align === 'outside') {
+				this.ctx.restore();
+				this.drawOutsideAlignedStroke(path, bounds, layer, fillRule);
+				continue;
+			}
+			this.applyStrokeStyle(this.ctx, strokeStyle, layer);
+			if (align === 'inside') {
+				this.ctx.save();
+				this.ctx.clip(path, fillRule);
+				this.ctx.lineWidth = Math.max(0, layer.width * 2);
+				this.ctx.stroke(path);
+				this.ctx.restore();
+			} else {
+				this.ctx.stroke(path);
+			}
+			this.ctx.restore();
 		}
+	}
+
+	private applyStrokeStyle(
+		ctx: CanvasRenderingContext2D,
+		strokeStyle: string | CanvasGradient | CanvasPattern,
+		layer: Pick<StrokeLayerPaint, 'width' | 'cap' | 'join' | 'miterLimit' | 'dashPattern' | 'dashOffset'>,
+	): void {
+		ctx.strokeStyle = strokeStyle;
+		ctx.lineWidth = Math.max(0, layer.width);
+		ctx.lineCap = layer.cap ?? 'butt';
+		ctx.lineJoin = layer.join ?? 'miter';
+		ctx.miterLimit = typeof layer.miterLimit === 'number' ? Math.max(0, layer.miterLimit) : 10;
+		const dash = Array.isArray(layer.dashPattern)
+			? layer.dashPattern.filter((value) => Number.isFinite(value) && value >= 0)
+			: [];
+		ctx.setLineDash(dash);
+		ctx.lineDashOffset = typeof layer.dashOffset === 'number' ? layer.dashOffset : 0;
+	}
+
+	private drawOutsideAlignedStroke(
+		path: Path2D,
+		bounds: { x: number; y: number; width: number; height: number },
+		layer: StrokeLayerPaint,
+		fillRule: CanvasFillRule,
+	): void {
+		const pad = Math.max(2, layer.width * 2 + 2);
+		const offscreen = this.createCanvas(bounds.width + pad * 2, bounds.height + pad * 2);
+		const octx = offscreen.getContext('2d');
+		if (!octx) {
+			return;
+		}
+		const shiftedPath = new Path2D();
+		shiftedPath.addPath(path, new DOMMatrix().translate(-bounds.x + pad, -bounds.y + pad));
+		const localBounds = { x: pad, y: pad, width: bounds.width, height: bounds.height };
+		const strokeStyle = this.resolvePaint(layer.paint, localBounds);
+		if (!strokeStyle) {
+			return;
+		}
+		this.applyStrokeStyle(octx, strokeStyle, { ...layer, width: layer.width * 2 });
+		octx.stroke(shiftedPath);
+		octx.globalCompositeOperation = 'destination-out';
+		octx.fill(shiftedPath, fillRule);
+		octx.globalCompositeOperation = 'source-over';
+
+		this.ctx.save();
+		this.ctx.globalCompositeOperation = mapLayerBlendModeToComposite(layer.blendMode);
+		if (typeof layer.opacity === 'number') {
+			this.ctx.globalAlpha *= Math.max(0, Math.min(1, layer.opacity));
+		}
+		const intrinsicOpacity = this.getPaintOpacity(layer.paint);
+		if (typeof intrinsicOpacity === 'number') {
+			this.ctx.globalAlpha *= intrinsicOpacity;
+		}
+		this.ctx.drawImage(offscreen, bounds.x - pad, bounds.y - pad);
+		this.ctx.restore();
 	}
 
 	private measureTextWithSpacing(ctx: CanvasRenderingContext2D, text: string, letterSpacingPx: number): number {
@@ -805,56 +1016,46 @@ export class CanvasRenderer {
 	}
 
 	private drawEllipse(command: Extract<DrawCommand, { type: 'ellipse' }>): void {
-		const { x, y, radiusX, radiusY, fill, stroke, strokeWidth } = command;
-
-		this.ctx.beginPath();
-		this.ctx.ellipse(x, y, radiusX, radiusY, 0, 0, 2 * Math.PI);
-
-		const fillStyle = this.resolvePaint(fill, {
+		const { x, y, radiusX, radiusY, fill, stroke, strokeWidth, fills, strokes } = command;
+		const path = new Path2D();
+		path.ellipse(x, y, radiusX, radiusY, 0, 0, 2 * Math.PI);
+		const bounds = {
 			x: x - radiusX,
 			y: y - radiusY,
 			width: radiusX * 2,
 			height: radiusY * 2,
-		});
-		if (fillStyle) {
-			this.ctx.fillStyle = fillStyle;
-			this.ctx.fill();
-		}
-
-		const strokeStyle = this.resolvePaint(stroke, {
-			x: x - radiusX,
-			y: y - radiusY,
-			width: radiusX * 2,
-			height: radiusY * 2,
-		});
-		if (strokeStyle && strokeWidth && strokeWidth > 0) {
-			this.ctx.strokeStyle = strokeStyle;
-			this.ctx.lineWidth = strokeWidth;
-			this.ctx.stroke();
-		}
+		};
+		this.drawFillLayers(path, bounds, fill, fills);
+		this.drawStrokeLayers(path, bounds, stroke, strokeWidth, strokes);
 	}
 
 	private drawImage(command: Extract<DrawCommand, { type: 'image' }>): void {
-		const { x, y, width, height, src, maskSrc, outline } = command;
+		const { x, y, width, height, src, maskSrc, outline, mask: maskConfig } = command;
 		const img = this.getImage(src);
 		if (!img.complete || img.naturalWidth === 0) {
 			return;
 		}
 
 		if (maskSrc) {
-			const mask = this.getImage(maskSrc);
-			if (!mask.complete || mask.naturalWidth === 0) {
+			const maskImage = this.getImage(maskSrc);
+			if (!maskImage.complete || maskImage.naturalWidth === 0) {
 				return;
 			}
 			const rasterWidth = Math.max(1, Math.round(width));
 			const rasterHeight = Math.max(1, Math.round(height));
-			const maskedSubject = this.createMaskedImageCanvas(img, mask, rasterWidth, rasterHeight);
+			const maskedSubject = this.createMaskedImageCanvas(
+				img,
+				maskImage,
+				rasterWidth,
+				rasterHeight,
+				maskConfig?.mode === 'luminance' ? 'luminance' : 'alpha',
+			);
 			if (!maskedSubject) {
 				return;
 			}
 
-			if (outline) {
-				const outlineRaster = this.getOutlineRaster(maskSrc, mask, rasterWidth, rasterHeight, outline);
+				if (outline) {
+					const outlineRaster = this.getOutlineRaster(maskSrc, maskImage, rasterWidth, rasterHeight, outline);
 				if (outlineRaster) {
 					this.ctx.drawImage(outlineRaster.canvas, x, y, width, height);
 				}
@@ -872,6 +1073,7 @@ export class CanvasRenderer {
 		mask: HTMLImageElement,
 		width: number,
 		height: number,
+		maskMode: 'alpha' | 'luminance' = 'alpha',
 	): HTMLCanvasElement | null {
 		const offscreen = this.createCanvas(width, height);
 		const octx = offscreen.getContext('2d');
@@ -881,9 +1083,34 @@ export class CanvasRenderer {
 		octx.clearRect(0, 0, offscreen.width, offscreen.height);
 		octx.drawImage(img, 0, 0, offscreen.width, offscreen.height);
 		octx.globalCompositeOperation = 'destination-in';
-		octx.drawImage(mask, 0, 0, offscreen.width, offscreen.height);
+		if (maskMode === 'luminance') {
+			const luminanceMask = this.createLuminanceMaskCanvas(mask, offscreen.width, offscreen.height);
+			if (!luminanceMask) return null;
+			octx.drawImage(luminanceMask, 0, 0, offscreen.width, offscreen.height);
+		} else {
+			octx.drawImage(mask, 0, 0, offscreen.width, offscreen.height);
+		}
 		octx.globalCompositeOperation = 'source-over';
 		return offscreen;
+	}
+
+	private createLuminanceMaskCanvas(mask: CanvasImageSource, width: number, height: number): HTMLCanvasElement | null {
+		const luminanceCanvas = this.createCanvas(width, height);
+		const lctx = luminanceCanvas.getContext('2d');
+		if (!lctx) return null;
+		lctx.clearRect(0, 0, width, height);
+		lctx.drawImage(mask, 0, 0, width, height);
+		const imageData = lctx.getImageData(0, 0, width, height);
+		const data = imageData.data;
+		for (let i = 0; i < data.length; i += 4) {
+			const luminance = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
+			data[i] = 255;
+			data[i + 1] = 255;
+			data[i + 2] = 255;
+			data[i + 3] = Math.round(data[i + 3] * luminance);
+		}
+		lctx.putImageData(imageData, 0, 0);
+		return luminanceCanvas;
 	}
 
 	private getOutlineRaster(
@@ -979,26 +1206,14 @@ export class CanvasRenderer {
 	}
 
 	private drawPath(command: Extract<DrawCommand, { type: 'path' }>): void {
-		const { d, x, y, width, height, fill, stroke, strokeWidth, fillRule } = command;
-
-		const path = new Path2D(d);
-		this.ctx.save();
-		this.ctx.translate(x, y);
-		const bounds = { x: 0, y: 0, width, height };
-
-		const fillStyle = this.resolvePaint(fill, bounds);
-		if (fillStyle) {
-			this.ctx.fillStyle = fillStyle;
-			this.ctx.fill(path, fillRule ?? 'nonzero');
-		}
-
-		const strokeStyle = this.resolvePaint(stroke, bounds);
-		if (strokeStyle && strokeWidth && strokeWidth > 0) {
-			this.ctx.strokeStyle = strokeStyle;
-			this.ctx.lineWidth = strokeWidth;
-			this.ctx.stroke(path);
-		}
-		this.ctx.restore();
+		const { d, x, y, width, height, fill, stroke, strokeWidth, fillRule, fills, strokes } = command;
+		const rawPath = new Path2D(d);
+		const path = new Path2D();
+		path.addPath(rawPath, new DOMMatrix().translate(x, y));
+		const bounds = { x, y, width, height };
+		const rule = fillRule ?? 'nonzero';
+		this.drawFillLayers(path, bounds, fill, fills, rule);
+		this.drawStrokeLayers(path, bounds, stroke, strokeWidth, strokes, rule);
 	}
 
 	private applyClip(command: Extract<DrawCommand, { type: 'clip' }>): void {
@@ -1029,6 +1244,7 @@ export class CanvasRenderer {
 		const canvas = this.ctx.canvas;
 		canvas.width = width;
 		canvas.height = height;
+		this.patternTileCache.clear();
 		this.shadowRasterCache.clear();
 		this.outlineRasterCache.clear();
 	}
@@ -1036,12 +1252,18 @@ export class CanvasRenderer {
 	private resolvePaint(
 		paint: Paint | undefined,
 		bounds: { x: number; y: number; width: number; height: number },
-	): string | CanvasGradient | undefined {
+	): string | CanvasGradient | CanvasPattern | undefined {
 		if (!paint) {
 			return undefined;
 		}
 		if (typeof paint === 'string') {
 			return paint;
+		}
+		if (paint.type === 'pattern') {
+			return this.createPatternPaint(paint, bounds);
+		}
+		if (paint.type === 'image') {
+			return this.createImagePaint(paint, bounds);
 		}
 		if (!paint.stops || paint.stops.length === 0) {
 			return undefined;
@@ -1057,6 +1279,159 @@ export class CanvasRenderer {
 			gradient.addColorStop(this.clamp01(stop.offset), stop.color);
 		}
 		return gradient;
+	}
+
+	private getPaintOpacity(paint: Paint): number | undefined {
+		if (typeof paint === 'string' || paint.type === 'gradient') {
+			return undefined;
+		}
+		if (typeof paint.opacity === 'number') {
+			return this.clamp01(paint.opacity);
+		}
+		return undefined;
+	}
+
+	private createPatternPaint(
+		paint: PatternPaint,
+		bounds: { x: number; y: number; width: number; height: number },
+	): CanvasPattern | undefined {
+		const key = JSON.stringify({
+			pattern: paint.pattern,
+			fg: paint.fg,
+			bg: paint.bg,
+			scale: paint.scale,
+			rotation: paint.rotation,
+		});
+		let tile = this.patternTileCache.get(key);
+		if (!tile) {
+			tile = this.buildPatternTile(paint);
+			this.patternTileCache.set(key, tile);
+			while (this.patternTileCache.size > 80) {
+				const firstKey = this.patternTileCache.keys().next().value;
+				if (typeof firstKey !== 'string') break;
+				this.patternTileCache.delete(firstKey);
+			}
+		}
+		const pattern = this.ctx.createPattern(tile, 'repeat');
+		if (!pattern) {
+			return undefined;
+		}
+		const matrix = new DOMMatrix();
+		matrix.translateSelf(bounds.x, bounds.y);
+		const angle = this.normalizeAngle(paint.rotation ?? 0);
+		if (Math.abs(angle) > 0.0001) {
+			matrix.translateSelf(bounds.width * 0.5, bounds.height * 0.5);
+			matrix.rotateSelf((angle * 180) / Math.PI);
+			matrix.translateSelf(-bounds.width * 0.5, -bounds.height * 0.5);
+		}
+		pattern.setTransform(matrix);
+		return pattern;
+	}
+
+	private buildPatternTile(paint: PatternPaint): HTMLCanvasElement {
+		const scale = Math.max(0.2, Math.min(8, Number.isFinite(paint.scale) ? paint.scale : 1));
+		const size = Math.max(8, Math.round(20 * scale));
+		const tile = this.createCanvas(size, size);
+		const ctx = tile.getContext('2d');
+		if (!ctx) {
+			return tile;
+		}
+		ctx.fillStyle = paint.bg;
+		ctx.fillRect(0, 0, size, size);
+		ctx.fillStyle = paint.fg;
+		ctx.strokeStyle = paint.fg;
+		ctx.lineWidth = Math.max(1, size * 0.08);
+		switch (paint.pattern) {
+			case 'grid':
+				ctx.beginPath();
+				ctx.moveTo(size * 0.5, 0);
+				ctx.lineTo(size * 0.5, size);
+				ctx.moveTo(0, size * 0.5);
+				ctx.lineTo(size, size * 0.5);
+				ctx.stroke();
+				break;
+			case 'dots': {
+				const r = Math.max(1, size * 0.12);
+				ctx.beginPath();
+				ctx.arc(size * 0.25, size * 0.25, r, 0, Math.PI * 2);
+				ctx.arc(size * 0.75, size * 0.75, r, 0, Math.PI * 2);
+				ctx.fill();
+				break;
+			}
+			case 'stripes':
+				ctx.beginPath();
+				ctx.moveTo(-size * 0.25, size * 0.9);
+				ctx.lineTo(size * 0.9, -size * 0.25);
+				ctx.moveTo(size * 0.1, size * 1.2);
+				ctx.lineTo(size * 1.2, size * 0.1);
+				ctx.stroke();
+				break;
+			case 'noise': {
+				const imageData = ctx.getImageData(0, 0, size, size);
+				const data = imageData.data;
+				for (let y = 0; y < size; y += 1) {
+					for (let x = 0; x < size; x += 1) {
+						const index = (y * size + x) * 4;
+						const n = (Math.sin((x + 17) * 12.9898 + (y + 23) * 78.233) * 43758.5453) % 1;
+						const alpha = Math.floor(Math.max(0, Math.min(1, Math.abs(n))) * 255);
+						const color = paint.fg.startsWith('#') ? paint.fg : '#ffffff';
+						const normalized = /^#([0-9a-f]{6})$/i.test(color)
+							? color
+							: /^#([0-9a-f]{3})$/i.test(color)
+								? `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`
+								: '#ffffff';
+						data[index] = Number.parseInt(normalized.slice(1, 3), 16);
+						data[index + 1] = Number.parseInt(normalized.slice(3, 5), 16);
+						data[index + 2] = Number.parseInt(normalized.slice(5, 7), 16);
+						data[index + 3] = alpha;
+					}
+				}
+				ctx.putImageData(imageData, 0, 0);
+				break;
+			}
+		}
+		return tile;
+	}
+
+	private createImagePaint(
+		paint: ImagePaintResolved,
+		bounds: { x: number; y: number; width: number; height: number },
+	): CanvasPattern | undefined {
+		const img = this.getImage(paint.src);
+		if (!img.complete || img.naturalWidth === 0 || img.naturalHeight === 0) {
+			return undefined;
+		}
+		const repetition = paint.fit === 'tile' ? 'repeat' : 'no-repeat';
+		const pattern = this.ctx.createPattern(img, repetition);
+		if (!pattern) {
+			return undefined;
+		}
+		const matrix = new DOMMatrix();
+		const imageWidth = img.naturalWidth;
+		const imageHeight = img.naturalHeight;
+		if (paint.fit === 'tile') {
+			const tileScale = Math.max(0.05, paint.tileScale ?? 1);
+			matrix.translateSelf(bounds.x + (paint.tileOffsetX ?? 0), bounds.y + (paint.tileOffsetY ?? 0));
+			matrix.scaleSelf(tileScale, tileScale);
+		} else {
+			const scaleX = bounds.width / imageWidth;
+			const scaleY = bounds.height / imageHeight;
+			const scale = paint.fit === 'fit' ? Math.min(scaleX, scaleY) : Math.max(scaleX, scaleY);
+			const drawWidth = imageWidth * scale;
+			const drawHeight = imageHeight * scale;
+			const tx = bounds.x + (bounds.width - drawWidth) * 0.5;
+			const ty = bounds.y + (bounds.height - drawHeight) * 0.5;
+			matrix.translateSelf(tx, ty);
+			matrix.scaleSelf(scale, scale);
+		}
+		const angle = this.normalizeAngle(paint.rotation ?? 0);
+		if (Math.abs(angle) > 0.0001) {
+			matrix.translateSelf(bounds.x + bounds.width * 0.5, bounds.y + bounds.height * 0.5);
+			matrix.rotateSelf((angle * 180) / Math.PI);
+			matrix.translateSelf(-(bounds.x + bounds.width * 0.5), -(bounds.y + bounds.height * 0.5));
+		}
+		pattern.setTransform(matrix);
+		return pattern;
 	}
 
 	private createLinearGradient(

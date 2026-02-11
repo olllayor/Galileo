@@ -11,6 +11,7 @@ import type {
 } from '../core/doc/types';
 import type { SharedStyleKind } from '../core/commands/types';
 import { colors, panels, radii, spacing, transitions, typography } from './design-system';
+import { SelectField } from './controls/SelectField';
 
 type AssetSetEntry = {
 	set: ComponentSet;
@@ -604,24 +605,15 @@ export const AssetsPanel: React.FC<AssetsPanelProps> = ({
 									</button>
 								</div>
 								<div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: spacing.xs }}>
-									<select
+									<SelectField
 										value={activeModeId}
-										onChange={(event) => onSetVariableMode(collection.id, event.target.value)}
-										style={{
-											padding: `${spacing.xs} ${spacing.sm}`,
-											borderRadius: radii.sm,
-											border: `1px solid ${colors.border.default}`,
-											backgroundColor: colors.bg.secondary,
-											color: colors.text.primary,
+										onChange={(modeId) => onSetVariableMode(collection.id, modeId)}
+										options={collection.modes.map((mode) => ({ value: mode.id, label: mode.name }))}
+										selectStyle={{
+											height: '28px',
 											fontSize: typography.fontSize.sm,
 										}}
-									>
-										{collection.modes.map((mode) => (
-											<option key={mode.id} value={mode.id}>
-												{mode.name}
-											</option>
-										))}
-									</select>
+									/>
 									<button
 										type="button"
 										onClick={() => {
@@ -683,27 +675,25 @@ export const AssetsPanel: React.FC<AssetsPanelProps> = ({
 													fontSize: typography.fontSize.xs,
 												}}
 											/>
-											<select
+											<SelectField
 												value={token.type}
-												onChange={(event) =>
+												onChange={(nextType) =>
 													onUpsertVariableToken({
 														...token,
-														type: event.target.value as StyleVariableToken['type'],
+														type: nextType as StyleVariableToken['type'],
 													})
 												}
-												style={{
-													padding: '4px 6px',
-													borderRadius: radii.sm,
-													border: `1px solid ${colors.border.default}`,
-													backgroundColor: colors.bg.secondary,
-													color: colors.text.primary,
+												options={[
+													{ value: 'color', label: 'color' },
+													{ value: 'number', label: 'number' },
+													{ value: 'string', label: 'string' },
+												]}
+												selectStyle={{
+													height: '24px',
 													fontSize: typography.fontSize.xs,
+													padding: '0 22px 0 6px',
 												}}
-											>
-												<option value="color">color</option>
-												<option value="number">number</option>
-												<option value="string">string</option>
-											</select>
+											/>
 											<button
 												type="button"
 												onClick={() => onRemoveVariableToken(token.id)}

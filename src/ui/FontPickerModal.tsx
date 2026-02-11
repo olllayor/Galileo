@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import React from 'react';
+import { SelectField } from './controls/SelectField';
 
 type FontFilter = 'all' | 'sans' | 'serif' | 'mono';
 
@@ -340,26 +341,25 @@ export const FontPickerModal: React.FC<FontPickerModalProps> = ({
 						)}
 					</div>
 
-					<select
+					<SelectField
 						value={filter}
-						onChange={(event) => setFilter(event.target.value as FontFilter)}
-						style={{
-							width: '100%',
+						onChange={(nextFilter) => setFilter(nextFilter as FontFilter)}
+						options={[
+							{ value: 'all', label: 'All fonts' },
+							{ value: 'sans', label: 'Sans-serif' },
+							{ value: 'serif', label: 'Serif' },
+							{ value: 'mono', label: 'Monospace' },
+						]}
+						selectStyle={{
 							height: '34px',
-							padding: '0 10px',
 							borderRadius: '10px',
 							border: '1px solid rgba(255,255,255,0.16)',
 							backgroundColor: 'rgba(14, 14, 15, 0.48)',
 							color: '#f0f0f0',
 							fontSize: '15px',
-							outline: 'none',
+							padding: '0 30px 0 10px',
 						}}
-					>
-						<option value="all">All fonts</option>
-						<option value="sans">Sans-serif</option>
-						<option value="serif">Serif</option>
-						<option value="mono">Monospace</option>
-					</select>
+					/>
 				</div>
 
 				<div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
