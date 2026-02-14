@@ -1,14 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProjectMeta } from '../core/projects/registry';
 import { colors, spacing, typography, radii, transitions } from './design-system';
+import type { AuthSession, AuthStatus } from '../auth';
 
 interface ProjectsScreenProps {
 	projects: ProjectMeta[];
 	missingPaths: Record<string, boolean>;
 	search: string;
+	authStatus: AuthStatus;
+	authSession: AuthSession | null;
+	authErrorMessage: string | null;
 	onSearchChange: (value: string) => void;
 	onCreateProject: () => void;
 	onOpenFile: () => void;
+	onSignIn: () => Promise<void>;
+	onSignOut: () => Promise<void>;
+	onCompleteSignInFromCallback: (input: string) => Promise<void>;
 	onOpenProject: (project: ProjectMeta) => void;
 	onRenameProject: (project: ProjectMeta, nextName: string) => Promise<void>;
 	onDuplicateProject: (project: ProjectMeta) => void;
@@ -63,9 +70,15 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
 	projects,
 	missingPaths,
 	search,
+	authStatus,
+	authSession,
+	authErrorMessage,
 	onSearchChange,
 	onCreateProject,
 	onOpenFile,
+	onSignIn,
+	onSignOut,
+	onCompleteSignInFromCallback,
 	onOpenProject,
 	onRenameProject,
 	onDuplicateProject,
@@ -77,6 +90,8 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
 	const [renamingId, setRenamingId] = useState<string | null>(null);
 	const [renameValue, setRenameValue] = useState('');
 	const [renameError, setRenameError] = useState<string | null>(null);
+	const [authBusy, setAuthBusy] = useState(false);
+	const [authCallbackInput, setAuthCallbackInput] = useState('');
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 
@@ -148,11 +163,39 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
 		}
 	};
 
+	const handleAuthClick = async () => {
+		if (authBusy) return;
+		setAuthBusy(true);
+		try {
+			if (authStatus === 'signed-in' || authStatus === 'signing-in') {
+				await onSignOut();
+				return;
+			}
+			await onSignIn();
+		} finally {
+			setAuthBusy(false);
+		}
+	};
+
+	const handleCompleteSignIn = async () => {
+		if (authBusy) return;
+		const value = authCallbackInput.trim();
+		if (!value) return;
+		setAuthBusy(true);
+		try {
+			await onCompleteSignInFromCallback(value);
+		} finally {
+			setAuthBusy(false);
+		}
+	};
+
 	const renderProjectRow = (project: ProjectMeta) => {
 		const isMissing = missingPaths[project.path] === true;
 		const isSelected = selectedId === project.id;
 		const isHovered = hoveredId === project.id;
 		const showActions = isHovered || isSelected;
+		const isCloudProject = project.env === 'cloud' || project.syncState === 'queued' || project.syncState === 'synced';
+		const locationLabel = isCloudProject ? 'Cloud' : 'Local';
 
 		return (
 			<div key={project.id} style={{ marginBottom: spacing.sm }}>
@@ -260,7 +303,7 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
 											lineHeight: 1,
 										}}
 									>
-										{project.env || 'local'}
+										{locationLabel}
 									</span>
 									{isMissing && (
 										<span
@@ -430,6 +473,28 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
 					</div>
 
 					<div style={{ display: 'flex', alignItems: 'center', gap: spacing.md, flexWrap: 'wrap' }}>
+						<div
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: spacing.sm,
+								height: '32px',
+								padding: `0 ${spacing.md}`,
+								borderRadius: radii.md,
+								border: `1px solid ${colors.border.subtle}`,
+								backgroundColor: 'rgba(255, 255, 255, 0.015)',
+								color: colors.text.secondary,
+								fontSize: typography.fontSize.md,
+							}}
+						>
+							<span>
+								{authSession
+									? authSession.name || authSession.email || `User ${authSession.userId.slice(0, 6)}`
+									: authStatus === 'signing-in'
+										? 'Signing in...'
+										: 'Signed out'}
+							</span>
+						</div>
 						<input
 							ref={searchRef}
 							type="text"
@@ -455,8 +520,105 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({
 						<button type="button" onClick={onOpenFile} style={topButtonStyle}>
 							Open File
 						</button>
+						<button
+							type="button"
+							onClick={() => {
+								void handleAuthClick();
+							}}
+							disabled={authBusy}
+							style={{
+								...topButtonStyle,
+								borderColor:
+									authStatus === 'signed-in' ? colors.border.default : authStatus === 'signing-in' ? 'rgba(255, 69, 58, 0.35)' : colors.accent.primary,
+								backgroundColor:
+									authStatus === 'signed-in'
+										? 'rgba(255, 255, 255, 0.02)'
+										: authStatus === 'signing-in'
+											? 'rgba(255, 69, 58, 0.12)'
+											: 'rgba(10, 132, 255, 0.14)',
+								color: colors.text.primary,
+								cursor: authBusy ? 'not-allowed' : 'pointer',
+								opacity: authBusy ? 0.75 : 1,
+							}}
+						>
+							{authStatus === 'signed-in'
+								? authBusy
+									? 'Signing out...'
+									: 'Sign Out'
+								: authStatus === 'signing-in'
+									? authBusy
+										? 'Cancelling...'
+										: 'Waiting for Browser (Cancel)'
+									: 'Sign In With Google'}
+						</button>
 					</div>
 				</div>
+				{authErrorMessage ? (
+					<div
+						style={{
+							border: `1px solid rgba(255, 69, 58, 0.35)`,
+							backgroundColor: 'rgba(255, 69, 58, 0.09)',
+							color: colors.semantic.error,
+							borderRadius: radii.md,
+							padding: `${spacing.sm} ${spacing.md}`,
+							fontSize: typography.fontSize.md,
+						}}
+					>
+						{authErrorMessage}
+					</div>
+				) : null}
+				{authStatus === 'signing-in' ? (
+					<div
+						style={{
+							border: `1px solid ${colors.border.subtle}`,
+							backgroundColor: 'rgba(255, 255, 255, 0.02)',
+							color: colors.text.tertiary,
+							borderRadius: radii.md,
+							padding: `${spacing.sm} ${spacing.md}`,
+							display: 'grid',
+							gap: spacing.sm,
+						}}
+					>
+						<div style={{ fontSize: typography.fontSize.md }}>
+							Complete sign-in in your browser, then return to Galileo. If Galileo re-opens but still waits, the callback may be missing a code; paste the full callback URL (or just code) below.
+						</div>
+						<div style={{ display: 'flex', gap: spacing.sm, flexWrap: 'wrap' }}>
+							<input
+								type="text"
+								value={authCallbackInput}
+								onChange={(event) => setAuthCallbackInput(event.target.value)}
+								placeholder="galileo://auth/callback?code=... or code"
+								style={{
+									width: '480px',
+									maxWidth: 'calc(100vw - 260px)',
+									height: '32px',
+									backgroundColor: 'rgba(18, 19, 20, 0.85)',
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.md,
+									padding: `0 ${spacing.md}`,
+									color: colors.text.primary,
+									fontSize: typography.fontSize.md,
+									outline: 'none',
+								}}
+							/>
+							<button
+								type="button"
+								onClick={() => {
+									void handleCompleteSignIn();
+								}}
+								disabled={authBusy || authCallbackInput.trim().length === 0}
+								style={{
+									...topButtonStyle,
+									height: '32px',
+									cursor: authBusy || authCallbackInput.trim().length === 0 ? 'not-allowed' : 'pointer',
+									opacity: authBusy || authCallbackInput.trim().length === 0 ? 0.75 : 1,
+								}}
+							>
+								{authBusy ? 'Completing...' : 'Complete Sign-in'}
+							</button>
+						</div>
+					</div>
+				) : null}
 
 				{isEmpty ? (
 					<div

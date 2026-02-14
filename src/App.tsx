@@ -160,6 +160,7 @@ import { importFromFigma, parseFigmaFileKey, parseNodeIds } from './interop/figm
 import { buildDataUrl, parseDataUrl } from './interop/utils/data-url';
 import type { InteropImportReport } from './interop/types';
 import { FigmaImportModal, type FigmaImportFormValues } from './ui/FigmaImportModal';
+import { useGalileoAuth } from './auth';
 
 const clamp = (value: number, min: number, max: number): number => {
 	return Math.min(max, Math.max(min, value));
@@ -1305,6 +1306,7 @@ const normalizeIconifyLastModifiedResponse = (payload: unknown): IconifyLastModi
 };
 
 export const App: React.FC = () => {
+	const auth = useGalileoAuth();
 	const {
 		document,
 		selectedIds,
@@ -1580,7 +1582,11 @@ export const App: React.FC = () => {
 			let resolved = createProjectMeta(path);
 			updateProjects((prev) => {
 				const existing = getProjectByPath(prev, path);
-				const nextProject = existing ? { ...existing, lastOpenedAt: Date.now() } : resolved;
+				const ownerUserId = auth.session?.userId;
+				const sessionProjectPatch = ownerUserId ? { ownerUserId } : {};
+				const nextProject = existing
+					? { ...existing, ...sessionProjectPatch, lastOpenedAt: Date.now() }
+					: { ...resolved, ...sessionProjectPatch };
 				resolved = nextProject;
 				return upsertProject(prev, nextProject);
 			});
@@ -1588,7 +1594,7 @@ export const App: React.FC = () => {
 			setLastOpenProjectId(resolved.id);
 			return resolved;
 		},
-		[updateProjects],
+		[auth.session?.userId, updateProjects],
 	);
 
 	const saveDraftSnapshot = useCallback(async (snapshot: { key: string; path: string | null; content: string }) => {
@@ -9046,9 +9052,15 @@ export const App: React.FC = () => {
 						projects={projects}
 						missingPaths={missingPaths}
 						search={projectsSearch}
+						authStatus={auth.status}
+						authSession={auth.session}
+						authErrorMessage={auth.errorMessage}
 						onSearchChange={handleProjectsSearchChange}
 						onCreateProject={handleCreateProject}
 						onOpenFile={handleOpenFile}
+						onSignIn={auth.service.signInWithGoogle}
+						onSignOut={auth.service.signOut}
+						onCompleteSignInFromCallback={auth.service.completeSignInFromCallback}
 						onOpenProject={handleOpenProject}
 						onRenameProject={handleRenameProject}
 						onDuplicateProject={handleDuplicateProject}

@@ -2,6 +2,7 @@ import { generateId } from '../doc/id';
 
 export type ProjectEnv = 'local' | 'cloud' | 'read-only';
 export type ProjectVersion = 'live' | 'draft' | 'snapshot';
+export type ProjectSyncState = 'local-only' | 'queued' | 'synced';
 
 export type ProjectMeta = {
 	id: string;
@@ -11,6 +12,8 @@ export type ProjectMeta = {
 	env: ProjectEnv;
 	lastOpenedAt: number;
 	isPinned?: boolean;
+	ownerUserId?: string;
+	syncState?: ProjectSyncState;
 };
 
 const PROJECTS_KEY = 'galileo.projects.v1';
@@ -39,6 +42,7 @@ export const loadProjects = (): ProjectMeta[] => {
 			workspaceName: entry.workspaceName || 'Local',
 			env: entry.env || 'local',
 			lastOpenedAt: Number.isFinite(entry.lastOpenedAt) ? entry.lastOpenedAt : Date.now(),
+			syncState: entry.syncState || 'local-only',
 		}));
 };
 
@@ -75,6 +79,7 @@ export const createProjectMeta = (path: string): ProjectMeta => ({
 	workspaceName: 'Local',
 	env: 'local',
 	lastOpenedAt: Date.now(),
+	syncState: 'local-only',
 });
 
 export const upsertProject = (projects: ProjectMeta[], project: ProjectMeta): ProjectMeta[] => {

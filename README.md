@@ -114,6 +114,22 @@ bun run lint         # Run linting
 bun run tauri dev    # Start Tauri dev
 ```
 
+### Auth Setup (Convex + Google OAuth)
+
+Set these environment variables before running auth-enabled builds:
+
+```bash
+VITE_CONVEX_URL=...
+AUTH_GOOGLE_ID=...
+AUTH_GOOGLE_SECRET=...
+```
+
+Google OAuth redirect URI for desktop callback:
+
+```text
+galileo://auth/callback
+```
+
 ## File Structure
 
 ```

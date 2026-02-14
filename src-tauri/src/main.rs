@@ -1,9 +1,13 @@
 use base64::{engine::general_purpose, Engine as _};
 use image::{ImageBuffer, ImageFormat, Rgba};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::fs;
 use std::io::Cursor;
-use tauri::{path::BaseDirectory, Manager};
+use std::path::PathBuf;
+use std::sync::Mutex;
+use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State};
+use url::Url;
 
 #[cfg(target_os = "macos")]
 use objc::runtime::Object;
@@ -18,6 +22,66 @@ mod background_remove;
 mod draft_store;
 mod figma;
 mod unsplash;
+
+const AUTH_DEEP_LINK_EVENT: &str = "galileo-auth://deep-link";
+const AUTH_DEEP_LINK_QUEUE_MAX: usize = 32;
+
+#[derive(Default)]
+struct AuthDeepLinkState {
+    queue: Mutex<VecDeque<String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthDeepLinkEventPayload {
+    urls: Vec<String>,
+}
+
+fn collect_auth_deep_links_from_args(args: &[String]) -> Vec<String> {
+    args.iter()
+        .filter_map(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let parsed = Url::parse(trimmed).ok()?;
+            if parsed.scheme().eq_ignore_ascii_case("galileo") {
+                Some(trimmed.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn push_auth_deep_link_queue(state: &AuthDeepLinkState, urls: &[String]) {
+    let mut queue = state
+        .queue
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for url in urls {
+        if queue.contains(url) {
+            continue;
+        }
+        queue.push_back(url.clone());
+        while queue.len() > AUTH_DEEP_LINK_QUEUE_MAX {
+            let _ = queue.pop_front();
+        }
+    }
+}
+
+fn enqueue_and_emit_auth_deep_links(app: &AppHandle, urls: Vec<String>) {
+    if urls.is_empty() {
+        return;
+    }
+    if let Some(state) = app.try_state::<AuthDeepLinkState>() {
+        push_auth_deep_link_queue(&state, &urls);
+    }
+    let _ = app.emit(
+        AUTH_DEEP_LINK_EVENT,
+        AuthDeepLinkEventPayload { urls: urls.clone() },
+    );
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,6 +147,48 @@ pub struct EncodeWebpArgs {
     pub height: u32,
     /// Quality 0-100 (lossy) or None for lossless
     pub quality: Option<u8>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthSecretSetArgs {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthSecretGetArgs {
+    pub key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthSecretRemoveArgs {
+    pub key: String,
+}
+
+fn normalize_auth_secret_key(key: &str) -> Result<String, String> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return Err("auth_invalid_key: key is required".to_string());
+    }
+    if !trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.')
+    {
+        return Err("auth_invalid_key: unsupported characters in key".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn auth_secret_file_path(app: &tauri::AppHandle, key: &str) -> Result<PathBuf, String> {
+    let normalized = normalize_auth_secret_key(key)?;
+    let mut dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    dir.push("auth");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    dir.push(format!("{normalized}.secret"));
+    Ok(dir)
 }
 
 #[tauri::command]
@@ -199,6 +305,41 @@ fn save_binary(args: SaveBinaryArgs) -> Result<(), String> {
         .decode(args.data_base64)
         .map_err(|e| e.to_string())?;
     fs::write(&args.path, bytes).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn auth_secret_set(app: tauri::AppHandle, args: AuthSecretSetArgs) -> Result<(), String> {
+    let path = auth_secret_file_path(&app, &args.key)?;
+    fs::write(path, args.value).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn auth_secret_get(app: tauri::AppHandle, args: AuthSecretGetArgs) -> Result<Option<String>, String> {
+    let path = auth_secret_file_path(&app, &args.key)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    fs::read_to_string(path)
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn auth_secret_remove(app: tauri::AppHandle, args: AuthSecretRemoveArgs) -> Result<(), String> {
+    let path = auth_secret_file_path(&app, &args.key)?;
+    if !path.exists() {
+        return Ok(());
+    }
+    fs::remove_file(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn auth_last_deep_link_get(state: State<'_, AuthDeepLinkState>) -> Vec<String> {
+    let mut queue = state
+        .queue
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    queue.drain(..).collect()
 }
 
 /// Encode raw RGBA pixels to PNG using native Rust (5-10x faster than canvas.toDataURL)
@@ -371,6 +512,16 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .manage(AuthDeepLinkState::default())
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            let urls = collect_auth_deep_links_from_args(&argv);
+            enqueue_and_emit_auth_deep_links(app, urls);
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             background_remove::remove_background,
@@ -394,6 +545,10 @@ fn main() {
             load_text,
             show_save_image_dialog,
             save_binary,
+            auth_secret_set,
+            auth_secret_get,
+            auth_secret_remove,
+            auth_last_deep_link_get,
             encode_png,
             encode_webp,
             list_system_fonts,
@@ -408,6 +563,8 @@ fn main() {
         ])
         .setup(|_app| {
             log_env_diagnostics();
+            let startup_urls = collect_auth_deep_links_from_args(&std::env::args().collect::<Vec<_>>());
+            enqueue_and_emit_auth_deep_links(&_app.handle(), startup_urls);
 
             #[cfg(debug_assertions)]
             {

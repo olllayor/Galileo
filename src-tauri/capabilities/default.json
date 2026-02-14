@@ -3,5 +3,10 @@
 	"identifier": "default",
 	"description": "Core functionality",
 	"windows": ["main"],
-	"permissions": ["core:default", "core:window:allow-start-dragging", "shell:allow-open"]
+	"permissions": [
+		"core:default",
+		"core:window:allow-start-dragging",
+		"shell:allow-open",
+		"deep-link:default"
+	]
 }
