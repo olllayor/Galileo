@@ -5,7 +5,7 @@ import { getNodePathData } from '../../core/doc/vector';
 import type { VectorPoint } from '../../core/doc/types';
 
 export interface Tool {
-	type: 'select' | 'rectangle' | 'text' | 'frame' | 'pen';
+	type: 'select' | 'rectangle' | 'ellipse' | 'line' | 'arrow' | 'polygon' | 'star' | 'text' | 'frame' | 'pen';
 	handleMouseDown: (doc: Document, x: number, y: number, selectedIds: string[]) => Document | null;
 	handleMouseMove?: (doc: Document, x: number, y: number, selectedIds: string[]) => Document | null;
 	handleMouseUp?: (doc: Document, x: number, y: number, selectedIds: string[]) => Document | null;
@@ -42,6 +42,202 @@ export const createTextTool = (parentId?: string): Tool => ({
 			letterSpacingPx: 0,
 			textResizeMode: 'auto-width',
 			fill: { type: 'solid', value: '#f5f5f5' },
+			visible: true,
+		};
+
+		return createNode(doc, parentId ?? doc.rootId, newNode);
+	},
+});
+
+export const createEllipseTool = (parentId?: string): Tool => ({
+	type: 'ellipse',
+	handleMouseDown: (doc, x, y) => {
+		const newNode: Partial<Node> & { type: Node['type'] } = {
+			type: 'ellipse',
+			position: { x, y },
+			size: { width: 120, height: 120 },
+			fill: { type: 'solid', value: '#888888' },
+			visible: true,
+		};
+
+		return createNode(doc, parentId ?? doc.rootId, newNode);
+	},
+});
+
+const makePoint = (x: number, y: number): VectorPoint => ({
+	id: `pt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+	x,
+	y,
+	cornerMode: 'sharp',
+});
+
+const makeSequentialSegments = (points: VectorPoint[], closed: boolean) => {
+	const segments = [];
+	for (let i = 0; i < points.length - 1; i += 1) {
+		segments.push({
+			id: `seg_${i}_${Date.now().toString(36)}`,
+			fromId: points[i].id,
+			toId: points[i + 1].id,
+		});
+	}
+	if (closed && points.length > 2) {
+		segments.push({
+			id: `seg_${segments.length}_${Date.now().toString(36)}`,
+			fromId: points[points.length - 1].id,
+			toId: points[0].id,
+		});
+	}
+	return segments;
+};
+
+export const createLineTool = (parentId?: string): Tool => ({
+	type: 'line',
+	handleMouseDown: (doc, x, y) => {
+		const points = [makePoint(0, 0), makePoint(160, 0)];
+		const newNode: Partial<Node> & { type: Node['type'] } = {
+			type: 'path',
+			shapeKind: 'line',
+			name: 'Line',
+			position: { x, y },
+			size: { width: 160, height: 1 },
+			fill: undefined,
+			stroke: {
+				color: { type: 'solid', value: '#888888' },
+				width: 2,
+				style: 'solid',
+				cap: 'round',
+			},
+			vector: {
+				points,
+				segments: makeSequentialSegments(points, false),
+				closed: false,
+			},
+			visible: true,
+		};
+
+		return createNode(doc, parentId ?? doc.rootId, newNode);
+	},
+});
+
+export const createArrowTool = (parentId?: string): Tool => ({
+	type: 'arrow',
+	handleMouseDown: (doc, x, y) => {
+		const shaftLength = 180;
+		const headLength = 22;
+		const headHalf = 10;
+		const points = [
+			makePoint(0, 0),
+			makePoint(shaftLength, 0),
+			makePoint(shaftLength - headLength, -headHalf),
+			makePoint(shaftLength, 0),
+			makePoint(shaftLength - headLength, headHalf),
+		];
+		const newNode: Partial<Node> & { type: Node['type'] } = {
+			type: 'path',
+			shapeKind: 'arrow',
+			name: 'Arrow',
+			position: { x, y },
+			size: { width: shaftLength, height: headHalf * 2 },
+			fill: undefined,
+			stroke: {
+				color: { type: 'solid', value: '#888888' },
+				width: 2,
+				style: 'solid',
+				cap: 'round',
+			},
+			vector: {
+				points,
+				segments: makeSequentialSegments(points, false),
+				closed: false,
+			},
+			visible: true,
+		};
+
+		return createNode(doc, parentId ?? doc.rootId, newNode);
+	},
+});
+
+const buildRegularPolygonPoints = (sides: number, radius: number, center: { x: number; y: number }, rotation = -Math.PI / 2) => {
+	const points: VectorPoint[] = [];
+	for (let i = 0; i < sides; i += 1) {
+		const angle = rotation + (i / sides) * Math.PI * 2;
+		points.push(makePoint(center.x + Math.cos(angle) * radius, center.y + Math.sin(angle) * radius));
+	}
+	return points;
+};
+
+const buildStarPoints = (
+	pointsCount: number,
+	outerRadius: number,
+	innerRadius: number,
+	center: { x: number; y: number },
+	rotation = -Math.PI / 2,
+) => {
+	const points: VectorPoint[] = [];
+	const total = pointsCount * 2;
+	for (let i = 0; i < total; i += 1) {
+		const isOuter = i % 2 === 0;
+		const radius = isOuter ? outerRadius : innerRadius;
+		const angle = rotation + (i / total) * Math.PI * 2;
+		points.push(makePoint(center.x + Math.cos(angle) * radius, center.y + Math.sin(angle) * radius));
+	}
+	return points;
+};
+
+export const createPolygonTool = (parentId?: string): Tool => ({
+	type: 'polygon',
+	handleMouseDown: (doc, x, y) => {
+		const size = 120;
+		const radius = size / 2;
+		const points = buildRegularPolygonPoints(6, radius, { x: radius, y: radius });
+		const newNode: Partial<Node> & { type: Node['type'] } = {
+			type: 'path',
+			shapeKind: 'polygon',
+			name: 'Polygon',
+			position: { x, y },
+			size: { width: size, height: size },
+			fill: { type: 'solid', value: '#888888' },
+			stroke: {
+				color: { type: 'solid', value: '#888888' },
+				width: 1.5,
+				style: 'solid',
+			},
+			vector: {
+				points,
+				segments: makeSequentialSegments(points, true),
+				closed: true,
+			},
+			visible: true,
+		};
+
+		return createNode(doc, parentId ?? doc.rootId, newNode);
+	},
+});
+
+export const createStarTool = (parentId?: string): Tool => ({
+	type: 'star',
+	handleMouseDown: (doc, x, y) => {
+		const size = 130;
+		const outerRadius = size / 2;
+		const innerRadius = size / 4.2;
+		const points = buildStarPoints(5, outerRadius, innerRadius, { x: outerRadius, y: outerRadius });
+		const newNode: Partial<Node> & { type: Node['type'] } = {
+			type: 'path',
+			shapeKind: 'star',
+			name: 'Star',
+			position: { x, y },
+			size: { width: size, height: size },
+			fill: { type: 'solid', value: '#888888' },
+			stroke: {
+				color: { type: 'solid', value: '#888888' },
+				width: 1.5,
+				style: 'solid',
+			},
+			vector: {
+				points,
+				segments: makeSequentialSegments(points, true),
+				closed: true,
+			},
 			visible: true,
 		};
 

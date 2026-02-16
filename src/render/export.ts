@@ -6,7 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 export type SnapshotOptions = {
 	scale?: number;
-	format?: 'png' | 'webp';
+	format?: 'png' | 'webp' | 'svg' | 'pdf' | 'asset';
 	background?: 'transparent' | 'solid';
 	includeFrameFill?: boolean;
 	clipToBounds?: boolean;
@@ -21,7 +21,7 @@ export type SnapshotOptions = {
 };
 
 export type SnapshotResult = {
-	mime: 'image/png' | 'image/webp';
+	mime: string;
 	dataBase64: string;
 	width: number;
 	height: number;
@@ -60,6 +60,95 @@ const uint8ArrayToBase64 = (bytes: Uint8ClampedArray): string => {
 		binary += String.fromCharCode(bytes[i]);
 	}
 	return btoa(binary);
+};
+
+const uint8ToBase64 = (bytes: Uint8Array): string => {
+	let binary = '';
+	for (let i = 0; i < bytes.length; i += 1) {
+		binary += String.fromCharCode(bytes[i]);
+	}
+	return btoa(binary);
+};
+
+const base64ToUint8 = (value: string): Uint8Array => {
+	const binary = atob(value);
+	const bytes = new Uint8Array(binary.length);
+	for (let i = 0; i < binary.length; i += 1) {
+		bytes[i] = binary.charCodeAt(i);
+	}
+	return bytes;
+};
+
+const encodeSvgFromPngBase64 = (pngBase64: string, width: number, height: number): string => {
+	const encoder = new TextEncoder();
+	const safeWidth = Math.max(1, Math.round(width));
+	const safeHeight = Math.max(1, Math.round(height));
+	const svg = [
+		'<?xml version="1.0" encoding="UTF-8"?>',
+		`<svg xmlns="http://www.w3.org/2000/svg" width="${safeWidth}" height="${safeHeight}" viewBox="0 0 ${safeWidth} ${safeHeight}">`,
+		`<image href="data:image/png;base64,${pngBase64}" width="${safeWidth}" height="${safeHeight}" />`,
+		'</svg>',
+	].join('');
+	return uint8ToBase64(encoder.encode(svg));
+};
+
+const encodePdfFromJpegBase64 = (jpegBase64: string, width: number, height: number): string => {
+	const encoder = new TextEncoder();
+	const jpegBytes = base64ToUint8(jpegBase64);
+	const safeWidth = Math.max(1, Math.round(width));
+	const safeHeight = Math.max(1, Math.round(height));
+	const contentStream = `q\n${safeWidth} 0 0 ${safeHeight} 0 0 cm\n/Im0 Do\nQ\n`;
+	const contentBytes = encoder.encode(contentStream);
+
+	const chunks: Uint8Array[] = [];
+	let length = 0;
+	const offsets: number[] = [0];
+	const append = (value: string | Uint8Array) => {
+		const bytes = typeof value === 'string' ? encoder.encode(value) : value;
+		chunks.push(bytes);
+		length += bytes.length;
+	};
+
+	append('%PDF-1.4\n');
+
+	offsets[1] = length;
+	append('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+
+	offsets[2] = length;
+	append('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n');
+
+	offsets[3] = length;
+	append(
+		`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${safeWidth} ${safeHeight}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n`,
+	);
+
+	offsets[4] = length;
+	append(
+		`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${safeWidth} /Height ${safeHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpegBytes.length} >>\nstream\n`,
+	);
+	append(jpegBytes);
+	append('\nendstream\nendobj\n');
+
+	offsets[5] = length;
+	append(`5 0 obj\n<< /Length ${contentBytes.length} >>\nstream\n`);
+	append(contentBytes);
+	append('\nendstream\nendobj\n');
+
+	const xrefOffset = length;
+	append('xref\n0 6\n');
+	append('0000000000 65535 f \n');
+	for (let i = 1; i <= 5; i += 1) {
+		append(`${String(offsets[i] ?? 0).padStart(10, '0')} 00000 n \n`);
+	}
+	append(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+
+	const output = new Uint8Array(length);
+	let cursor = 0;
+	for (const chunk of chunks) {
+		output.set(chunk, cursor);
+		cursor += chunk.length;
+	}
+	return uint8ToBase64(output);
 };
 
 /**
@@ -136,6 +225,21 @@ export const exportNodeSnapshot = async (
 	}
 	const maxDim = Math.max(1, Math.floor(options.maxDim ?? 4096));
 	const format = options.format ?? 'png';
+	if (format === 'asset' && node.type === 'image' && node.image?.assetId) {
+		const asset = doc.assets[node.image.assetId];
+		if (asset?.type === 'image' && typeof asset.dataBase64 === 'string' && asset.dataBase64.length > 0) {
+			return {
+				mime: asset.mime,
+				dataBase64: asset.dataBase64,
+				width: Math.max(1, asset.width),
+				height: Math.max(1, asset.height),
+				requestedScale,
+				usedScale: 1,
+				pixelW: Math.max(1, asset.width),
+				pixelH: Math.max(1, asset.height),
+			};
+		}
+	}
 	const useNativeEncoder = options.useNativeEncoder ?? true; // Default to Rust encoder
 	let width = Math.max(1, Math.round(node.size.width * scale));
 	let height = Math.max(1, Math.round(node.size.height * scale));
@@ -180,26 +284,48 @@ export const exportNodeSnapshot = async (
 	// Encode using Rust (fast) or canvas (fallback)
 	let dataBase64: string;
 	let encodeTimeMs: number;
+	let mime = 'image/png';
 
-	if (useNativeEncoder) {
-		try {
-			const result = await encodeWithRust(ctx, width, height, format, options.webpQuality);
-			dataBase64 = result.dataBase64;
-			encodeTimeMs = result.encodeTimeMs;
-		} catch (err) {
-			console.warn('Rust encoder failed, falling back to canvas:', err);
-			const result = encodeWithCanvas(canvas, format, options.webpQuality);
+	if (format === 'svg') {
+		const pngResult =
+			useNativeEncoder
+				? await encodeWithRust(ctx, width, height, 'png', options.webpQuality).catch(() =>
+						encodeWithCanvas(canvas, 'png', options.webpQuality),
+					)
+				: encodeWithCanvas(canvas, 'png', options.webpQuality);
+		dataBase64 = encodeSvgFromPngBase64(pngResult.dataBase64, width, height);
+		encodeTimeMs = pngResult.encodeTimeMs;
+		mime = 'image/svg+xml';
+	} else if (format === 'pdf') {
+		const startTime = performance.now();
+		const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+		const jpegBase64 = jpegDataUrl.split(',')[1] || '';
+		dataBase64 = encodePdfFromJpegBase64(jpegBase64, width, height);
+		encodeTimeMs = performance.now() - startTime;
+		mime = 'application/pdf';
+	} else {
+		const rasterFormat = format === 'asset' ? 'png' : format;
+		if (useNativeEncoder) {
+			try {
+				const result = await encodeWithRust(ctx, width, height, rasterFormat, options.webpQuality);
+				dataBase64 = result.dataBase64;
+				encodeTimeMs = result.encodeTimeMs;
+			} catch (err) {
+				console.warn('Rust encoder failed, falling back to canvas:', err);
+				const result = encodeWithCanvas(canvas, rasterFormat, options.webpQuality);
+				dataBase64 = result.dataBase64;
+				encodeTimeMs = result.encodeTimeMs;
+			}
+		} else {
+			const result = encodeWithCanvas(canvas, rasterFormat, options.webpQuality);
 			dataBase64 = result.dataBase64;
 			encodeTimeMs = result.encodeTimeMs;
 		}
-	} else {
-		const result = encodeWithCanvas(canvas, format, options.webpQuality);
-		dataBase64 = result.dataBase64;
-		encodeTimeMs = result.encodeTimeMs;
+		mime = rasterFormat === 'webp' ? 'image/webp' : 'image/png';
 	}
 
 	return {
-		mime: format === 'webp' ? 'image/webp' : 'image/png',
+		mime,
 		dataBase64,
 		width,
 		height,

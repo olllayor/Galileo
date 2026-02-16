@@ -10,6 +10,8 @@ export interface TextLayoutInput {
 	lineHeightPx?: number;
 	letterSpacingPx?: number;
 	textResizeMode?: TextResizeMode;
+	listType?: 'none' | 'bullet' | 'numbered';
+	paragraphSpacingPx?: number;
 	paddingX?: number;
 	paddingY?: number;
 	minWidth?: number;
@@ -121,21 +123,63 @@ const wrapLine = (rawLine: string, maxWidth: number, measureLine: (text: string)
 	return lines.length > 0 ? lines : [''];
 };
 
-const wrapParagraphs = (text: string, maxWidth: number, measureLine: (text: string) => number): string[] => {
-	const rawLines = text.split('\n');
-	if (rawLines.length === 0) return [''];
+type WrappedParagraphLine = {
+	text: string;
+	paragraphIndex: number;
+	isParagraphEnd: boolean;
+};
 
-	const wrapped: string[] = [];
-	for (const rawLine of rawLines) {
-		const lines = wrapLine(rawLine, maxWidth, measureLine);
-		wrapped.push(...lines);
+const formatParagraphsForList = (paragraphs: string[], listType: 'none' | 'bullet' | 'numbered'): string[] => {
+	if (listType === 'none') return paragraphs;
+	if (listType === 'bullet') {
+		return paragraphs.map((line) => (line.trim().length > 0 ? `• ${line}` : line));
 	}
-	return wrapped.length > 0 ? wrapped : [''];
+	let counter = 1;
+	return paragraphs.map((line) => {
+		if (line.trim().length === 0) return line;
+		const value = `${counter}. ${line}`;
+		counter += 1;
+		return value;
+	});
+};
+
+const buildWrappedParagraphLines = (
+	text: string,
+	listType: 'none' | 'bullet' | 'numbered',
+	mode: TextResizeMode,
+	maxWidth: number,
+	measureLine: (text: string) => number,
+): WrappedParagraphLine[] => {
+	const paragraphs = formatParagraphsForList(text.split('\n'), listType);
+	const wrapped: WrappedParagraphLine[] = [];
+	for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex += 1) {
+		const paragraph = paragraphs[paragraphIndex];
+		const lines = mode === 'auto-width' ? [paragraph] : wrapLine(paragraph, maxWidth, measureLine);
+		const normalizedLines = lines.length > 0 ? lines : [''];
+		for (let lineIndex = 0; lineIndex < normalizedLines.length; lineIndex += 1) {
+			wrapped.push({
+				text: normalizedLines[lineIndex],
+				paragraphIndex,
+				isParagraphEnd: lineIndex === normalizedLines.length - 1,
+			});
+		}
+	}
+	return wrapped.length > 0
+		? wrapped
+		: [
+				{
+					text: '',
+					paragraphIndex: 0,
+					isParagraphEnd: true,
+				},
+			];
 };
 
 export const layoutText = (input: TextLayoutInput, measureText: (text: string) => number): TextLayoutResult => {
 	const mode = input.textResizeMode ?? 'auto-width';
 	const textAlign = input.textAlign ?? 'left';
+	const listType = input.listType ?? 'none';
+	const paragraphSpacingPx = clampMin(input.paragraphSpacingPx ?? 0, 0);
 	const letterSpacingPx = Number.isFinite(input.letterSpacingPx) ? (input.letterSpacingPx as number) : 0;
 	const paddingX = clampMin(input.paddingX ?? DEFAULT_PADDING_X, 0);
 	const paddingY = clampMin(input.paddingY ?? DEFAULT_PADDING_Y, 0);
@@ -149,12 +193,18 @@ export const layoutText = (input: TextLayoutInput, measureText: (text: string) =
 
 	const measureLine = (line: string): number => measureTextLineWidth(line, letterSpacingPx, measureText);
 	const wrapWidth = Math.max(1, baseWidth - paddingX * 2);
-	const rawLines =
-		mode === 'auto-width' ? (rawText.split('\n').length > 0 ? rawText.split('\n') : ['']) : wrapParagraphs(rawText, wrapWidth, measureLine);
-	const lines = rawLines.length > 0 ? rawLines : [''];
-	const lineWidths = lines.map((line) => measureLine(line));
+	const wrappedLines = buildWrappedParagraphLines(rawText, listType, mode, wrapWidth, measureLine);
+	const lineWidths = wrappedLines.map((line) => measureLine(line.text));
 	const contentWidth = lineWidths.length > 0 ? Math.max(...lineWidths, 0) : 0;
-	const contentHeight = lineHeight * Math.max(lines.length, 1);
+	let contentHeight = 0;
+	for (let i = 0; i < wrappedLines.length; i += 1) {
+		const line = wrappedLines[i];
+		contentHeight += lineHeight;
+		if (line.isParagraphEnd && line.paragraphIndex < wrappedLines[wrappedLines.length - 1].paragraphIndex) {
+			contentHeight += paragraphSpacingPx;
+		}
+	}
+	contentHeight = Math.max(lineHeight, contentHeight);
 
 	let boxWidth = baseWidth;
 	let boxHeight = baseHeight;
@@ -167,7 +217,8 @@ export const layoutText = (input: TextLayoutInput, measureText: (text: string) =
 	}
 
 	const alignmentWidth = mode === 'auto-width' ? contentWidth : Math.max(0, boxWidth - paddingX * 2);
-	const layoutLines: TextLayoutLine[] = lines.map((line, index) => {
+	let cursorY = 0;
+	const layoutLines: TextLayoutLine[] = wrappedLines.map((lineEntry, index) => {
 		const width = lineWidths[index] ?? 0;
 		let x = paddingX;
 		if (textAlign === 'center') {
@@ -175,11 +226,16 @@ export const layoutText = (input: TextLayoutInput, measureText: (text: string) =
 		} else if (textAlign === 'right') {
 			x = paddingX + (alignmentWidth - width);
 		}
+		const y = paddingY + cursorY;
+		cursorY += lineHeight;
+		if (lineEntry.isParagraphEnd && lineEntry.paragraphIndex < wrappedLines[wrappedLines.length - 1].paragraphIndex) {
+			cursorY += paragraphSpacingPx;
+		}
 		return {
-			text: line,
+			text: lineEntry.text,
 			width,
 			x,
-			y: paddingY + index * lineHeight,
+			y,
 		};
 	});
 

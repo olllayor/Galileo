@@ -19,6 +19,11 @@ import { panels } from './ui/design-system';
 import { useDocument } from './hooks/useDocument';
 import {
 	createRectangleTool,
+	createEllipseTool,
+	createLineTool,
+	createArrowTool,
+	createPolygonTool,
+	createStarTool,
 	createFrameTool,
 	createTextTool,
 	createPenTool,
@@ -81,6 +86,7 @@ import type {
 	StyleVariableToken,
 	TextStyle,
 	PrototypeInteraction,
+	PrototypeTrigger,
 	VectorPoint,
 } from './core/doc/types';
 import type { Command, SharedStyleKind } from './core/commands/types';
@@ -1333,14 +1339,12 @@ export const App: React.FC = () => {
 	const [editorMode, setEditorMode] = useState<'design' | 'prototype'>('design');
 	const [prototypePlayerStartFrameId, setPrototypePlayerStartFrameId] = useState<string | null>(null);
 
-	const [activeTool, setActiveTool] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen'>('select');
+	const [activeTool, setActiveTool] = useState<Tool>('select');
 	const [penSession, setPenSession] = useState<PenSession | null>(null);
 	const [vectorEditSession, setVectorEditSession] = useState<VectorEditSession | null>(null);
 	const [vectorHover, setVectorHover] = useState<VectorHover>(null);
 	const [spaceKeyHeld, setSpaceKeyHeld] = useState(false);
-	const [toolBeforeSpace, setToolBeforeSpace] = useState<
-		'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen' | null
-	>(null);
+	const [toolBeforeSpace, setToolBeforeSpace] = useState<Tool | null>(null);
 	const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
 	const [zoom, setZoom] = useState(1);
 	const [previewDocument, setPreviewDocument] = useState<Document | null>(null);
@@ -1426,7 +1430,7 @@ export const App: React.FC = () => {
 	const [canvasViewportOffset, setCanvasViewportOffset] = useState({ x: 0, y: 0 });
 	const pluginIframeRef = useRef<HTMLIFrameElement | null>(null);
 	const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
-	const textEditorRef = useRef<HTMLInputElement | null>(null);
+	const textEditorRef = useRef<HTMLTextAreaElement | null>(null);
 	const textEditorIsComposingRef = useRef(false);
 	const suppressTextEditorBlurCommitRef = useRef(false);
 	const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
@@ -2177,7 +2181,17 @@ export const App: React.FC = () => {
 		if (hoverHit?.locked) return 'not-allowed';
 		if (hoverHit?.kind === 'edge') return hoverHit.edgeCursor || 'move';
 		if (hoverHit?.kind === 'fill') return 'default';
-		if (activeTool === 'frame' || activeTool === 'rectangle' || activeTool === 'text' || activeTool === 'pen')
+		if (
+			activeTool === 'frame' ||
+			activeTool === 'rectangle' ||
+			activeTool === 'ellipse' ||
+			activeTool === 'line' ||
+			activeTool === 'arrow' ||
+			activeTool === 'polygon' ||
+			activeTool === 'star' ||
+			activeTool === 'text' ||
+			activeTool === 'pen'
+		)
 			return 'crosshair';
 		return undefined; // Let CSS custom cursor apply
 	}, [dragState, transformSession, hoverHandle, hoverHit, activeTool, isInPanMode, vectorHover]);
@@ -4145,7 +4159,7 @@ export const App: React.FC = () => {
 						const params = (request.params || {}) as {
 							nodeId?: string;
 							scale?: number;
-							format?: 'png';
+							format?: 'png' | 'webp' | 'svg' | 'pdf' | 'asset';
 							background?: 'transparent' | 'solid';
 							includeFrameFill?: boolean;
 							clipToBounds?: boolean;
@@ -4299,29 +4313,45 @@ export const App: React.FC = () => {
 						if (!params.dataBase64) {
 							return fail('invalid_params', 'dataBase64 is required');
 						}
-						const normalizePngName = (name?: string) => {
-							if (!name) return 'export.png';
-							const trimmed = name.trim();
-							if (!trimmed) return 'export.png';
-							const lower = trimmed.toLowerCase();
-							if (lower.endsWith('.png')) return trimmed;
-							if (/\.[a-z0-9]+$/i.test(trimmed)) {
-								return trimmed.replace(/\.[a-z0-9]+$/i, '.png');
+						const extFromMime = (mime?: string) => {
+							switch ((mime ?? '').toLowerCase()) {
+								case 'image/webp':
+									return 'webp';
+								case 'image/svg+xml':
+									return 'svg';
+								case 'application/pdf':
+									return 'pdf';
+								case 'image/jpeg':
+									return 'jpg';
+								default:
+									return 'png';
 							}
-							return `${trimmed}.png`;
 						};
+						const normalizeName = (name: string | undefined, extension: string) => {
+							const fallback = `export.${extension}`;
+							if (!name) return fallback;
+							const trimmed = name.trim();
+							if (!trimmed) return fallback;
+							const lower = trimmed.toLowerCase();
+							if (lower.endsWith(`.${extension}`)) return trimmed;
+							if (/\.[a-z0-9]+$/i.test(trimmed)) {
+								return trimmed.replace(/\.[a-z0-9]+$/i, `.${extension}`);
+							}
+							return `${trimmed}.${extension}`;
+						};
+						const extension = extFromMime(params.mime);
 						const savedPath = await invoke<string>('show_save_image_dialog', {
-							args: { suggestedName: normalizePngName(params.suggestedName) },
+							args: { suggestedName: normalizeName(params.suggestedName, extension), extensions: [extension] },
 						});
 						if (!savedPath) {
 							return fail('cancelled', 'Save cancelled');
 						}
 						let finalPath = savedPath;
-						if (!finalPath.toLowerCase().endsWith('.png')) {
+						if (!finalPath.toLowerCase().endsWith(`.${extension}`)) {
 							if (/\.[a-z0-9]+$/i.test(finalPath)) {
-								finalPath = finalPath.replace(/\.[a-z0-9]+$/i, '.png');
+								finalPath = finalPath.replace(/\.[a-z0-9]+$/i, `.${extension}`);
 							} else {
-								finalPath = `${finalPath}.png`;
+								finalPath = `${finalPath}.${extension}`;
 							}
 						}
 						await invoke('save_binary', {
@@ -4491,6 +4521,8 @@ export const App: React.FC = () => {
 			lineHeightPx?: number;
 			letterSpacingPx?: number;
 			textResizeMode?: Node['textResizeMode'];
+			textListType?: Node['textListType'];
+			paragraphSpacingPx?: Node['paragraphSpacingPx'];
 			width?: number;
 			height?: number;
 		}) => {
@@ -4519,6 +4551,8 @@ export const App: React.FC = () => {
 					lineHeightPx: options.lineHeightPx,
 					letterSpacingPx,
 					textResizeMode,
+					listType: options.textListType ?? 'none',
+					paragraphSpacingPx: options.paragraphSpacingPx ?? 0,
 				},
 				(line) => {
 					if (!line) return 0;
@@ -4559,6 +4593,8 @@ export const App: React.FC = () => {
 				lineHeightPx: resolved.lineHeightPx ?? node.lineHeightPx,
 				letterSpacingPx: resolved.letterSpacingPx ?? node.letterSpacingPx ?? 0,
 				textResizeMode: resizeMode,
+				textListType: node.textListType,
+				paragraphSpacingPx: node.paragraphSpacingPx,
 				width: node.size.width,
 				height: node.size.height,
 			});
@@ -4623,7 +4659,7 @@ export const App: React.FC = () => {
 
 			const baseInitialText = typeof options?.initialText === 'string' ? options.initialText : node?.text ?? '';
 			const rawDraftText = typeof options?.draftText === 'string' ? options.draftText : baseInitialText;
-			const baseDraftText = rawDraftText.replace(/[\r\n]+/g, ' ');
+			const baseDraftText = rawDraftText;
 			textEditorIsComposingRef.current = false;
 			suppressTextEditorBlurCommitRef.current = false;
 			setTextEditSession({
@@ -4684,6 +4720,8 @@ export const App: React.FC = () => {
 					lineHeightPx: newNode.lineHeightPx,
 					letterSpacingPx: newNode.letterSpacingPx ?? 0,
 					textResizeMode,
+					textListType: newNode.textListType,
+					paragraphSpacingPx: newNode.paragraphSpacingPx,
 					width: newNode.size?.width,
 					height: newNode.size?.height,
 				});
@@ -4763,6 +4801,8 @@ export const App: React.FC = () => {
 			lineHeightPx: editingTextStyle?.lineHeightPx ?? editingTextNode.lineHeightPx,
 			letterSpacingPx: editingTextStyle?.letterSpacingPx ?? editingTextNode.letterSpacingPx ?? 0,
 			textResizeMode: editingTextStyle?.textResizeMode ?? editingTextNode.textResizeMode ?? 'auto-width',
+			textListType: editingTextNode.textListType,
+			paragraphSpacingPx: editingTextNode.paragraphSpacingPx,
 			width: editingTextNode.size.width,
 			height: editingTextNode.size.height,
 		});
@@ -4793,19 +4833,13 @@ export const App: React.FC = () => {
 	const activeTextEditSelectionBounds = useMemo(() => {
 		if (!ENABLE_TEXT_PARITY_V1 || !textEditSession) return null;
 		if (!editingTextBounds || !editingTextNode || editingTextNode.type !== 'text') return null;
-		const effectiveLineHeight = Math.max(
-			1,
-			editingTextStyle?.lineHeightPx ??
-				editingTextNode.lineHeightPx ??
-				(editingTextStyle?.fontSize ?? editingTextNode.fontSize ?? 16) * 1.2,
-		);
 		return {
 			x: editingTextBounds.x,
 			y: editingTextBounds.y,
 			width: Math.max(1, editingTextSize?.width ?? editingTextNode.size.width),
-			height: Math.max(1, effectiveLineHeight + 8),
+			height: Math.max(1, editingTextSize?.height ?? editingTextNode.size.height),
 		};
-	}, [editingTextBounds, editingTextNode, editingTextSize, editingTextStyle, textEditSession]);
+	}, [editingTextBounds, editingTextNode, editingTextSize, textEditSession]);
 	const canvasSelectionBounds = activeTextEditSelectionBounds ?? selectionBounds;
 	const editingTextColor = useMemo(() => {
 		if (editingTextNode?.type !== 'text') return '#f5f5f5';
@@ -4815,6 +4849,9 @@ export const App: React.FC = () => {
 	const selectedTextOverflow = useMemo(() => {
 		if (!ENABLE_TEXT_PARITY_V1 || !selectedNode || selectedNode.type !== 'text') return null;
 		const resolved = resolveNodeStyleProps(displayDocument, selectedNode);
+		if ((selectedNode.textOverflowMode ?? 'clip') === 'visible') {
+			return { isOverflowing: false };
+		}
 		if ((resolved.textResizeMode ?? 'auto-width') !== 'fixed') {
 			return { isOverflowing: false };
 		}
@@ -4827,6 +4864,8 @@ export const App: React.FC = () => {
 			lineHeightPx: resolved.lineHeightPx,
 			letterSpacingPx: resolved.letterSpacingPx ?? 0,
 			textResizeMode: 'auto-height',
+			textListType: selectedNode.textListType,
+			paragraphSpacingPx: selectedNode.paragraphSpacingPx,
 			width: selectedNode.size.width,
 			height: selectedNode.size.height,
 		});
@@ -4836,6 +4875,7 @@ export const App: React.FC = () => {
 	}, [measureTextSize, selectedNode, displayDocument]);
 	const selectedTextOverflowIndicatorNodeIds = useMemo(() => {
 		if (!selectedNode || selectedNode.type !== 'text') return [];
+		if ((selectedNode.textOverflowMode ?? 'clip') === 'ellipsis') return [];
 		if (!selectedTextOverflow?.isOverflowing) return [];
 		return [selectedNode.id];
 	}, [selectedNode, selectedTextOverflow]);
@@ -5212,7 +5252,15 @@ export const App: React.FC = () => {
 				return;
 			}
 
-			if (activeTool === 'rectangle') {
+			if (
+				activeTool === 'rectangle' ||
+				activeTool === 'ellipse' ||
+				activeTool === 'line' ||
+				activeTool === 'arrow' ||
+				activeTool === 'polygon' ||
+				activeTool === 'star' ||
+				activeTool === 'frame'
+			) {
 				if (selectionBounds && selectionIds.length === 1) {
 					const handle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
 					if (handle) {
@@ -5224,7 +5272,20 @@ export const App: React.FC = () => {
 
 				const parentId = getInsertionParentId(worldX, worldY);
 				const localPoint = getLocalPointForParent(parentId, worldX, worldY);
-				const tool = createRectangleTool(parentId);
+				const tool =
+					activeTool === 'rectangle'
+						? createRectangleTool(parentId)
+						: activeTool === 'ellipse'
+							? createEllipseTool(parentId)
+							: activeTool === 'line'
+								? createLineTool(parentId)
+								: activeTool === 'arrow'
+									? createArrowTool(parentId)
+									: activeTool === 'polygon'
+										? createPolygonTool(parentId)
+										: activeTool === 'star'
+											? createStarTool(parentId)
+											: createFrameTool(parentId);
 				const result = tool.handleMouseDown(document, localPoint.x, localPoint.y, []);
 				if (result) {
 					const newIds = Object.keys(result.nodes).filter((id) => !(id in document.nodes));
@@ -5238,47 +5299,20 @@ export const App: React.FC = () => {
 						id: generateId(),
 						timestamp: Date.now(),
 						source: 'user',
-						description: 'Create rectangle',
-						type: 'createNode',
-						payload: {
-							id: newId,
-							parentId,
-							node: newNode,
-						},
-					} as Command);
-					selectNode(newId);
-					setActiveTool('select');
-				}
-				return;
-			}
-
-			if (activeTool === 'frame') {
-				if (selectionBounds && selectionIds.length === 1) {
-					const handle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
-					if (handle) {
-						setActiveTool('select');
-						handleSelectionPointerDown(info);
-						return;
-					}
-				}
-
-				const parentId = getInsertionParentId(worldX, worldY);
-				const localPoint = getLocalPointForParent(parentId, worldX, worldY);
-				const tool = createFrameTool(parentId);
-				const result = tool.handleMouseDown(document, localPoint.x, localPoint.y, []);
-				if (result) {
-					const newIds = Object.keys(result.nodes).filter((id) => !(id in document.nodes));
-					const newId = newIds[0];
-					const newNode = newId ? result.nodes[newId] : null;
-					if (!newId || !newNode) {
-						return;
-					}
-
-					executeCommand({
-						id: generateId(),
-						timestamp: Date.now(),
-						source: 'user',
-						description: 'Create frame',
+						description:
+							activeTool === 'frame'
+								? 'Create frame'
+								: activeTool === 'rectangle'
+									? 'Create rectangle'
+									: activeTool === 'ellipse'
+										? 'Create ellipse'
+										: activeTool === 'line'
+											? 'Create line'
+											: activeTool === 'arrow'
+												? 'Create arrow'
+												: activeTool === 'polygon'
+													? 'Create polygon'
+													: 'Create star',
 						type: 'createNode',
 						payload: {
 							id: newId,
@@ -6424,6 +6458,8 @@ export const App: React.FC = () => {
 				const hasLetterSpacingUpdate = Object.prototype.hasOwnProperty.call(updates, 'letterSpacingPx');
 				const hasTextAlignUpdate = Object.prototype.hasOwnProperty.call(updates, 'textAlign');
 				const hasResizeModeUpdate = Object.prototype.hasOwnProperty.call(updates, 'textResizeMode');
+				const hasListTypeUpdate = Object.prototype.hasOwnProperty.call(updates, 'textListType');
+				const hasParagraphSpacingUpdate = Object.prototype.hasOwnProperty.call(updates, 'paragraphSpacingPx');
 				const hasSizeUpdate = Object.prototype.hasOwnProperty.call(updates, 'size');
 
 				const nextLineHeightPx = hasLineHeightUpdate
@@ -6460,6 +6496,8 @@ export const App: React.FC = () => {
 					hasLineHeightUpdate ||
 					hasLetterSpacingUpdate ||
 					hasResizeModeUpdate ||
+					hasListTypeUpdate ||
+					hasParagraphSpacingUpdate ||
 					hasSizeUpdate
 				) {
 					const measured = measureTextSize({
@@ -6471,6 +6509,12 @@ export const App: React.FC = () => {
 						lineHeightPx: nextLineHeightPx,
 						letterSpacingPx: nextLetterSpacingPx,
 						textResizeMode: nextResizeMode,
+						textListType:
+							typeof updates.textListType === 'string'
+								? (updates.textListType as Node['textListType'])
+								: current.textListType,
+						paragraphSpacingPx:
+							typeof updates.paragraphSpacingPx === 'number' ? updates.paragraphSpacingPx : current.paragraphSpacingPx,
 						width: baseWidth,
 						height: baseHeight,
 					});
@@ -6806,16 +6850,31 @@ export const App: React.FC = () => {
 		(
 			pageId: string,
 			sourceFrameId: string,
-			trigger: 'click' | 'hover',
+			trigger: PrototypeTrigger,
 			interaction?: PrototypeInteraction,
 		) => {
 			if (!prototypeFrameIdSet.has(sourceFrameId)) {
 				showToast('Interaction source must be a top-level frame on the current page.');
 				return;
 			}
-			if (interaction && !prototypeFrameIdSet.has(interaction.targetFrameId)) {
-				showToast('Interaction destination must be a top-level frame on the current page.');
-				return;
+			if (interaction) {
+				const action = interaction.action ?? 'navigate';
+				if ((action === 'navigate' || action === 'overlay') && !interaction.targetFrameId) {
+					showToast('This action requires a destination frame.');
+					return;
+				}
+				if (
+					interaction.targetFrameId &&
+					(action === 'navigate' || action === 'overlay') &&
+					!prototypeFrameIdSet.has(interaction.targetFrameId)
+				) {
+					showToast('Interaction destination must be a top-level frame on the current page.');
+					return;
+				}
+				if (action === 'open-link' && (!interaction.url || interaction.url.trim().length === 0)) {
+					showToast('Open link action requires a URL.');
+					return;
+				}
 			}
 			executeCommand({
 				id: generateId(),
@@ -8054,6 +8113,65 @@ export const App: React.FC = () => {
 		await handleOpenFile();
 	}, [handleOpenFile]);
 
+	const handleSnapshotExport = useCallback(async () => {
+		try {
+			const targetId = selectedIds[0] ?? activePageRootId;
+			const targetNode = document.nodes[targetId];
+			if (!targetNode) {
+				showToast('Nothing selected to export.');
+				return;
+			}
+
+			const formatInput = window.prompt('Export format (png, webp, svg, pdf, asset)', 'png');
+			if (!formatInput) return;
+			const format = formatInput.trim().toLowerCase();
+			if (!['png', 'webp', 'svg', 'pdf', 'asset'].includes(format)) {
+				showToast('Unsupported format.');
+				return;
+			}
+
+			const snapshot = await exportNodeSnapshot(document, targetId, {
+				format: format as 'png' | 'webp' | 'svg' | 'pdf' | 'asset',
+				background: 'transparent',
+				includeFrameFill: true,
+				clipToBounds: true,
+			});
+
+			const extFromMime = (mime: string) => {
+				switch (mime) {
+					case 'image/webp':
+						return 'webp';
+					case 'image/svg+xml':
+						return 'svg';
+					case 'application/pdf':
+						return 'pdf';
+					case 'image/jpeg':
+						return 'jpg';
+					default:
+						return 'png';
+				}
+			};
+			const extension = extFromMime(snapshot.mime);
+			const safeBaseName =
+				(targetNode.name ?? targetNode.type ?? 'export')
+					.replace(/[^\w.-]+/g, '-')
+					.replace(/^-+|-+$/g, '')
+					.toLowerCase() || 'export';
+			const savedPath = await invoke<string>('show_save_image_dialog', {
+				args: { suggestedName: `${safeBaseName}.${extension}`, extensions: [extension] },
+			});
+			if (!savedPath) return;
+			const finalPath = savedPath.toLowerCase().endsWith(`.${extension}`) ? savedPath : `${savedPath}.${extension}`;
+			await invoke('save_binary', {
+				args: { path: finalPath, dataBase64: snapshot.dataBase64 },
+			});
+			showToast(`Exported ${extension.toUpperCase()}`);
+		} catch (error) {
+			console.error('Export snapshot failed', error);
+			showToast('Export failed');
+		}
+	}, [activePageRootId, document, selectedIds, showToast]);
+
 	useEffect(() => {
 		const updateSnapState = (e: KeyboardEvent) => {
 			setSnapDisabled(e.altKey || e.metaKey);
@@ -8486,12 +8604,6 @@ export const App: React.FC = () => {
 					cancelTextEditing();
 					return;
 				}
-				if (!isComposing && e.key === 'Enter') {
-					e.preventDefault();
-					suppressTextEditorBlurCommitRef.current = true;
-					commitTextEditing();
-					return;
-				}
 				if (!isComposing && isCmd && e.key === 'Enter') {
 					e.preventDefault();
 					suppressTextEditorBlurCommitRef.current = true;
@@ -8761,12 +8873,19 @@ export const App: React.FC = () => {
 					setAssetsFocusNonce((prev) => prev + 1);
 					return;
 				}
-				if (key === 'v') setActiveTool('select');
-				if (key === 'h') setActiveTool('hand');
-				if (key === 'f') setActiveTool('frame');
-				if (key === 'r') setActiveTool('rectangle');
-				if (key === 't') setActiveTool('text');
-				if (ENABLE_VECTOR_EDIT_V1 && key === 'p') setActiveTool('pen');
+				if (!isCmd) {
+					if (key === 'v') setActiveTool('select');
+					if (key === 'h') setActiveTool('hand');
+					if (key === 'f') setActiveTool('frame');
+					if (key === 'r') setActiveTool('rectangle');
+					if (key === 'e') setActiveTool('ellipse');
+					if (key === 'l') setActiveTool('line');
+					if (key === 'a') setActiveTool('arrow');
+					if (key === 'g') setActiveTool('polygon');
+					if (key === 's') setActiveTool('star');
+					if (key === 't') setActiveTool('text');
+					if (ENABLE_VECTOR_EDIT_V1 && key === 'p') setActiveTool('pen');
+				}
 
 				// Space key for temporary pan mode (Figma-style)
 				if (e.code === 'Space' && !spaceKeyHeld && !dragState) {
@@ -8929,7 +9048,7 @@ export const App: React.FC = () => {
 			setTextCreationDragState(null);
 		}
 		setVectorHover(null);
-		setActiveTool(tool as 'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen');
+		setActiveTool(tool);
 	}, []);
 
 	const commandItems = useMemo<CommandPaletteItem[]>(() => {
@@ -9086,6 +9205,7 @@ export const App: React.FC = () => {
 								breadcrumb={projectBreadcrumb}
 								onRename={handleRenameCurrentProject}
 								onDuplicate={handleDuplicateCurrentProject}
+								onSnapshot={handleSnapshotExport}
 							/>
 						</div>
 						<ProjectTabs
@@ -9230,15 +9350,14 @@ export const App: React.FC = () => {
 								textEditSession &&
 								editingTextNode?.type === 'text' &&
 								editingTextScreenRect && (
-									<input
+									<textarea
 										ref={textEditorRef}
-										type="text"
 										value={textEditSession.draftText}
 										spellCheck={false}
 										autoCorrect="off"
 										autoCapitalize="off"
 										onChange={(event) => {
-											const value = event.target.value.replace(/[\r\n]+/g, ' ');
+											const value = event.target.value;
 											setTextEditSession((current) =>
 												current
 													? {
@@ -9273,12 +9392,6 @@ export const App: React.FC = () => {
 												cancelTextEditing();
 												return;
 											}
-											if (!isComposing && event.key === 'Enter') {
-												event.preventDefault();
-												suppressTextEditorBlurCommitRef.current = true;
-												commitTextEditing();
-												return;
-											}
 											if (!isComposing && (event.ctrlKey || event.metaKey) && event.key === 'Enter') {
 												event.preventDefault();
 												suppressTextEditorBlurCommitRef.current = true;
@@ -9290,14 +9403,7 @@ export const App: React.FC = () => {
 											left: `${editingTextScreenRect.left}px`,
 											top: `${editingTextScreenRect.top}px`,
 											width: `${Math.max(1, editingTextScreenRect.width)}px`,
-											height: `${Math.max(
-												1,
-												(editingTextStyle?.lineHeightPx ??
-													editingTextNode.lineHeightPx ??
-													(editingTextStyle?.fontSize ?? editingTextNode.fontSize ?? 16) * 1.2) *
-													zoom +
-													Math.max(2, 4 * zoom) * 2,
-											)}px`,
+											height: `${Math.max(1, editingTextScreenRect.height)}px`,
 											padding: `${Math.max(2, 4 * zoom)}px`,
 											border: 'none',
 											borderRadius: 0,
@@ -9319,6 +9425,8 @@ export const App: React.FC = () => {
 											)}px`,
 											letterSpacing: `${(editingTextStyle?.letterSpacingPx ?? editingTextNode.letterSpacingPx ?? 0) * zoom}px`,
 											textAlign: editingTextStyle?.textAlign ?? editingTextNode.textAlign ?? 'left',
+											whiteSpace: 'pre-wrap',
+											resize: 'none',
 											overflow: 'hidden',
 											boxShadow: 'none',
 											margin: 0,

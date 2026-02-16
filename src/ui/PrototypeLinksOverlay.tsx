@@ -36,6 +36,7 @@ export const PrototypeLinksOverlay: React.FC<PrototypeLinksOverlayProps> = ({
 		for (const trigger of ['click', 'hover'] as const) {
 			const interaction = sourceInteractions[trigger];
 			if (!interaction) continue;
+			if (!interaction.targetFrameId) continue;
 			const targetBounds = boundsMap[interaction.targetFrameId];
 			if (!targetBounds) continue;
 			const targetX = targetBounds.x * view.zoom + view.pan.x;

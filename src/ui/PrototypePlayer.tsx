@@ -1,7 +1,7 @@
 import React from 'react';
 import { CanvasRenderer } from '../render/canvas-renderer';
 import { buildDrawListForNode } from '../render/draw-list';
-import type { Document, PrototypePageGraph, PrototypeTransition } from '../core/doc/types';
+import type { Document, PrototypeInteraction, PrototypePageGraph, PrototypeTransition } from '../core/doc/types';
 
 type PlayerAnimation = {
 	fromFrameId: string;
@@ -110,6 +110,8 @@ export const PrototypePlayer: React.FC<PrototypePlayerProps> = ({ document, page
 		height: window.innerHeight,
 	}));
 	const rafRef = React.useRef<number | null>(null);
+	const delayTimerRef = React.useRef<number | null>(null);
+	const dragStartRef = React.useRef<{ x: number; y: number } | null>(null);
 
 	const currentFrame = document.nodes[currentFrameId];
 	const currentInteractions = pagePrototype?.interactionsBySource?.[currentFrameId];
@@ -163,6 +165,43 @@ export const PrototypePlayer: React.FC<PrototypePlayerProps> = ({ document, page
 		[animation, currentFrameId, document.nodes],
 	);
 
+	const runBackNavigation = React.useCallback(
+		(transition: PrototypeTransition = 'instant'): boolean => {
+			if (animation || history.length === 0) return false;
+			const target = history[history.length - 1];
+			setHistory((prev) => prev.slice(0, -1));
+			return navigateTo(target, transition, { clearHover: true });
+		},
+		[animation, history, navigateTo],
+	);
+
+	const executeInteraction = React.useCallback(
+		(
+			interaction: PrototypeInteraction | undefined,
+			options: { pushHistory?: boolean; clearHover?: boolean } = {},
+		): boolean => {
+			if (!interaction) return false;
+			const action = interaction.action ?? 'navigate';
+			if (action === 'open-link') {
+				const url = interaction.url?.trim();
+				if (!url) return false;
+				window.open(url, '_blank', 'noopener,noreferrer');
+				return true;
+			}
+			if (action === 'back') {
+				return runBackNavigation(interaction.transition);
+			}
+			if (!interaction.targetFrameId) {
+				return false;
+			}
+			return navigateTo(interaction.targetFrameId, interaction.transition, {
+				pushHistory: options.pushHistory,
+				clearHover: options.clearHover,
+			});
+		},
+		[navigateTo, runBackNavigation],
+	);
+
 	React.useEffect(() => {
 		if (!animation) return;
 		let cancelled = false;
@@ -198,11 +237,16 @@ export const PrototypePlayer: React.FC<PrototypePlayerProps> = ({ document, page
 				return;
 			}
 			if (animation) return;
+			const keyInteraction = currentInteractions?.key;
+			const expectedKey = keyInteraction?.key?.trim();
+			if (expectedKey && event.key.toLowerCase() === expectedKey.toLowerCase()) {
+				event.preventDefault();
+				void executeInteraction(keyInteraction, { pushHistory: true, clearHover: true });
+				return;
+			}
 			if ((event.key === 'Backspace' || (event.altKey && event.key === 'ArrowLeft')) && history.length > 0) {
 				event.preventDefault();
-				const target = history[history.length - 1];
-				setHistory((prev) => prev.slice(0, -1));
-				void navigateTo(target, 'instant', { clearHover: true });
+				void runBackNavigation('instant');
 			}
 		};
 		window.addEventListener('resize', onResize);
@@ -211,14 +255,14 @@ export const PrototypePlayer: React.FC<PrototypePlayerProps> = ({ document, page
 			window.removeEventListener('resize', onResize);
 			window.removeEventListener('keydown', onKeyDown);
 		};
-	}, [animation, history, navigateTo, onClose]);
+	}, [animation, currentInteractions?.key, executeInteraction, history.length, onClose, runBackNavigation]);
 
 	const handlePreviewClick = React.useCallback(() => {
 		if (animation) return;
 		const click = currentInteractions?.click;
 		if (!click) return;
-		void navigateTo(click.targetFrameId, click.transition, { pushHistory: true, clearHover: true });
-	}, [animation, currentInteractions?.click, navigateTo]);
+		void executeInteraction(click, { pushHistory: true, clearHover: true });
+	}, [animation, currentInteractions?.click, executeInteraction]);
 
 	const handlePreviewMouseEnter = React.useCallback(() => {
 		setIsPointerInsideStage(true);
@@ -228,11 +272,12 @@ export const PrototypePlayer: React.FC<PrototypePlayerProps> = ({ document, page
 		const hover = currentInteractions?.hover;
 		if (!hover) return;
 		const sourceId = currentFrameId;
-		const didNavigate = navigateTo(hover.targetFrameId, hover.transition, { clearHover: false });
-		if (didNavigate) {
+		const didNavigate = executeInteraction(hover, { pushHistory: false, clearHover: false });
+		const action = hover.action ?? 'navigate';
+		if (didNavigate && (action === 'navigate' || action === 'overlay')) {
 			setHoverReturnFrameId(sourceId);
 		}
-	}, [animation, currentInteractions?.hover, currentFrameId, hoverArmed, hoverReturnFrameId, navigateTo]);
+	}, [animation, currentInteractions?.hover, currentFrameId, executeInteraction, hoverArmed, hoverReturnFrameId]);
 
 	const handlePreviewMouseLeave = React.useCallback(() => {
 		setIsPointerInsideStage(false);
@@ -258,12 +303,58 @@ export const PrototypePlayer: React.FC<PrototypePlayerProps> = ({ document, page
 		void navigateTo(returnTarget, 'instant', { clearHover: true });
 	}, [animation, hoverReturnFrameId, isPointerInsideStage, navigateTo]);
 
+	React.useEffect(() => {
+		if (delayTimerRef.current !== null) {
+			window.clearTimeout(delayTimerRef.current);
+			delayTimerRef.current = null;
+		}
+		if (animation) return;
+		const delayInteraction = currentInteractions?.delay;
+		if (!delayInteraction) return;
+		const delayMs = Math.max(0, delayInteraction.delayMs ?? 300);
+		delayTimerRef.current = window.setTimeout(() => {
+			void executeInteraction(delayInteraction, { pushHistory: true, clearHover: true });
+			delayTimerRef.current = null;
+		}, delayMs);
+		return () => {
+			if (delayTimerRef.current !== null) {
+				window.clearTimeout(delayTimerRef.current);
+				delayTimerRef.current = null;
+			}
+		};
+	}, [animation, currentFrameId, currentInteractions?.delay, executeInteraction]);
+
+	React.useEffect(
+		() => () => {
+			if (delayTimerRef.current !== null) {
+				window.clearTimeout(delayTimerRef.current);
+				delayTimerRef.current = null;
+			}
+		},
+		[],
+	);
+
+	const handlePreviewMouseDown = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+		dragStartRef.current = { x: event.clientX, y: event.clientY };
+	}, []);
+
+	const handlePreviewMouseUp = React.useCallback(
+		(event: React.MouseEvent<HTMLDivElement>) => {
+			const start = dragStartRef.current;
+			dragStartRef.current = null;
+			if (animation || !start) return;
+			const dx = event.clientX - start.x;
+			const dy = event.clientY - start.y;
+			if (Math.hypot(dx, dy) < 16) return;
+			void executeInteraction(currentInteractions?.drag, { pushHistory: true, clearHover: true });
+		},
+		[animation, currentInteractions?.drag, executeInteraction],
+	);
+
 	const handleBack = React.useCallback(() => {
-		if (animation || history.length === 0) return;
-		const target = history[history.length - 1];
-		setHistory((prev) => prev.slice(0, -1));
-		void navigateTo(target, 'instant', { clearHover: true });
-	}, [animation, history, navigateTo]);
+		if (animation) return;
+		void runBackNavigation('instant');
+	}, [animation, runBackNavigation]);
 
 	const handleRestart = React.useCallback(() => {
 		if (animation) return;
@@ -369,6 +460,8 @@ export const PrototypePlayer: React.FC<PrototypePlayerProps> = ({ document, page
 			>
 				<div
 					onClick={handlePreviewClick}
+					onMouseDown={handlePreviewMouseDown}
+					onMouseUp={handlePreviewMouseUp}
 					onMouseEnter={handlePreviewMouseEnter}
 					onMouseMove={handlePreviewMouseMove}
 					onMouseLeave={handlePreviewMouseLeave}

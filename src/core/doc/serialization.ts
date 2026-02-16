@@ -5,6 +5,7 @@ import {
 	effectStyleSchema,
 	gridStyleSchema,
 	paintStyleSchema,
+	prototypeActionSchema,
 	prototypeTransitionSchema,
 	textStyleSchema,
 	type ComponentDefinition,
@@ -21,7 +22,7 @@ import {
 } from './types';
 import { normalizeNodeAppearance } from './appearance';
 
-export const CURRENT_DOCUMENT_VERSION = 12;
+export const CURRENT_DOCUMENT_VERSION = 13;
 
 export type DocumentParseResult =
   | { ok: true; doc: Document; warnings: string[] }
@@ -235,13 +236,24 @@ const normalizePrototypeInteraction = (
 ): PrototypeInteraction | null => {
 	if (!value || typeof value !== 'object') return null;
 	const entry = value as Record<string, unknown>;
-	if (typeof entry.targetFrameId !== 'string') return null;
-	if (!pageFrameIds.has(entry.targetFrameId)) return null;
 	const transitionParse = prototypeTransitionSchema.safeParse(entry.transition);
 	if (!transitionParse.success) return null;
+	const actionParse = prototypeActionSchema.safeParse(entry.action);
+	const action = actionParse.success ? actionParse.data : 'navigate';
+	const targetFrameId = typeof entry.targetFrameId === 'string' ? entry.targetFrameId : undefined;
+	if ((action === 'navigate' || action === 'overlay') && (!targetFrameId || !pageFrameIds.has(targetFrameId))) {
+		return null;
+	}
+	const key = typeof entry.key === 'string' && entry.key.trim().length > 0 ? entry.key : undefined;
+	const url = typeof entry.url === 'string' && entry.url.trim().length > 0 ? entry.url : undefined;
+	const delayMs = typeof entry.delayMs === 'number' && Number.isFinite(entry.delayMs) ? Math.max(0, entry.delayMs) : undefined;
 	return {
-		targetFrameId: entry.targetFrameId,
+		action,
+		...(targetFrameId && pageFrameIds.has(targetFrameId) ? { targetFrameId } : {}),
 		transition: transitionParse.data,
+		...(key ? { key } : {}),
+		...(url ? { url } : {}),
+		...(typeof delayMs === 'number' ? { delayMs } : {}),
 	};
 };
 
@@ -266,10 +278,17 @@ const normalizePrototypePageGraph = (
 		const source = sourceValue as Record<string, unknown>;
 		const click = normalizePrototypeInteraction(source.click, pageFrameIds);
 		const hover = normalizePrototypeInteraction(source.hover, pageFrameIds);
-		if (!click && !hover) continue;
+		const key = normalizePrototypeInteraction(source.key, pageFrameIds);
+		const delay = normalizePrototypeInteraction(source.delay, pageFrameIds);
+		const drag = normalizePrototypeInteraction(source.drag, pageFrameIds);
+		const hasAny = Boolean(click || hover || key || delay || drag);
+		if (!hasAny) continue;
 		interactionsBySource[sourceFrameId] = {
 			...(click ? { click } : {}),
 			...(hover ? { hover } : {}),
+			...(key ? { key } : {}),
+			...(delay ? { delay } : {}),
+			...(drag ? { drag } : {}),
 		};
 	}
 

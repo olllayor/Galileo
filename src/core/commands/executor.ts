@@ -548,7 +548,8 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 
 			if (!interaction) {
 				const next = { ...current, [trigger]: undefined };
-				if (!next.click && !next.hover) {
+				const hasAny = Object.values(next).some((entry) => entry !== undefined);
+				if (!hasAny) {
 					delete pagePrototype.interactionsBySource[sourceFrameId];
 				} else {
 					pagePrototype.interactionsBySource[sourceFrameId] = next;
@@ -556,13 +557,18 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 				break;
 			}
 
-			if (!isFrameInPage(draft, page.rootId, interaction.targetFrameId)) break;
+			const action = interaction.action ?? 'navigate';
+			if ((action === 'navigate' || action === 'overlay') && !interaction.targetFrameId) break;
+			if (
+				interaction.targetFrameId &&
+				(action === 'navigate' || action === 'overlay') &&
+				!isFrameInPage(draft, page.rootId, interaction.targetFrameId)
+			) {
+				break;
+			}
 			pagePrototype.interactionsBySource[sourceFrameId] = {
 				...current,
-				[trigger]: {
-					targetFrameId: interaction.targetFrameId,
-					transition: interaction.transition,
-				},
+				[trigger]: { ...interaction, action },
 			};
 			break;
 		}
@@ -926,24 +932,36 @@ const prunePrototypeGraph = (draft: DraftDocument): void => {
 				continue;
 			}
 
-			const click =
-				sourceInteractions.click && validFrames.has(sourceInteractions.click.targetFrameId)
-					? sourceInteractions.click
-					: undefined;
-			const hover =
-				sourceInteractions.hover && validFrames.has(sourceInteractions.hover.targetFrameId)
-					? sourceInteractions.hover
-					: undefined;
+			const sanitizeInteraction = (interaction: (typeof sourceInteractions)[keyof typeof sourceInteractions]) => {
+				if (!interaction) return undefined;
+				const action = interaction.action ?? 'navigate';
+				if (action === 'navigate' || action === 'overlay') {
+					if (!interaction.targetFrameId || !validFrames.has(interaction.targetFrameId)) {
+						return undefined;
+					}
+					return { ...interaction, action };
+				}
+				if (interaction.targetFrameId && !validFrames.has(interaction.targetFrameId)) {
+					return { ...interaction, action, targetFrameId: undefined };
+				}
+				return { ...interaction, action };
+			};
 
-			if (!click && !hover) {
+			const nextInteractions = {
+				click: sanitizeInteraction(sourceInteractions.click),
+				hover: sanitizeInteraction(sourceInteractions.hover),
+				key: sanitizeInteraction(sourceInteractions.key),
+				delay: sanitizeInteraction(sourceInteractions.delay),
+				drag: sanitizeInteraction(sourceInteractions.drag),
+			};
+
+			const hasAny = Object.values(nextInteractions).some((entry) => entry !== undefined);
+			if (!hasAny) {
 				delete pagePrototype.interactionsBySource[sourceFrameId];
 				continue;
 			}
 
-			pagePrototype.interactionsBySource[sourceFrameId] = {
-				...(click ? { click } : {}),
-				...(hover ? { hover } : {}),
-			};
+			pagePrototype.interactionsBySource[sourceFrameId] = nextInteractions;
 		}
 	}
 };

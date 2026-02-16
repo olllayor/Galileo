@@ -1,9 +1,13 @@
 import React from 'react';
-import type { PrototypeInteraction, PrototypePageGraph, PrototypeTransition } from '../core/doc/types';
+import type {
+	PrototypeAction,
+	PrototypeInteraction,
+	PrototypePageGraph,
+	PrototypeTransition,
+	PrototypeTrigger,
+} from '../core/doc/types';
 import { colors, panels, radii, spacing, transitions, typography } from './design-system';
 import { SelectField } from './controls/SelectField';
-
-type PrototypeTrigger = 'click' | 'hover';
 
 interface FrameOption {
 	id: string;
@@ -37,6 +41,21 @@ const TRANSITION_OPTIONS: Array<{ value: PrototypeTransition; label: string }> =
 	{ value: 'slide-up', label: 'Slide Up' },
 	{ value: 'slide-down', label: 'Slide Down' },
 ];
+
+const ACTION_OPTIONS: Array<{ value: PrototypeAction; label: string }> = [
+	{ value: 'navigate', label: 'Navigate' },
+	{ value: 'overlay', label: 'Open Overlay' },
+	{ value: 'open-link', label: 'Open Link' },
+	{ value: 'back', label: 'Back' },
+];
+
+const TRIGGER_LABELS: Record<PrototypeTrigger, string> = {
+	click: 'On Click',
+	hover: 'On Hover',
+	key: 'On Key Press',
+	delay: 'After Delay',
+	drag: 'On Drag',
+};
 
 const PanelSection: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
 	<div
@@ -83,38 +102,172 @@ const TriggerRow: React.FC<{
 		interaction?: PrototypeInteraction,
 	) => void;
 }> = ({ trigger, sourceFrameId, frames, interaction, onSetInteraction }) => {
+	const action = interaction?.action ?? 'navigate';
 	const targetFrameId = interaction?.targetFrameId ?? '';
 	const transition = interaction?.transition ?? 'instant';
+	const keyValue = interaction?.key ?? '';
+	const delayMs = interaction?.delayMs ?? 300;
+
+	const applyPatch = (patch: Partial<PrototypeInteraction>) => {
+		onSetInteraction(sourceFrameId, trigger, {
+			transition,
+			action,
+			...interaction,
+			...patch,
+		});
+	};
+
+	const needsTarget = action === 'navigate' || action === 'overlay';
+	const canUseTransition = action === 'navigate' || action === 'overlay' || action === 'back';
 
 	return (
 		<div style={{ marginBottom: spacing.md }}>
-				<SelectField
-					label={trigger === 'click' ? 'On Click' : 'On Hover'}
-					value={targetFrameId}
-					onChange={(value) => {
-						if (!value) {
-							onSetInteraction(sourceFrameId, trigger, undefined);
-							return;
-						}
-					onSetInteraction(sourceFrameId, trigger, {
-						targetFrameId: value,
-						transition,
-					});
+			<div
+				style={{
+					fontSize: typography.fontSize.xs,
+					color: colors.text.tertiary,
+					marginBottom: spacing.xs,
+					textTransform: 'uppercase',
+					letterSpacing: '0.04em',
 				}}
-				options={[{ value: '', label: 'No destination' }, ...frames.map((frame) => ({ value: frame.id, label: frame.name }))]}
-			/>
-			<div style={{ height: spacing.sm }} />
+			>
+				{TRIGGER_LABELS[trigger]}
+			</div>
+
 			<SelectField
-				value={transition}
-				onChange={(nextTransition) => {
-					if (!targetFrameId) return;
-					onSetInteraction(sourceFrameId, trigger, {
-						targetFrameId,
-						transition: nextTransition as PrototypeTransition,
-					});
+				label="Action"
+				value={action}
+				onChange={(nextAction) => {
+					const actionValue = nextAction as PrototypeAction;
+					const basePatch: Partial<PrototypeInteraction> = {
+						action: actionValue,
+						targetFrameId: actionValue === 'navigate' || actionValue === 'overlay' ? interaction?.targetFrameId : undefined,
+						url: actionValue === 'open-link' ? interaction?.url ?? '' : undefined,
+					};
+					applyPatch(basePatch);
 				}}
-				disabled={!targetFrameId}
-				hint={!targetFrameId ? 'Choose a destination first.' : undefined}
+				options={ACTION_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+			/>
+
+			<div style={{ height: spacing.sm }} />
+
+			{needsTarget && (
+				<>
+					<SelectField
+						label="Destination"
+						value={targetFrameId}
+						onChange={(value) => {
+							if (!value) {
+								onSetInteraction(sourceFrameId, trigger, undefined);
+								return;
+							}
+							applyPatch({ targetFrameId: value });
+						}}
+						options={[{ value: '', label: 'No destination' }, ...frames.map((frame) => ({ value: frame.id, label: frame.name }))]}
+					/>
+					<div style={{ height: spacing.sm }} />
+				</>
+			)}
+
+			{action === 'open-link' && (
+				<>
+					<label
+						style={{
+							display: 'block',
+							fontSize: typography.fontSize.xs,
+							color: colors.text.tertiary,
+							marginBottom: '4px',
+						}}
+					>
+						URL
+					</label>
+					<input
+						type="text"
+						value={interaction?.url ?? ''}
+						onChange={(event) => applyPatch({ url: event.target.value })}
+						placeholder="https://example.com"
+						style={{
+							width: '100%',
+							padding: spacing.xs,
+							border: `1px solid ${colors.border.default}`,
+							borderRadius: radii.sm,
+							fontSize: typography.fontSize.md,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.primary,
+						}}
+					/>
+					<div style={{ height: spacing.sm }} />
+				</>
+			)}
+
+			{trigger === 'key' && (
+				<>
+					<label
+						style={{
+							display: 'block',
+							fontSize: typography.fontSize.xs,
+							color: colors.text.tertiary,
+							marginBottom: '4px',
+						}}
+					>
+						Key
+					</label>
+					<input
+						type="text"
+						value={keyValue}
+						onChange={(event) => applyPatch({ key: event.target.value })}
+						placeholder="Enter key (e.g. Enter, ArrowRight)"
+						style={{
+							width: '100%',
+							padding: spacing.xs,
+							border: `1px solid ${colors.border.default}`,
+							borderRadius: radii.sm,
+							fontSize: typography.fontSize.md,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.primary,
+						}}
+					/>
+					<div style={{ height: spacing.sm }} />
+				</>
+			)}
+
+			{trigger === 'delay' && (
+				<>
+					<label
+						style={{
+							display: 'block',
+							fontSize: typography.fontSize.xs,
+							color: colors.text.tertiary,
+							marginBottom: '4px',
+						}}
+					>
+						Delay (ms)
+					</label>
+					<input
+						type="number"
+						min={0}
+						value={delayMs}
+						onChange={(event) => applyPatch({ delayMs: Math.max(0, Number(event.target.value) || 0) })}
+						style={{
+							width: '100%',
+							padding: spacing.xs,
+							border: `1px solid ${colors.border.default}`,
+							borderRadius: radii.sm,
+							fontSize: typography.fontSize.md,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.primary,
+						}}
+					/>
+					<div style={{ height: spacing.sm }} />
+				</>
+			)}
+
+			<SelectField
+				label="Transition"
+				value={transition}
+				onChange={(nextTransition) => applyPatch({ transition: nextTransition as PrototypeTransition })}
+				disabled={!canUseTransition}
+				hint={!canUseTransition ? 'Transition not used for this action.' : undefined}
 				options={TRANSITION_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
 			/>
 		</div>
@@ -241,24 +394,18 @@ export const PrototypePanel: React.FC<PrototypePanelProps> = ({
 						>
 							Editing: <span style={{ color: colors.text.primary }}>{selectedFrame.name}</span>
 						</div>
-						<TriggerRow
-							trigger="click"
-							sourceFrameId={selectedFrame.id}
-							frames={frames}
-							interaction={selectedInteractions?.click}
-							onSetInteraction={(sourceFrameId, trigger, interaction) =>
-								onSetInteraction(pageId, sourceFrameId, trigger, interaction)
-							}
-						/>
-						<TriggerRow
-							trigger="hover"
-							sourceFrameId={selectedFrame.id}
-							frames={frames}
-							interaction={selectedInteractions?.hover}
-							onSetInteraction={(sourceFrameId, trigger, interaction) =>
-								onSetInteraction(pageId, sourceFrameId, trigger, interaction)
-							}
-						/>
+						{(['click', 'hover', 'key', 'delay', 'drag'] as const).map((trigger) => (
+							<TriggerRow
+								key={trigger}
+								trigger={trigger}
+								sourceFrameId={selectedFrame.id}
+								frames={frames}
+								interaction={selectedInteractions?.[trigger]}
+								onSetInteraction={(sourceFrameId, triggerId, interaction) =>
+									onSetInteraction(pageId, sourceFrameId, triggerId, interaction)
+								}
+							/>
+						))}
 					</>
 				) : (
 					<div style={{ color: colors.text.tertiary, fontSize: typography.fontSize.sm }}>

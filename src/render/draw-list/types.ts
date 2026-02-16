@@ -106,6 +106,9 @@ export interface DrawTextCommand {
   lineHeightPx?: number;
   letterSpacingPx: number;
   textResizeMode: 'auto-width' | 'auto-height' | 'fixed';
+  listType?: 'none' | 'bullet' | 'numbered';
+  paragraphSpacingPx?: number;
+  overflowMode?: 'clip' | 'ellipsis' | 'visible';
   fill?: string;
   blendMode?: LayerBlendMode;
   opacity?: number;

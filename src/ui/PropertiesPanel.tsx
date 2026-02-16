@@ -89,6 +89,7 @@ interface PropertiesPanelProps {
 const defaultLayout: Layout = {
 	type: 'auto',
 	direction: 'row',
+	wrap: 'nowrap',
 	gap: 8,
 	padding: { top: 8, right: 8, bottom: 8, left: 8 },
 	alignment: 'start',
@@ -1480,7 +1481,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						>
 							Constraints
 						</h4>
-						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm }}>
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: spacing.sm }}>
 							<div>
 								<label
 									style={{
@@ -1513,6 +1514,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									<option value="right">Right</option>
 									<option value="left-right">Left &amp; Right</option>
 									<option value="center">Center</option>
+									<option value="scale">Scale</option>
 								</select>
 							</div>
 							<div>
@@ -1547,6 +1549,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									<option value="bottom">Bottom</option>
 									<option value="top-bottom">Top &amp; Bottom</option>
 									<option value="center">Center</option>
+									<option value="scale">Scale</option>
 								</select>
 							</div>
 						</div>
@@ -1796,6 +1799,36 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 										marginBottom: '4px',
 									}}
 								>
+									Wrap
+								</label>
+								<select className="gal-select-field" value={layout.wrap ?? 'nowrap'}
+									onChange={(e) => handleLayoutChange({ wrap: e.target.value as Layout['wrap'] })}
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								>
+									<option value="nowrap">No Wrap</option>
+									<option value="wrap">Wrap</option>
+								</select>
+							</div>
+						</div>
+
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm }}>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
 									Gap
 								</label>
 								<input
@@ -1845,6 +1878,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								<option value="start">Start</option>
 								<option value="center">Center</option>
 								<option value="end">End</option>
+								<option value="space-between">Space Between</option>
 							</select>
 						</div>
 						<div>
@@ -1951,6 +1985,187 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 										color: colors.text.primary,
 									}}
 								/>
+							</div>
+						</div>
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginTop: spacing.sm }}>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Min W
+								</label>
+								<input
+									type="number"
+									value={layoutSizing.minWidth ?? ''}
+									onChange={(e) =>
+										handleInputChange('layoutSizing', {
+											...layoutSizing,
+											minWidth: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0),
+										})
+									}
+									placeholder="None"
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Max W
+								</label>
+								<input
+									type="number"
+									value={layoutSizing.maxWidth ?? ''}
+									onChange={(e) =>
+										handleInputChange('layoutSizing', {
+											...layoutSizing,
+											maxWidth: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0),
+										})
+									}
+									placeholder="None"
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Min H
+								</label>
+								<input
+									type="number"
+									value={layoutSizing.minHeight ?? ''}
+									onChange={(e) =>
+										handleInputChange('layoutSizing', {
+											...layoutSizing,
+											minHeight: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0),
+										})
+									}
+									placeholder="None"
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Max H
+								</label>
+								<input
+									type="number"
+									value={layoutSizing.maxHeight ?? ''}
+									onChange={(e) =>
+										handleInputChange('layoutSizing', {
+											...layoutSizing,
+											maxHeight: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0),
+										})
+									}
+									placeholder="None"
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+						</div>
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginTop: spacing.sm }}>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Align In Parent
+								</label>
+								<select className="gal-select-field" value={selectedNode.layoutAlign ?? 'auto'}
+									onChange={(e) => handleInputChange('layoutAlign', e.target.value)}
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								>
+									<option value="auto">Auto</option>
+									<option value="start">Start</option>
+									<option value="center">Center</option>
+									<option value="end">End</option>
+									<option value="stretch">Stretch</option>
+								</select>
+							</div>
+							<div style={{ display: 'flex', alignItems: 'flex-end' }}>
+								<label
+									style={{
+										display: 'flex',
+										alignItems: 'center',
+										gap: spacing.xs,
+										fontSize: typography.fontSize.xs,
+										color: colors.text.secondary,
+										paddingBottom: spacing.xs,
+									}}
+								>
+									<input
+										type="checkbox"
+										checked={selectedNode.layoutAbsolute === true}
+										onChange={(e) => handleInputChange('layoutAbsolute', e.target.checked)}
+									/>
+									Absolute Position
+								</label>
 							</div>
 						</div>
 					</div>
@@ -3636,6 +3851,93 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								}}
 							/>
 						</div>
+					</div>
+
+					<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
+						<div>
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								List
+							</label>
+							<select className="gal-select-field" value={selectedNode.textListType ?? 'none'}
+								onChange={(e) => handleInputChange('textListType', e.target.value)}
+								style={{
+									width: '100%',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
+								}}
+							>
+								<option value="none">None</option>
+								<option value="bullet">Bulleted</option>
+								<option value="numbered">Numbered</option>
+							</select>
+						</div>
+						<div>
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								Paragraph Gap
+							</label>
+							<input
+								type="number"
+								min={0}
+								value={safeNumber(selectedNode.paragraphSpacingPx, 0)}
+								onChange={(e) => handleInputChange('paragraphSpacingPx', Math.max(0, Number(e.target.value) || 0))}
+								style={{
+									width: '100%',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
+								}}
+							/>
+						</div>
+					</div>
+
+					<div style={{ marginBottom: spacing.sm }}>
+						<label
+							style={{
+								display: 'block',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								marginBottom: '4px',
+							}}
+						>
+							Overflow
+						</label>
+						<select className="gal-select-field" value={selectedNode.textOverflowMode ?? 'clip'}
+							onChange={(e) => handleInputChange('textOverflowMode', e.target.value)}
+							style={{
+								width: '100%',
+								padding: spacing.xs,
+								border: `1px solid ${colors.border.default}`,
+								borderRadius: radii.sm,
+								fontSize: typography.fontSize.md,
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.primary,
+							}}
+						>
+							<option value="clip">Clip</option>
+							<option value="ellipsis">Ellipsis</option>
+							<option value="visible">Visible</option>
+						</select>
 					</div>
 
 					<div style={{ marginBottom: spacing.sm }}>

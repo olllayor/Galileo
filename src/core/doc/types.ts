@@ -303,6 +303,7 @@ export type ImageOutline = z.infer<typeof imageOutlineSchema>;
 export const layoutSchema = z.object({
 	type: z.literal('auto'),
 	direction: z.enum(['row', 'column']),
+	wrap: z.enum(['nowrap', 'wrap']).optional(),
 	gap: z.number(),
 	padding: z.object({
 		top: z.number(),
@@ -310,7 +311,7 @@ export const layoutSchema = z.object({
 		bottom: z.number(),
 		left: z.number(),
 	}),
-	alignment: z.enum(['start', 'center', 'end']),
+	alignment: z.enum(['start', 'center', 'end', 'space-between']),
 	crossAlignment: z.enum(['start', 'center', 'end', 'stretch']).optional(),
 });
 
@@ -319,18 +320,39 @@ export type Layout = z.infer<typeof layoutSchema>;
 export const layoutSizingSchema = z.object({
 	horizontal: z.enum(['fixed', 'hug', 'fill']),
 	vertical: z.enum(['fixed', 'hug', 'fill']),
+	minWidth: z.number().min(0).optional(),
+	maxWidth: z.number().min(0).optional(),
+	minHeight: z.number().min(0).optional(),
+	maxHeight: z.number().min(0).optional(),
 });
 
 export type LayoutSizing = z.infer<typeof layoutSizingSchema>;
 
 export const textAlignSchema = z.enum(['left', 'center', 'right']);
 export const textResizeModeSchema = z.enum(['auto-width', 'auto-height', 'fixed']);
+export const textListTypeSchema = z.enum(['none', 'bullet', 'numbered']);
+export const textOverflowModeSchema = z.enum(['clip', 'ellipsis', 'visible']);
+export const textSpanSchema = z.object({
+	start: z.number().int().min(0),
+	end: z.number().int().min(0),
+	fill: colorSchema.optional(),
+	fontSize: z.number().optional(),
+	fontFamily: z.string().optional(),
+	fontWeight: z.enum(['normal', 'bold', '500', '600']).optional(),
+	textAlign: textAlignSchema.optional(),
+	lineHeightPx: z.number().optional(),
+	letterSpacingPx: z.number().optional(),
+	textStyleId: z.string().optional(),
+});
 
 export type TextAlign = z.infer<typeof textAlignSchema>;
 export type TextResizeMode = z.infer<typeof textResizeModeSchema>;
+export type TextListType = z.infer<typeof textListTypeSchema>;
+export type TextOverflowMode = z.infer<typeof textOverflowModeSchema>;
+export type TextSpan = z.infer<typeof textSpanSchema>;
 
-export const constraintAxisXSchema = z.enum(['left', 'right', 'left-right', 'center']);
-export const constraintAxisYSchema = z.enum(['top', 'bottom', 'top-bottom', 'center']);
+export const constraintAxisXSchema = z.enum(['left', 'right', 'left-right', 'center', 'scale']);
+export const constraintAxisYSchema = z.enum(['top', 'bottom', 'top-bottom', 'center', 'scale']);
 export const constraintsSchema = z.object({
 	horizontal: constraintAxisXSchema,
 	vertical: constraintAxisYSchema,
@@ -557,6 +579,7 @@ const nodeImageSchema = z
 export const nodeSchema = z.object({
 	id: z.string(),
 	type: z.enum(['frame', 'group', 'rectangle', 'text', 'image', 'componentInstance', 'ellipse', 'path', 'boolean']),
+	shapeKind: z.enum(['line', 'arrow', 'polygon', 'star']).optional(),
 	name: z.string().optional(),
 	children: z.string().array().optional(),
 
@@ -585,6 +608,10 @@ export const nodeSchema = z.object({
 	lineHeightPx: z.number().optional(),
 	letterSpacingPx: z.number().optional(),
 	textResizeMode: textResizeModeSchema.optional(),
+	textListType: textListTypeSchema.optional(),
+	textOverflowMode: textOverflowModeSchema.optional(),
+	paragraphSpacingPx: z.number().min(0).optional(),
+	textSpans: z.array(textSpanSchema).optional(),
 
 	image: nodeImageSchema.optional(),
 
@@ -627,6 +654,8 @@ export const nodeSchema = z.object({
 	layoutGuides: layoutGuideSchema.optional(),
 	gridStyleId: z.string().optional(),
 	layoutSizing: layoutSizingSchema.optional(),
+	layoutAlign: z.enum(['auto', 'start', 'center', 'end', 'stretch']).optional(),
+	layoutAbsolute: z.boolean().optional(),
 });
 
 export type Node = z.infer<typeof nodeSchema>;
@@ -687,14 +716,24 @@ export const prototypeTransitionSchema = z.enum([
 	'slide-down',
 ]);
 
+export const prototypeTriggerSchema = z.enum(['click', 'hover', 'key', 'delay', 'drag']);
+export const prototypeActionSchema = z.enum(['navigate', 'overlay', 'open-link', 'back']);
+
 export const prototypeInteractionSchema = z.object({
-	targetFrameId: z.string(),
+	action: prototypeActionSchema.optional(),
+	targetFrameId: z.string().optional(),
 	transition: prototypeTransitionSchema,
+	key: z.string().optional(),
+	delayMs: z.number().min(0).optional(),
+	url: z.string().optional(),
 });
 
 export const prototypeSourceInteractionsSchema = z.object({
 	click: prototypeInteractionSchema.optional(),
 	hover: prototypeInteractionSchema.optional(),
+	key: prototypeInteractionSchema.optional(),
+	delay: prototypeInteractionSchema.optional(),
+	drag: prototypeInteractionSchema.optional(),
 });
 
 export const prototypePageGraphSchema = z.object({
@@ -712,6 +751,8 @@ export const documentAppearanceSchema = z.object({
 });
 
 export type PrototypeTransition = z.infer<typeof prototypeTransitionSchema>;
+export type PrototypeTrigger = z.infer<typeof prototypeTriggerSchema>;
+export type PrototypeAction = z.infer<typeof prototypeActionSchema>;
 export type PrototypeInteraction = z.infer<typeof prototypeInteractionSchema>;
 export type PrototypeSourceInteractions = z.infer<typeof prototypeSourceInteractionsSchema>;
 export type PrototypePageGraph = z.infer<typeof prototypePageGraphSchema>;
@@ -743,7 +784,7 @@ export const documentSchema = z.object({
 export type Document = z.infer<typeof documentSchema>;
 
 export const createDocument = (): Document => ({
-	version: 12,
+	version: 13,
 	rootId: 'root',
 	pages: [
 		{

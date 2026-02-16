@@ -923,6 +923,8 @@ export class CanvasRenderer {
 				lineHeightPx: command.lineHeightPx,
 				letterSpacingPx: command.letterSpacingPx,
 				textResizeMode: command.textResizeMode,
+				listType: command.listType,
+				paragraphSpacingPx: command.paragraphSpacingPx,
 			},
 			(value) => this.measureTextWithSpacing(ctx, value, command.letterSpacingPx),
 		);
@@ -954,6 +956,29 @@ export class CanvasRenderer {
 		}
 	}
 
+	private truncateLineWithEllipsis(
+		ctx: CanvasRenderingContext2D,
+		text: string,
+		maxWidth: number,
+		letterSpacingPx: number,
+	): string {
+		const ellipsis = '...';
+		if (this.measureTextWithSpacing(ctx, text, letterSpacingPx) <= maxWidth) {
+			return text;
+		}
+		if (this.measureTextWithSpacing(ctx, ellipsis, letterSpacingPx) > maxWidth) {
+			return '';
+		}
+		const glyphs = Array.from(text);
+		for (let i = glyphs.length; i >= 0; i -= 1) {
+			const candidate = `${glyphs.slice(0, i).join('')}${ellipsis}`;
+			if (this.measureTextWithSpacing(ctx, candidate, letterSpacingPx) <= maxWidth) {
+				return candidate;
+			}
+		}
+		return ellipsis;
+	}
+
 	private drawTextWithLayout(
 		ctx: CanvasRenderingContext2D,
 		command: Extract<DrawCommand, { type: 'text' }>,
@@ -968,14 +993,43 @@ export class CanvasRenderer {
 		ctx.font = command.font;
 		ctx.fillStyle = fillStyle;
 		ctx.textBaseline = 'top';
+		const overflowMode = command.overflowMode ?? 'clip';
+		const shouldClipFixed = clipToFixedBounds && command.textResizeMode === 'fixed' && overflowMode !== 'visible';
 
-		if (clipToFixedBounds && command.textResizeMode === 'fixed') {
+		if (shouldClipFixed) {
 			ctx.beginPath();
 			ctx.rect(x, y, command.width, command.height);
 			ctx.clip();
 		}
 
-		for (const line of layout.lines) {
+		let linesToRender = layout.lines;
+		if (command.textResizeMode === 'fixed' && overflowMode === 'ellipsis' && layout.isOverflowing) {
+			const maxVisibleBottom = command.height - layout.paddingY + 0.001;
+			const visibleLines = layout.lines.filter((line) => line.y + layout.lineHeight <= maxVisibleBottom);
+			linesToRender = visibleLines.length > 0 ? visibleLines : layout.lines.slice(0, 1);
+			if (linesToRender.length < layout.lines.length && linesToRender.length > 0) {
+				const lastIndex = linesToRender.length - 1;
+				const lastLine = linesToRender[lastIndex];
+				const truncatedText = this.truncateLineWithEllipsis(ctx, lastLine.text, layout.availableWidth, command.letterSpacingPx);
+				const truncatedWidth = this.measureTextWithSpacing(ctx, truncatedText, command.letterSpacingPx);
+				let truncatedX = layout.paddingX;
+				if (command.textAlign === 'center') {
+					truncatedX = layout.paddingX + (layout.availableWidth - truncatedWidth) / 2;
+				} else if (command.textAlign === 'right') {
+					truncatedX = layout.paddingX + (layout.availableWidth - truncatedWidth);
+				}
+				linesToRender = linesToRender.slice(0, lastIndex).concat([
+					{
+						...lastLine,
+						text: truncatedText,
+						width: truncatedWidth,
+						x: truncatedX,
+					},
+				]);
+			}
+		}
+
+		for (const line of linesToRender) {
 			this.drawTextLine(ctx, line.text, x + line.x, y + line.y, command.letterSpacingPx);
 		}
 

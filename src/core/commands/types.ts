@@ -11,6 +11,7 @@ import type {
 	Node,
 	PaintStyle,
 	PrototypeInteraction,
+	PrototypeTrigger,
 	StyleVariableCollection,
 	StyleVariableToken,
 	TextStyle,
@@ -155,7 +156,7 @@ export interface SetPrototypeInteractionCommand extends BaseCommand {
 	payload: {
 		pageId: string;
 		sourceFrameId: string;
-		trigger: 'click' | 'hover';
+		trigger: PrototypeTrigger;
 		interaction?: PrototypeInteraction;
 	};
 }
