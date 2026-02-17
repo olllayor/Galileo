@@ -7,8 +7,11 @@ import { getHandleScreenRects } from '../interaction/handles';
 import type { SnapGuide } from '../interaction/snapping';
 import { buildDrawList } from '../render/draw-list';
 import type { Document } from '../core/doc/types';
+import type { CollaboratorPresence } from '../collab/types';
+import { CollabOverlay } from './CollabOverlay';
 
 interface CanvasProps {
+	collaborators?: CollaboratorPresence[];
 	width: number;
 	height: number;
 	document: Document;
@@ -57,6 +60,7 @@ export const Canvas: React.FC<CanvasProps> = ({
 	vectorAnchors = [],
 	vectorBezierHandles = [],
 	vectorSegmentPreview = null,
+	collaborators = [],
 	cursor,
 	onMouseLeave,
 	onMouseDown,
@@ -326,6 +330,8 @@ export const Canvas: React.FC<CanvasProps> = ({
 						/>
 					);
 				})}
+
+				<CollabOverlay collaborators={collaborators} view={view} />
 
 				{vectorSegmentPreview && (
 					<div

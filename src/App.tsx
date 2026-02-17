@@ -16,7 +16,7 @@ import { PrototypePanel } from './ui/PrototypePanel';
 import { PrototypeLinksOverlay } from './ui/PrototypeLinksOverlay';
 import { PrototypePlayer } from './ui/PrototypePlayer';
 import { panels } from './ui/design-system';
-import { useDocument } from './hooks/useDocument';
+import { useCollaborativeDocument } from './hooks/useCollaborativeDocument';
 import {
 	createRectangleTool,
 	createEllipseTool,
@@ -37,6 +37,8 @@ import {
 } from './interaction/tools';
 import {
 	ENABLE_BOOLEAN_V1,
+	ENABLE_COLLAB_TEXT_LOCKS_V1,
+	ENABLE_COLLAB_V1,
 	ENABLE_FIGMA_INTEROP_V1,
 	ENABLE_TEXT_PARITY_V1,
 	ENABLE_VECTOR_EDIT_V1,
@@ -1326,7 +1328,19 @@ export const App: React.FC = () => {
 		markSaved,
 		markDirty,
 		isDirty,
-	} = useDocument();
+		collabStatus,
+		collabError,
+		collaborators,
+		roomId: collabRoomId,
+		actorId,
+		shareLink: collabShareLink,
+		createSharedRoom,
+		joinSharedRoomByInvite,
+		leaveSharedRoom,
+		updatePresence,
+		acquireTextEditLock,
+		releaseTextEditLock,
+	} = useCollaborativeDocument();
 	const [activePageId, setActivePageId] = useState<string>(() => document.activePageId);
 	const pageEditorStateRef = useRef<Record<string, PageEditorState>>({});
 
@@ -1433,6 +1447,7 @@ export const App: React.FC = () => {
 	const textEditorRef = useRef<HTMLTextAreaElement | null>(null);
 	const textEditorIsComposingRef = useRef(false);
 	const suppressTextEditorBlurCommitRef = useRef(false);
+	const editingTextLockNodeIdRef = useRef<string | null>(null);
 	const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
 	const clipboardRef = useRef<ClipboardPayload | null>(null);
 	const clipboardPasteCountRef = useRef(0);
@@ -1448,6 +1463,65 @@ export const App: React.FC = () => {
 			setToastMessage(null);
 		}, 2400);
 	}, []);
+
+	const handleShareCollab = useCallback(async () => {
+		if (!ENABLE_COLLAB_V1) return;
+		if (collabStatus === 'connected' && collabShareLink) {
+			try {
+				await navigator.clipboard.writeText(collabShareLink);
+				showToast('Share link copied to clipboard.');
+			} catch {
+				showToast(`Share link: ${collabShareLink}`);
+			}
+			return;
+		}
+		const defaultName = deriveProjectNameFromPath(currentPath ?? 'Untitled');
+		const roomName = globalThis.prompt('Collaboration room name', defaultName) ?? defaultName;
+		const link = await createSharedRoom(roomName);
+		if (!link) {
+			showToast('Failed to create collaboration room.');
+			return;
+		}
+		try {
+			await navigator.clipboard.writeText(link);
+			showToast('Share link copied to clipboard.');
+		} catch {
+			showToast(`Share link: ${link}`);
+		}
+	}, [collabShareLink, collabStatus, createSharedRoom, currentPath, showToast]);
+
+	const handleJoinCollab = useCallback(async () => {
+		if (!ENABLE_COLLAB_V1) return;
+		const inviteToken = globalThis.prompt('Paste invite token or share link');
+		if (!inviteToken) return;
+		const ok = await joinSharedRoomByInvite(inviteToken);
+		if (!ok) {
+			showToast('Failed to join collaboration room.');
+			return;
+		}
+		showToast('Joined collaboration room.');
+	}, [joinSharedRoomByInvite, showToast]);
+
+	const handleLeaveCollab = useCallback(() => {
+		if (!ENABLE_COLLAB_V1) return;
+		leaveSharedRoom();
+		showToast('Left collaboration room.');
+	}, [leaveSharedRoom, showToast]);
+
+	useEffect(() => {
+		if (!collabError) return;
+		showToast(collabError);
+	}, [collabError, showToast]);
+
+	useEffect(() => {
+		if (!ENABLE_COLLAB_V1 || collabStatus !== 'connected') return;
+		updatePresence({
+			selectionIds: selectedIds,
+			viewport: { panX: panOffset.x, panY: panOffset.y, zoom },
+			activeTool,
+			editingTextNodeId: textEditSession?.nodeId,
+		});
+	}, [activeTool, collabStatus, panOffset.x, panOffset.y, selectedIds, textEditSession?.nodeId, updatePresence, zoom]);
 	const isDev = import.meta.env?.DEV ?? false;
 	const emitInteropImportReport = useCallback(
 		(report: InteropImportReport) => {
@@ -1960,8 +2034,9 @@ export const App: React.FC = () => {
 		return null;
 	}, [activeProjectId, projects, currentPath]);
 	const projectName = currentProject?.name ?? (currentPath ? deriveProjectNameFromPath(currentPath) : 'Untitled');
-	const projectWorkspace = currentProject?.workspaceName ?? 'Local';
-	const projectEnv = currentProject?.env ?? 'local';
+	const isCollabConnected = ENABLE_COLLAB_V1 && collabStatus === 'connected' && Boolean(collabRoomId);
+	const projectWorkspace = isCollabConnected ? 'Collab' : (currentProject?.workspaceName ?? 'Local');
+	const projectEnv = isCollabConnected ? 'cloud' : (currentProject?.env ?? 'local');
 	const projectVersion: ProjectVersion = isDirty ? 'draft' : 'live';
 	const projectBreadcrumb = `${projectWorkspace} / ${projectName} / ${fileName}`;
 	const hoverBounds = useMemo(() => {
@@ -4642,7 +4717,7 @@ export const App: React.FC = () => {
 	]);
 
 	const startTextEditing = useCallback(
-		(
+		async (
 			nodeId: string,
 			options?: {
 				isNewNode?: boolean;
@@ -4655,6 +4730,17 @@ export const App: React.FC = () => {
 			const node = document.nodes[nodeId];
 			if (node && (node.type !== 'text' || node.locked === true)) {
 				return;
+			}
+			if (ENABLE_COLLAB_TEXT_LOCKS_V1 && ENABLE_COLLAB_V1 && collabStatus === 'connected') {
+				const lock = await acquireTextEditLock(nodeId, 8000);
+				if (!lock.ok) {
+					showToast('This text layer is being edited by another collaborator.');
+					return;
+				}
+				if (editingTextLockNodeIdRef.current && editingTextLockNodeIdRef.current !== nodeId) {
+					void releaseTextEditLock(editingTextLockNodeIdRef.current);
+				}
+				editingTextLockNodeIdRef.current = nodeId;
 			}
 
 			const baseInitialText = typeof options?.initialText === 'string' ? options.initialText : node?.text ?? '';
@@ -4672,7 +4758,7 @@ export const App: React.FC = () => {
 			setSelection([nodeId]);
 			setActiveTool('select');
 		},
-		[document, setSelection],
+		[acquireTextEditLock, collabStatus, document, releaseTextEditLock, setSelection, showToast],
 	);
 
 	const createTextNodeAndStartEditing = useCallback(
@@ -5529,6 +5615,12 @@ export const App: React.FC = () => {
 	const handleCanvasMouseMove = useCallback(
 		(info: CanvasPointerInfo) => {
 			const { worldX, worldY, screenX, screenY } = info;
+			if (ENABLE_COLLAB_V1 && collabStatus === 'connected') {
+				updatePresence({
+					cursor: { x: worldX, y: worldY },
+					selectionIds,
+				});
+			}
 
 			if (textCreationDragState?.active) {
 				setTextCreationDragState((current) =>
@@ -5853,6 +5945,7 @@ export const App: React.FC = () => {
 		[
 			activeTool,
 			boundsMap,
+			collabStatus,
 			document,
 			documentParentMap,
 			dragState,
@@ -5870,6 +5963,7 @@ export const App: React.FC = () => {
 			setSelection,
 			snapDisabled,
 			transformSession,
+			updatePresence,
 			vectorAnchors,
 			vectorBezierHandles,
 			vectorHover,
@@ -6620,6 +6714,10 @@ export const App: React.FC = () => {
 		const node = document.nodes[session.nodeId];
 		textEditorIsComposingRef.current = false;
 		setTextEditSession(null);
+		if (editingTextLockNodeIdRef.current) {
+			void releaseTextEditLock(editingTextLockNodeIdRef.current);
+			editingTextLockNodeIdRef.current = null;
+		}
 		if (!node || node.type !== 'text') {
 			return;
 		}
@@ -6642,7 +6740,7 @@ export const App: React.FC = () => {
 		if (nextText !== (node.text ?? '')) {
 			handleUpdateNode(node.id, { text: nextText });
 		}
-	}, [document, executeCommand, handleUpdateNode, setSelection, textEditSession]);
+	}, [document, executeCommand, handleUpdateNode, releaseTextEditLock, setSelection, textEditSession]);
 
 	const cancelTextEditing = useCallback(() => {
 		if (!ENABLE_TEXT_PARITY_V1 || !textEditSession) return;
@@ -6650,6 +6748,10 @@ export const App: React.FC = () => {
 		const node = document.nodes[session.nodeId];
 		textEditorIsComposingRef.current = false;
 		setTextEditSession(null);
+		if (editingTextLockNodeIdRef.current) {
+			void releaseTextEditLock(editingTextLockNodeIdRef.current);
+			editingTextLockNodeIdRef.current = null;
+		}
 		if (session.isNewNode && node) {
 			executeCommand({
 				id: generateId(),
@@ -6661,7 +6763,7 @@ export const App: React.FC = () => {
 			} as Command);
 			setSelection([]);
 		}
-	}, [document, executeCommand, setSelection, textEditSession]);
+	}, [document, executeCommand, releaseTextEditLock, setSelection, textEditSession]);
 
 	const handleRenameNode = useCallback(
 		(id: string, name?: string) => {
@@ -9306,6 +9408,7 @@ export const App: React.FC = () => {
 								width={canvasSize.width}
 								height={canvasSize.height}
 								document={displayDocument}
+								collaborators={collaborators.filter((entry) => entry.actorId !== actorId)}
 								boundsMap={boundsMap}
 								view={view}
 								selectionBounds={canvasSelectionBounds}
@@ -9327,6 +9430,9 @@ export const App: React.FC = () => {
 									setHoverHandle(null);
 									setHoverHit(null);
 									setVectorHover(null);
+									if (ENABLE_COLLAB_V1 && collabStatus === 'connected') {
+										updatePresence({ cursor: undefined, selectionIds });
+									}
 								}}
 								onMouseDown={handleCanvasMouseDown}
 								onMouseMove={handleCanvasMouseMove}
@@ -9443,6 +9549,10 @@ export const App: React.FC = () => {
 								onImport={handleImportImage}
 								onImportFigma={ENABLE_FIGMA_INTEROP_V1 ? handleOpenFigmaImport : undefined}
 								onCreateDeviceFrame={handleCreateDeviceFrame}
+								collabStatus={collabStatus}
+								onShareCollab={ENABLE_COLLAB_V1 ? handleShareCollab : undefined}
+								onJoinCollab={ENABLE_COLLAB_V1 ? handleJoinCollab : undefined}
+								onLeaveCollab={ENABLE_COLLAB_V1 ? handleLeaveCollab : undefined}
 							/>
 						</div>
 
