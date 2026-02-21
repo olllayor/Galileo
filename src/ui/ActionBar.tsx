@@ -24,10 +24,6 @@ interface ActionBarProps {
 	onImport?: () => void;
 	onImportFigma?: () => void;
 	onCreateDeviceFrame?: (preset: DevicePreset) => void;
-	collabStatus?: 'disabled' | 'local' | 'connecting' | 'connected' | 'reconnecting' | 'error';
-	onShareCollab?: () => void;
-	onJoinCollab?: () => void;
-	onLeaveCollab?: () => void;
 }
 
 const SHAPE_TOOL_IDS = ['rectangle', 'line', 'arrow', 'ellipse', 'polygon', 'star'] as const;
@@ -43,10 +39,6 @@ export const ActionBar: React.FC<ActionBarProps> = ({
 	onImport,
 	onImportFigma,
 	onCreateDeviceFrame,
-	collabStatus = 'disabled',
-	onShareCollab,
-	onJoinCollab,
-	onLeaveCollab,
 }) => {
 	const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
 	const [lastShapeTool, setLastShapeTool] = useState<ShapeToolId>('rectangle');
@@ -669,89 +661,6 @@ export const ActionBar: React.FC<ActionBarProps> = ({
 				>
 					F
 				</button>
-			)}
-
-			{(onShareCollab || onJoinCollab || onLeaveCollab) && (
-				<>
-					<div
-						style={{
-							width: '1px',
-							height: '26px',
-							backgroundColor: 'rgba(255, 255, 255, 0.15)',
-							margin: '0 5px',
-						}}
-					/>
-					{collabStatus === 'connected' ? (
-						<button
-							type="button"
-							onClick={onLeaveCollab}
-							title="Leave collaboration room"
-							style={{
-								...actionButtonBaseStyle,
-								width: '54px',
-								backgroundColor: 'rgba(255, 255, 255, 0.08)',
-								color: '#ffd6d6',
-								fontSize: '12px',
-								fontWeight: 700,
-								fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
-							}}
-						>
-							Leave
-						</button>
-					) : (
-						<>
-							<button
-								type="button"
-								onClick={onShareCollab}
-								title="Create share link"
-								style={{
-									...actionButtonBaseStyle,
-									width: '54px',
-									backgroundColor: 'rgba(74, 158, 255, 0.2)',
-									color: '#9ec9ff',
-									fontSize: '12px',
-									fontWeight: 700,
-									fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
-								}}
-							>
-								Share
-							</button>
-							<button
-								type="button"
-								onClick={onJoinCollab}
-								title="Join by invite token"
-								style={{
-									...actionButtonBaseStyle,
-									width: '44px',
-									backgroundColor: 'rgba(255, 255, 255, 0.06)',
-									color: 'rgba(255, 255, 255, 0.8)',
-									fontSize: '12px',
-									fontWeight: 700,
-									fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
-								}}
-							>
-								Join
-							</button>
-						</>
-					)}
-					<div
-						title={`Collab: ${collabStatus}`}
-						style={{
-							width: 8,
-							height: 8,
-							borderRadius: '50%',
-							marginLeft: 6,
-							backgroundColor:
-								collabStatus === 'connected'
-									? '#2de3a6'
-									: collabStatus === 'connecting' || collabStatus === 'reconnecting'
-										? '#ffd166'
-										: collabStatus === 'error'
-											? '#ff6b6b'
-											: 'rgba(255, 255, 255, 0.4)',
-						}}
-					/>
-				</>
 			)}
 		</div>
 	);

@@ -15,7 +15,7 @@ import { CommandPalette, type CommandPaletteItem } from './ui/CommandPalette';
 import { PrototypePanel } from './ui/PrototypePanel';
 import { PrototypeLinksOverlay } from './ui/PrototypeLinksOverlay';
 import { PrototypePlayer } from './ui/PrototypePlayer';
-import { panels } from './ui/design-system';
+import { panels, colors } from './ui/design-system';
 import { useCollaborativeDocument } from './hooks/useCollaborativeDocument';
 import {
 	createRectangleTool,
@@ -168,6 +168,10 @@ import { importFromFigma, parseFigmaFileKey, parseNodeIds } from './interop/figm
 import { buildDataUrl, parseDataUrl } from './interop/utils/data-url';
 import type { InteropImportReport } from './interop/types';
 import { FigmaImportModal, type FigmaImportFormValues } from './ui/FigmaImportModal';
+import { ShareModal } from './ui/ShareModal';
+import { JoinModal } from './ui/JoinModal';
+import { CollaboratorAvatars } from './ui/CollaboratorAvatars';
+import { SharePanel } from './ui/SharePanel';
 
 const clamp = (value: number, min: number, max: number): number => {
 	return Math.min(max, Math.max(min, value));
@@ -185,6 +189,8 @@ const LEGACY_AUTOSAVE_KEY = 'galileo.autosave.v1';
 const UNTITLED_DRAFT_KEY = 'untitled';
 const AUTOSAVE_DELAY_MS = 1500;
 const ZOOM_SENSITIVITY = 0.0035;
+const ZOOM_MIN = 0.01;
+const ZOOM_MAX = 64;
 const DEFAULT_CANVAS_SIZE = { width: 1280, height: 800 } as const;
 const DEFAULT_IMAGE_OUTLINE = {
 	color: '#ffffff',
@@ -1336,7 +1342,6 @@ export const App: React.FC = () => {
 		shareLink: collabShareLink,
 		createSharedRoom,
 		joinSharedRoomByInvite,
-		leaveSharedRoom,
 		updatePresence,
 		acquireTextEditLock,
 		releaseTextEditLock,
@@ -1401,6 +1406,11 @@ export const App: React.FC = () => {
 		token: '',
 		importToNewPage: true,
 	});
+	const [shareModalOpen, setShareModalOpen] = useState(false);
+	const [joinModalOpen, setJoinModalOpen] = useState(false);
+	const [joinModalError, setJoinModalError] = useState<string | null>(null);
+	const [isCreatingRoom, setIsCreatingRoom] = useState(false);
+	const [isJoiningRoom, setIsJoiningRoom] = useState(false);
 	const [isRemovingBackground, setIsRemovingBackground] = useState(false);
 	const [leftPanelCollapsed, setLeftPanelCollapsed] = useState<boolean>(() => {
 		const stored = localStorage.getItem('galileo.ui.leftPanelCollapsed');
@@ -1464,49 +1474,48 @@ export const App: React.FC = () => {
 		}, 2400);
 	}, []);
 
-	const handleShareCollab = useCallback(async () => {
+	const handleShareCollab = useCallback(() => {
 		if (!ENABLE_COLLAB_V1) return;
-		if (collabStatus === 'connected' && collabShareLink) {
-			try {
-				await navigator.clipboard.writeText(collabShareLink);
-				showToast('Share link copied to clipboard.');
-			} catch {
-				showToast(`Share link: ${collabShareLink}`);
+		setShareModalOpen(true);
+	}, []);
+
+	const handleCreateRoom = useCallback(
+		async (name: string) => {
+			if (!ENABLE_COLLAB_V1) return;
+			setIsCreatingRoom(true);
+			const link = await createSharedRoom(name);
+			setIsCreatingRoom(false);
+			if (!link) {
+				showToast('Failed to create collaboration room.');
+				return;
 			}
-			return;
-		}
-		const defaultName = deriveProjectNameFromPath(currentPath ?? 'Untitled');
-		const roomName = globalThis.prompt('Collaboration room name', defaultName) ?? defaultName;
-		const link = await createSharedRoom(roomName);
-		if (!link) {
-			showToast('Failed to create collaboration room.');
-			return;
-		}
-		try {
-			await navigator.clipboard.writeText(link);
 			showToast('Share link copied to clipboard.');
-		} catch {
-			showToast(`Share link: ${link}`);
-		}
-	}, [collabShareLink, collabStatus, createSharedRoom, currentPath, showToast]);
+		},
+		[createSharedRoom, showToast],
+	);
 
-	const handleJoinCollab = useCallback(async () => {
+	const handleJoinCollab = useCallback(() => {
 		if (!ENABLE_COLLAB_V1) return;
-		const inviteToken = globalThis.prompt('Paste invite token or share link');
-		if (!inviteToken) return;
-		const ok = await joinSharedRoomByInvite(inviteToken);
-		if (!ok) {
-			showToast('Failed to join collaboration room.');
-			return;
-		}
-		showToast('Joined collaboration room.');
-	}, [joinSharedRoomByInvite, showToast]);
+		setJoinModalError(null);
+		setJoinModalOpen(true);
+	}, []);
 
-	const handleLeaveCollab = useCallback(() => {
-		if (!ENABLE_COLLAB_V1) return;
-		leaveSharedRoom();
-		showToast('Left collaboration room.');
-	}, [leaveSharedRoom, showToast]);
+	const handleJoinRoom = useCallback(
+		async (inviteToken: string) => {
+			if (!ENABLE_COLLAB_V1) return;
+			setIsJoiningRoom(true);
+			setJoinModalError(null);
+			const ok = await joinSharedRoomByInvite(inviteToken);
+			setIsJoiningRoom(false);
+			if (!ok) {
+				setJoinModalError('Failed to join collaboration room. Please check the invite token.');
+				return;
+			}
+			setJoinModalOpen(false);
+			showToast('Joined collaboration room.');
+		},
+		[joinSharedRoomByInvite, showToast],
+	);
 
 	useEffect(() => {
 		if (!collabError) return;
@@ -6401,7 +6410,7 @@ export const App: React.FC = () => {
 		if (info.ctrlKey || info.metaKey) {
 			const zoomFactor = Math.exp(-info.deltaY * ZOOM_SENSITIVITY);
 			setZoom((prevZoom) => {
-				const nextZoom = clamp(prevZoom * zoomFactor, 0.2, 6);
+				const nextZoom = clamp(prevZoom * zoomFactor, ZOOM_MIN, ZOOM_MAX);
 				setPanOffset({
 					x: info.screenX - info.worldX * nextZoom,
 					y: info.screenY - info.worldY * nextZoom,
@@ -6416,6 +6425,134 @@ export const App: React.FC = () => {
 			y: prev.y - info.deltaY,
 		}));
 	}, []);
+
+	const zoomAtPoint = useCallback((factor: number, screenX?: number, screenY?: number) => {
+		const centerX = screenX ?? canvasSize.width / 2;
+		const centerY = screenY ?? canvasSize.height / 2;
+		const worldX = (centerX - panOffset.x) / (zoom || 1);
+		const worldY = (centerY - panOffset.y) / (zoom || 1);
+
+		setZoom((prevZoom) => {
+			const nextZoom = clamp(prevZoom * factor, ZOOM_MIN, ZOOM_MAX);
+			setPanOffset({
+				x: centerX - worldX * nextZoom,
+				y: centerY - worldY * nextZoom,
+			});
+			return nextZoom;
+		});
+	}, [canvasSize.width, canvasSize.height, panOffset.x, panOffset.y, zoom]);
+
+	const handleZoomIn = useCallback(() => {
+		zoomAtPoint(1.25);
+	}, [zoomAtPoint]);
+
+	const handleZoomOut = useCallback(() => {
+		zoomAtPoint(0.8);
+	}, [zoomAtPoint]);
+
+	const handleZoomTo = useCallback((targetZoom: number) => {
+		const centerX = canvasSize.width / 2;
+		const centerY = canvasSize.height / 2;
+		const worldX = (centerX - panOffset.x) / (zoom || 1);
+		const worldY = (centerY - panOffset.y) / (zoom || 1);
+
+		const nextZoom = clamp(targetZoom, ZOOM_MIN, ZOOM_MAX);
+		setPanOffset({
+			x: centerX - worldX * nextZoom,
+			y: centerY - worldY * nextZoom,
+		});
+		setZoom(nextZoom);
+	}, [canvasSize.width, canvasSize.height, panOffset.x, panOffset.y, zoom]);
+
+	const handleZoomToFit = useCallback(() => {
+		const nodes = Object.values(document.nodes);
+		if (nodes.length === 0) {
+			handleZoomTo(1);
+			return;
+		}
+
+		let minX = Infinity;
+		let minY = Infinity;
+		let maxX = -Infinity;
+		let maxY = -Infinity;
+
+		for (const node of nodes) {
+			if (!node.position || !node.size) continue;
+			const x = node.position.x;
+			const y = node.position.y;
+			minX = Math.min(minX, x);
+			minY = Math.min(minY, y);
+			maxX = Math.max(maxX, x + node.size.width);
+			maxY = Math.max(maxY, y + node.size.height);
+		}
+
+		if (!isFinite(minX)) {
+			handleZoomTo(1);
+			return;
+		}
+
+		const contentWidth = maxX - minX;
+		const contentHeight = maxY - minY;
+		const padding = 60;
+
+		const scaleX = (canvasSize.width - padding * 2) / (contentWidth || 1);
+		const scaleY = (canvasSize.height - padding * 2) / (contentHeight || 1);
+		const targetZoom = clamp(Math.min(scaleX, scaleY), ZOOM_MIN, ZOOM_MAX);
+
+		const centerX = minX + contentWidth / 2;
+		const centerY = minY + contentHeight / 2;
+
+		setZoom(targetZoom);
+		setPanOffset({
+			x: canvasSize.width / 2 - centerX * targetZoom,
+			y: canvasSize.height / 2 - centerY * targetZoom,
+		});
+	}, [document.nodes, canvasSize.width, canvasSize.height, handleZoomTo]);
+
+	const handleZoomToSelection = useCallback(() => {
+		if (selectionIds.length === 0) {
+			handleZoomToFit();
+			return;
+		}
+
+		let minX = Infinity;
+		let minY = Infinity;
+		let maxX = -Infinity;
+		let maxY = -Infinity;
+
+		for (const id of selectionIds) {
+			const node = document.nodes[id];
+			if (!node) continue;
+			const x = node.position.x;
+			const y = node.position.y;
+			minX = Math.min(minX, x);
+			minY = Math.min(minY, y);
+			maxX = Math.max(maxX, x + node.size.width);
+			maxY = Math.max(maxY, y + node.size.height);
+		}
+
+		if (!isFinite(minX)) {
+			handleZoomToFit();
+			return;
+		}
+
+		const contentWidth = maxX - minX;
+		const contentHeight = maxY - minY;
+		const padding = 80;
+
+		const scaleX = (canvasSize.width - padding * 2) / (contentWidth || 1);
+		const scaleY = (canvasSize.height - padding * 2) / (contentHeight || 1);
+		const targetZoom = clamp(Math.min(scaleX, scaleY), ZOOM_MIN, ZOOM_MAX);
+
+		const centerX = minX + contentWidth / 2;
+		const centerY = minY + contentHeight / 2;
+
+		setZoom(targetZoom);
+		setPanOffset({
+			x: canvasSize.width / 2 - centerX * targetZoom,
+			y: canvasSize.height / 2 - centerY * targetZoom,
+		});
+	}, [selectionIds, document.nodes, canvasSize.width, canvasSize.height, handleZoomToFit]);
 
 	const handleUpdateNode = useCallback(
 		(id: string, updates: Record<string, unknown>) => {
@@ -9051,6 +9188,35 @@ export const App: React.FC = () => {
 				e.preventDefault();
 				handleImportImage();
 			}
+
+			// Zoom shortcuts
+			if (!editable) {
+				if (isCmd && (key === '=' || key === '+' || e.code === 'Equal')) {
+					e.preventDefault();
+					handleZoomIn();
+					return;
+				}
+				if (isCmd && (key === '-' || e.code === 'Minus')) {
+					e.preventDefault();
+					handleZoomOut();
+					return;
+				}
+				if (isCmd && key === '0') {
+					e.preventDefault();
+					handleZoomTo(1);
+					return;
+				}
+				if (isCmd && key === '1') {
+					e.preventDefault();
+					handleZoomToFit();
+					return;
+				}
+				if (isCmd && key === '2') {
+					e.preventDefault();
+					handleZoomToSelection();
+					return;
+				}
+			}
 		};
 
 		const handleKeyUp = (e: KeyboardEvent) => {
@@ -9119,6 +9285,11 @@ export const App: React.FC = () => {
 		penSession,
 		vectorEditSession,
 		setTextCreationDragState,
+		handleZoomIn,
+		handleZoomOut,
+		handleZoomTo,
+		handleZoomToFit,
+		handleZoomToSelection,
 	]);
 
 	// Persist panel collapse state
@@ -9182,6 +9353,53 @@ export const App: React.FC = () => {
 				shortcut: 'Cmd+W',
 				action: handleBackToProjects,
 			});
+			items.push({
+				id: 'command-zoom-in',
+				label: 'Zoom In',
+				section: 'View',
+				shortcut: 'Cmd++',
+				action: handleZoomIn,
+			});
+			items.push({
+				id: 'command-zoom-out',
+				label: 'Zoom Out',
+				section: 'View',
+				shortcut: 'Cmd+-',
+				action: handleZoomOut,
+			});
+			items.push({
+				id: 'command-zoom-100',
+				label: 'Zoom to 100%',
+				section: 'View',
+				shortcut: 'Cmd+0',
+				action: () => handleZoomTo(1),
+			});
+			items.push({
+				id: 'command-zoom-fit',
+				label: 'Zoom to Fit',
+				section: 'View',
+				shortcut: 'Cmd+1',
+				action: handleZoomToFit,
+			});
+			items.push({
+				id: 'command-zoom-selection',
+				label: 'Zoom to Selection',
+				section: 'View',
+				shortcut: 'Cmd+2',
+				action: handleZoomToSelection,
+			});
+			items.push({
+				id: 'command-zoom-200',
+				label: 'Zoom to 200%',
+				section: 'View',
+				action: () => handleZoomTo(2),
+			});
+			items.push({
+				id: 'command-zoom-50',
+				label: 'Zoom to 50%',
+				section: 'View',
+				action: () => handleZoomTo(0.5),
+			});
 			if (ENABLE_FIGMA_INTEROP_V1) {
 				items.push({
 					id: 'command-import-figma',
@@ -9232,6 +9450,11 @@ export const App: React.FC = () => {
 		handleOpenProject,
 		missingPaths,
 		projects,
+		handleZoomIn,
+		handleZoomOut,
+		handleZoomTo,
+		handleZoomToFit,
+		handleZoomToSelection,
 	]);
 
 	return (
@@ -9549,10 +9772,6 @@ export const App: React.FC = () => {
 								onImport={handleImportImage}
 								onImportFigma={ENABLE_FIGMA_INTEROP_V1 ? handleOpenFigmaImport : undefined}
 								onCreateDeviceFrame={handleCreateDeviceFrame}
-								collabStatus={collabStatus}
-								onShareCollab={ENABLE_COLLAB_V1 ? handleShareCollab : undefined}
-								onJoinCollab={ENABLE_COLLAB_V1 ? handleJoinCollab : undefined}
-								onLeaveCollab={ENABLE_COLLAB_V1 ? handleLeaveCollab : undefined}
 							/>
 						</div>
 
@@ -9598,6 +9817,27 @@ export const App: React.FC = () => {
 							</div>
 						)}
 
+						<div
+							style={{
+								display: 'flex',
+								flexDirection: 'column',
+								width: rightPanelWidth,
+								height: '100%',
+								flexShrink: 0,
+								backgroundColor: colors.bg.secondary,
+							}}
+						>
+							{ENABLE_COLLAB_V1 && (
+								<SharePanel
+									collabStatus={collabStatus}
+									collaborators={collaborators}
+									currentActorId={actorId}
+									roomName={deriveProjectNameFromPath(currentPath ?? 'Untitled')}
+									onOpenShareModal={handleShareCollab}
+									onOpenJoinModal={handleJoinCollab}
+								/>
+							)}
+							<div style={{ flex: 1, overflow: 'hidden' }}>
 						{editorMode === 'prototype' ? (
 							<PrototypePanel
 								pageId={activePageId}
@@ -9628,6 +9868,9 @@ export const App: React.FC = () => {
 								onUpdateImageOutline={updateImageOutline}
 								isRemovingBackground={isRemovingBackground}
 								zoom={zoom}
+								onZoomTo={handleZoomTo}
+								onZoomToFit={handleZoomToFit}
+								onZoomToSelection={handleZoomToSelection}
 								onCopyEffects={(nodeId) => copyEffects(nodeId)}
 								onPasteEffects={(nodeId) => pasteEffects([nodeId])}
 								canPasteEffects={Boolean(effectsClipboardRef.current?.length)}
@@ -9655,6 +9898,8 @@ export const App: React.FC = () => {
 								onToggleVectorClosed={toggleVectorClosed}
 							/>
 						)}
+							</div>
+						</div>
 					</div>
 				</>
 			)}
@@ -9692,6 +9937,34 @@ export const App: React.FC = () => {
 					isImporting={figmaImportBusy}
 					errorMessage={figmaImportError}
 				/>
+			)}
+
+			{ENABLE_COLLAB_V1 && (
+				<>
+					<ShareModal
+						open={shareModalOpen}
+						onClose={() => setShareModalOpen(false)}
+						roomName={deriveProjectNameFromPath(currentPath ?? 'Untitled')}
+						shareLink={collabShareLink}
+						collaborators={collaborators}
+						currentActorId={actorId}
+						isCreating={isCreatingRoom}
+						onCreateRoom={handleCreateRoom}
+					/>
+					<JoinModal
+						open={joinModalOpen}
+						onClose={() => {
+							setJoinModalOpen(false);
+							setJoinModalError(null);
+						}}
+						onJoin={handleJoinRoom}
+						isJoining={isJoiningRoom}
+						error={joinModalError}
+					/>
+					{collabStatus === 'connected' && (
+						<CollaboratorAvatars collaborators={collaborators} currentActorId={actorId} />
+					)}
+				</>
 			)}
 
 			<CommandPalette

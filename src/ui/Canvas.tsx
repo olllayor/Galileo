@@ -331,7 +331,7 @@ export const Canvas: React.FC<CanvasProps> = ({
 					);
 				})}
 
-				<CollabOverlay collaborators={collaborators} view={view} />
+				<CollabOverlay collaborators={collaborators} view={view} boundsMap={boundsMap} />
 
 				{vectorSegmentPreview && (
 					<div

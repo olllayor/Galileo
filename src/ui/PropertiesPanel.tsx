@@ -54,6 +54,9 @@ interface PropertiesPanelProps {
 	onUpdateImageOutline?: (id: string, updates: Partial<ImageOutline>) => void | Promise<void>;
 	isRemovingBackground?: boolean;
 	zoom?: number;
+	onZoomTo?: (zoom: number) => void;
+	onZoomToFit?: () => void;
+	onZoomToSelection?: () => void;
 	onCopyEffects?: (nodeId: string) => void;
 	onPasteEffects?: (nodeId: string) => void;
 	canPasteEffects?: boolean;
@@ -178,6 +181,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	onUpdateImageOutline,
 	isRemovingBackground = false,
 	zoom = 1,
+	onZoomTo,
+	onZoomToFit,
+	onZoomToSelection,
 	onCopyEffects,
 	onPasteEffects,
 	canPasteEffects = false,
@@ -193,10 +199,27 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	onUpdateDocumentAppearance,
 	onPickImageAssetForPaint,
 }) => {
-	const [draggedEffectIndex, setDraggedEffectIndex] = React.useState<number | null>(null);
+		const [draggedEffectIndex, setDraggedEffectIndex] = React.useState<number | null>(null);
 	const [fontPickerOpen, setFontPickerOpen] = React.useState(false);
 	const [fontPickerAnchorRect, setFontPickerAnchorRect] = React.useState<DOMRect | null>(null);
 	const fontPickerTriggerRef = React.useRef<HTMLButtonElement | null>(null);
+	const [zoomDropdownOpen, setZoomDropdownOpen] = React.useState(false);
+	const zoomDropdownRef = React.useRef<HTMLDivElement | null>(null);
+
+	const zoomPresets = [
+		{ label: '6400%', value: 64 },
+		{ label: '3200%', value: 32 },
+		{ label: '1600%', value: 16 },
+		{ label: '800%', value: 8 },
+		{ label: '400%', value: 4 },
+		{ label: '200%', value: 2 },
+		{ label: '100%', value: 1 },
+		{ label: '50%', value: 0.5 },
+		{ label: '25%', value: 0.25 },
+		{ label: '10%', value: 0.1 },
+		{ label: 'Fit', value: 'fit' as const },
+		{ label: 'Selection', value: 'selection' as const },
+	];
 
 	React.useEffect(() => {
 		if (selectedNode?.type !== 'text' && fontPickerOpen) {
@@ -217,6 +240,17 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 			window.removeEventListener('scroll', updateAnchor, true);
 		};
 	}, [fontPickerOpen]);
+
+	React.useEffect(() => {
+		if (!zoomDropdownOpen) return;
+		const handleClickOutside = (e: MouseEvent) => {
+			if (zoomDropdownRef.current && !zoomDropdownRef.current.contains(e.target as globalThis.Node)) {
+				setZoomDropdownOpen(false);
+			}
+		};
+		globalThis.document.addEventListener('mousedown', handleClickOutside);
+		return () => globalThis.document.removeEventListener('mousedown', handleClickOutside);
+	}, [zoomDropdownOpen]);
 
 	// Collapsed rail mode
 	if (collapsed) {
@@ -602,15 +636,84 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					>
 						Design
 					</span>
-					<span
-						style={{
-							fontSize: typography.fontSize.xs,
-							color: colors.text.tertiary,
-							fontFamily: typography.fontFamily.mono,
-						}}
-					>
-						{Math.round(zoom * 100)}%
-					</span>
+					<div ref={zoomDropdownRef} style={{ position: 'relative' }}>
+						<button
+							type="button"
+							onClick={() => setZoomDropdownOpen(!zoomDropdownOpen)}
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: '2px',
+								background: 'transparent',
+								border: 'none',
+								padding: 0,
+								cursor: 'pointer',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								fontFamily: typography.fontFamily.mono,
+							}}
+						>
+							{Math.round(zoom * 100)}%
+							<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+								<path d="M6 9l6 6 6-6" />
+							</svg>
+						</button>
+						{zoomDropdownOpen && (
+							<div
+								style={{
+									position: 'absolute',
+									top: '100%',
+									left: 0,
+									marginTop: '4px',
+									minWidth: '100px',
+									backgroundColor: colors.bg.tertiary,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.md,
+									boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+									zIndex: 100,
+									overflow: 'hidden',
+								}}
+							>
+								{zoomPresets.map((preset) => (
+									<button
+										key={preset.label}
+										type="button"
+										onClick={() => {
+											if (preset.value === 'fit') {
+												onZoomToFit?.();
+											} else if (preset.value === 'selection') {
+												onZoomToSelection?.();
+											} else {
+												onZoomTo?.(preset.value);
+											}
+											setZoomDropdownOpen(false);
+										}}
+										style={{
+											display: 'flex',
+											alignItems: 'center',
+											justifyContent: 'space-between',
+											width: '100%',
+											padding: `${spacing.xs} ${spacing.sm}`,
+											background: 'transparent',
+											border: 'none',
+											color: colors.text.primary,
+											fontSize: typography.fontSize.xs,
+											cursor: 'pointer',
+											fontFamily: typography.fontFamily.mono,
+										}}
+										onMouseEnter={(e) => {
+											e.currentTarget.style.backgroundColor = colors.bg.hover;
+										}}
+										onMouseLeave={(e) => {
+											e.currentTarget.style.backgroundColor = 'transparent';
+										}}
+									>
+										{preset.label}
+									</button>
+								))}
+							</div>
+						)}
+					</div>
 				</div>
 				<button
 					type="button"
