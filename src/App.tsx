@@ -79,11 +79,11 @@ import type {
 	ImageMetaUnsplash,
 	ImageOutline,
 	Node,
+	Effect,
 	EffectStyle,
 	GridStyle,
 	PaintStyle,
 	Page,
-	ShadowEffect,
 	StyleVariableCollection,
 	StyleVariableToken,
 	TextStyle,
@@ -463,7 +463,7 @@ const buildDraftKey = (path: string | null): string => {
 	return `path:${path}`;
 };
 
-const cloneShadowEffects = (effects: ShadowEffect[] | undefined): ShadowEffect[] | null => {
+const cloneEffects = (effects: Effect[] | undefined): Effect[] | null => {
 	if (!effects || effects.length === 0) return null;
 	return effects.map((effect) => ({ ...effect }));
 };
@@ -1396,6 +1396,7 @@ export const App: React.FC = () => {
 	const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
 	const [activePlugin, setActivePlugin] = useState<PluginRegistration | null>(null);
 	const [toastMessage, setToastMessage] = useState<string | null>(null);
+	const [toastLoading, setToastLoading] = useState(false);
 	const toastTimerRef = useRef<number | null>(null);
 	const [figmaImportOpen, setFigmaImportOpen] = useState(false);
 	const [figmaImportBusy, setFigmaImportBusy] = useState(false);
@@ -1461,17 +1462,22 @@ export const App: React.FC = () => {
 	const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
 	const clipboardRef = useRef<ClipboardPayload | null>(null);
 	const clipboardPasteCountRef = useRef(0);
-	const effectsClipboardRef = useRef<ShadowEffect[] | null>(null);
+	const effectsClipboardRef = useRef<Effect[] | null>(null);
 	const canvasSize = DEFAULT_CANVAS_SIZE;
 
-	const showToast = useCallback((message: string) => {
+	const showToast = useCallback((message: string, loading?: boolean) => {
 		setToastMessage(message);
+		setToastLoading(loading ?? false);
 		if (toastTimerRef.current) {
 			window.clearTimeout(toastTimerRef.current);
+			toastTimerRef.current = null;
 		}
-		toastTimerRef.current = window.setTimeout(() => {
-			setToastMessage(null);
-		}, 2400);
+		if (!loading) {
+			toastTimerRef.current = window.setTimeout(() => {
+				setToastMessage(null);
+				setToastLoading(false);
+			}, 2400);
+		}
 	}, []);
 
 	const handleShareCollab = useCallback(() => {
@@ -2601,6 +2607,8 @@ export const App: React.FC = () => {
 			}
 			flushSync(() => {
 				setIsRemovingBackground(true);
+				setToastMessage('Removing background...');
+				setToastLoading(true);
 			});
 			await new Promise<void>((resolve) =>
 				requestAnimationFrame(() => {
@@ -2667,6 +2675,7 @@ export const App: React.FC = () => {
 						type: 'batch',
 						payload: { commands },
 					});
+				showToast('Background removed');
 				return true;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -3038,7 +3047,7 @@ export const App: React.FC = () => {
 			const source = candidates
 				.map((id) => document.nodes[id])
 				.find((node): node is Node => Boolean(node && node.effects && node.effects.length > 0));
-			const cloned = cloneShadowEffects(source?.effects);
+			const cloned = cloneEffects(source?.effects);
 			if (!cloned) {
 				showToast('No effects to copy.');
 				return;
@@ -3051,7 +3060,7 @@ export const App: React.FC = () => {
 
 	const pasteEffects = useCallback(
 		(preferredTargetIds?: string[]) => {
-			const effects = cloneShadowEffects(effectsClipboardRef.current ?? undefined);
+			const effects = cloneEffects(effectsClipboardRef.current ?? undefined);
 			if (!effects) {
 				showToast('No copied effects to paste.');
 				return;
@@ -8188,6 +8197,7 @@ export const App: React.FC = () => {
 				path = ensureGalileoExtension(pickedPath);
 			}
 
+			showToast('Saving...', true);
 			await invoke('save_document', {
 				args: { path, content: serializeDocument(document, { activePageId }) },
 			});
@@ -8198,12 +8208,12 @@ export const App: React.FC = () => {
 			markSaved();
 			const keysToClear = new Set([buildDraftKey(previousPath), buildDraftKey(path)]);
 			await Promise.all(Array.from(keysToClear).map((key) => deleteDraftByKey(key)));
-			alert('Document saved successfully!');
+			showToast('Document saved');
 		} catch (error) {
 			console.error('Save error:', error);
-			alert('Failed to save document');
+			showToast('Failed to save document');
 		}
-	}, [activePageId, currentPath, deleteDraftByKey, document, ensureGalileoExtension, markSaved, registerProjectOpened]);
+	}, [activePageId, currentPath, deleteDraftByKey, document, ensureGalileoExtension, markSaved, registerProjectOpened, showToast]);
 
 	const handleImportImage = useCallback(async () => {
 		try {
@@ -8368,6 +8378,8 @@ export const App: React.FC = () => {
 				showToast('Unsupported format.');
 				return;
 			}
+
+			showToast('Exporting...', true);
 
 			const snapshot = await exportNodeSnapshot(document, targetId, {
 				format: format as 'png' | 'webp' | 'svg' | 'pdf' | 'asset',
@@ -10002,21 +10014,41 @@ export const App: React.FC = () => {
 						fontSize: 14,
 					}}
 				>
-					<div
-						style={{
-							width: 28,
-							height: 28,
-							borderRadius: 8,
-							backgroundColor: '#ffffff',
-							display: 'grid',
-							placeItems: 'center',
-						}}
-					>
-						<img src="/logo.png" alt="Galileo" style={{ width: 18, height: 18 }} />
-					</div>
+					{toastLoading ? (
+						<div
+							style={{
+								width: 20,
+								height: 20,
+								border: '2px solid rgba(255,255,255,0.3)',
+								borderTopColor: '#ffffff',
+								borderRadius: '50%',
+								animation: 'spin 0.8s linear infinite',
+							}}
+						/>
+					) : (
+						<div
+							style={{
+								width: 28,
+								height: 28,
+								borderRadius: 8,
+								backgroundColor: '#ffffff',
+								display: 'grid',
+								placeItems: 'center',
+							}}
+						>
+							<img src="/logo.png" alt="Galileo" style={{ width: 18, height: 18 }} />
+						</div>
+					)}
 					<div>{toastMessage}</div>
 				</div>
 			)}
+
+			<style>{`
+				@keyframes spin {
+					from { transform: rotate(0deg); }
+					to { transform: rotate(360deg); }
+				}
+			`}</style>
 
 			{isRemovingBackground && (
 				<div

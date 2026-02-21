@@ -63,6 +63,11 @@ export interface ImageOutlineStyle {
   blur: number;
 }
 
+export interface BlurEffects {
+  layerBlur?: { blur: number };
+  backgroundBlur?: { blur: number };
+}
+
 export type DrawCommand =
   | DrawRectCommand
   | DrawTextCommand
@@ -90,6 +95,7 @@ export interface DrawRectCommand {
   cornerRadius?: number;
   opacity?: number;
   effects?: RenderableShadowEffect[];
+  blur?: BlurEffects;
 }
 
 export interface DrawTextCommand {
@@ -113,6 +119,7 @@ export interface DrawTextCommand {
   blendMode?: LayerBlendMode;
   opacity?: number;
   effects?: RenderableShadowEffect[];
+  blur?: BlurEffects;
 }
 
 export interface DrawTextOverflowIndicatorCommand {
@@ -140,6 +147,7 @@ export interface DrawEllipseCommand {
   blendMode?: LayerBlendMode;
   opacity?: number;
   effects?: RenderableShadowEffect[];
+  blur?: BlurEffects;
 }
 
 export interface DrawImageCommand {
@@ -156,6 +164,7 @@ export interface DrawImageCommand {
   outline?: ImageOutlineStyle;
   opacity?: number;
   effects?: RenderableShadowEffect[];
+  blur?: BlurEffects;
 }
 
 export interface DrawPathCommand {
@@ -175,6 +184,7 @@ export interface DrawPathCommand {
   opacity?: number;
   fillRule?: 'nonzero' | 'evenodd';
   effects?: RenderableShadowEffect[];
+  blur?: BlurEffects;
 }
 
 export interface ClipCommand {

@@ -3,14 +3,17 @@ import {
 	ENABLE_SHADOWS_V1,
 	buildWorldBoundsMap,
 	compileShadowEffects,
+	extractBackgroundBlurEffect,
+	extractLayerBlurEffect,
 	normalizeShadowEffects,
 	resolveNodeStyleProps,
 	resolveShadowOverflow,
 	type WorldBoundsMap,
 } from '../../core/doc';
 import { getNodePathData } from '../../core/doc/vector';
-import type { Color, Document, Node, RenderableShadowEffect, ShadowEffect } from '../../core/doc/types';
+import type { Color, Document, Effect, Node, RenderableShadowEffect } from '../../core/doc/types';
 import type {
+	BlurEffects,
 	DrawCommand,
 	FillLayerPaint,
 	GradientPaint,
@@ -144,6 +147,7 @@ const buildNodeCommandsFromBounds = (
 				cornerRadius: node.cornerRadius,
 				opacity: node.opacity,
 				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
+				blur: getBlurEffects(node, resolvedStyle.effects),
 			});
 		}
 
@@ -225,6 +229,7 @@ const buildNodeCommandsFromBounds = (
 				cornerRadius: node.cornerRadius,
 				opacity: node.opacity,
 				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
+				blur: getBlurEffects(node, resolvedStyle.effects),
 			});
 		}
 	} else if (node.type === 'ellipse') {
@@ -246,6 +251,7 @@ const buildNodeCommandsFromBounds = (
 				blendMode: node.blendMode,
 				opacity: node.opacity,
 				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
+				blur: getBlurEffects(node, resolvedStyle.effects),
 			});
 		}
 	} else if (node.type === 'text') {
@@ -270,6 +276,7 @@ const buildNodeCommandsFromBounds = (
 			blendMode: node.blendMode,
 			opacity: node.opacity,
 			effects: getRenderableEffects(node, doc, resolvedStyle.effects),
+			blur: getBlurEffects(node, resolvedStyle.effects),
 		});
 		if (overflowIndicatorIds?.has(node.id) && (resolvedStyle.textResizeMode ?? 'auto-width') === 'fixed') {
 			commands.push({
@@ -301,6 +308,7 @@ const buildNodeCommandsFromBounds = (
 				outline,
 				opacity: node.opacity,
 				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
+				blur: getBlurEffects(node, resolvedStyle.effects),
 			});
 		}
 	} else if (node.type === 'boolean') {
@@ -346,6 +354,7 @@ const buildNodeCommandsFromBounds = (
 				opacity: node.opacity,
 				fillRule: pathData.fillRule,
 				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
+				blur: getBlurEffects(node, resolvedStyle.effects),
 			});
 		}
 	} else if (node.type === 'path') {
@@ -371,6 +380,7 @@ const buildNodeCommandsFromBounds = (
 				opacity: node.opacity,
 				fillRule: pathData.fillRule,
 				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
+				blur: getBlurEffects(node, resolvedStyle.effects),
 			});
 		} else if (fillLayers.length > 0) {
 			const color = fillLayers[0]?.paint;
@@ -386,6 +396,7 @@ const buildNodeCommandsFromBounds = (
 				blendMode: node.blendMode,
 				opacity: node.opacity,
 				effects: getRenderableEffects(node, doc, resolvedStyle.effects),
+				blur: getBlurEffects(node, resolvedStyle.effects),
 			});
 		}
 	} else if (node.type === 'componentInstance') {
@@ -410,11 +421,22 @@ const buildNodeCommandsFromBounds = (
 	}
 };
 
-const getRenderableEffects = (node: Node, doc: Document, resolvedEffects?: ShadowEffect[]): RenderableShadowEffect[] | undefined => {
+const getRenderableEffects = (node: Node, doc: Document, resolvedEffects?: Effect[]): RenderableShadowEffect[] | undefined => {
 	if (!ENABLE_SHADOWS_V1) return undefined;
 	const effectNode = resolvedEffects ? { ...node, effects: resolvedEffects } : node;
 	const effects = ENABLE_AUTO_SHADOWS_V2 ? compileShadowEffects(effectNode, doc) : normalizeShadowEffects(effectNode.effects);
 	return effects.length > 0 ? effects : undefined;
+};
+
+const getBlurEffects = (node: Node, resolvedEffects?: Effect[]): BlurEffects | undefined => {
+	const effects = resolvedEffects ?? node.effects;
+	const layerBlur = extractLayerBlurEffect(effects);
+	const backgroundBlur = extractBackgroundBlurEffect(effects);
+	if (!layerBlur && !backgroundBlur) return undefined;
+	return {
+		layerBlur: layerBlur ? { blur: layerBlur.blur } : undefined,
+		backgroundBlur: backgroundBlur ? { blur: backgroundBlur.blur } : undefined,
+	};
 };
 
 const DEFAULT_FALLBACK_COLOR = '#000000';

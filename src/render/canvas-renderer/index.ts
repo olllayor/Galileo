@@ -22,8 +22,13 @@ type OutlineRaster = {
 	canvas: HTMLCanvasElement;
 };
 
+type BackgroundBlurRaster = {
+	canvas: HTMLCanvasElement;
+};
+
 const SHADOW_CACHE_LIMIT = 120;
 const OUTLINE_CACHE_LIMIT = 120;
+const BACKGROUND_BLUR_CACHE_LIMIT = 60;
 
 const mapLayerBlendModeToComposite = (blendMode: LayerBlendMode | undefined): GlobalCompositeOperation => {
 	switch (blendMode) {
@@ -57,6 +62,7 @@ export class CanvasRenderer {
 	private patternTileCache: Map<string, HTMLCanvasElement>;
 	private shadowRasterCache: Map<string, ShadowRaster>;
 	private outlineRasterCache: Map<string, OutlineRaster>;
+	private backgroundBlurCache: Map<string, BackgroundBlurRaster>;
 	private onInvalidate?: () => void;
 
 	constructor(canvas: HTMLCanvasElement, onInvalidate?: () => void) {
@@ -71,6 +77,7 @@ export class CanvasRenderer {
 		this.patternTileCache = new Map();
 		this.shadowRasterCache = new Map();
 		this.outlineRasterCache = new Map();
+		this.backgroundBlurCache = new Map();
 		this.onInvalidate = onInvalidate;
 	}
 
@@ -138,13 +145,33 @@ export class CanvasRenderer {
 	}
 
 	private drawCommandWithEffects(command: DrawableCommand): void {
+		const layerBlur = command.blur?.layerBlur;
+		const backgroundBlur = command.blur?.backgroundBlur;
+		const hasLayerBlur = layerBlur && layerBlur.blur > 0;
+		const hasBackgroundBlur = backgroundBlur && backgroundBlur.blur > 0;
+
+		if (hasBackgroundBlur) {
+			this.drawBackgroundBlur(command, backgroundBlur.blur);
+		}
+
+		if (hasLayerBlur) {
+			this.ctx.save();
+			this.ctx.filter = `blur(${layerBlur.blur}px)`;
+		}
+
 		if (!ENABLE_SHADOWS_V1) {
 			this.drawCommandBase(command);
+			if (hasLayerBlur) {
+				this.ctx.restore();
+			}
 			return;
 		}
 		const effects = this.getEnabledEffects(command.effects);
 		if (effects.length === 0) {
 			this.drawCommandBase(command);
+			if (hasLayerBlur) {
+				this.ctx.restore();
+			}
 			return;
 		}
 
@@ -159,6 +186,10 @@ export class CanvasRenderer {
 
 		for (const effect of innerEffects) {
 			this.drawInnerShadow(command, effect);
+		}
+
+		if (hasLayerBlur) {
+			this.ctx.restore();
 		}
 	}
 
@@ -370,6 +401,99 @@ export class CanvasRenderer {
 		tintedCtx.globalAlpha = 1;
 
 		return tinted;
+	}
+
+	private drawBackgroundBlur(command: DrawableCommand, blurRadius: number): void {
+		const bounds = this.getCommandBounds(command);
+		if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
+
+		const padding = Math.ceil(blurRadius * 2);
+		const captureX = Math.max(0, Math.floor(bounds.x - padding));
+		const captureY = Math.max(0, Math.floor(bounds.y - padding));
+		const captureWidth = Math.min(
+			Math.ceil(bounds.width + padding * 2),
+			this.width - captureX
+		);
+		const captureHeight = Math.min(
+			Math.ceil(bounds.height + padding * 2),
+			this.height - captureY
+		);
+
+		if (captureWidth <= 0 || captureHeight <= 0) return;
+
+		const key = this.buildBackgroundBlurCacheKey(command, blurRadius, {
+			x: captureX,
+			y: captureY,
+			width: captureWidth,
+			height: captureHeight,
+		});
+
+		let raster = this.backgroundBlurCache.get(key);
+		if (!raster) {
+			const imageData = this.ctx.getImageData(captureX, captureY, captureWidth, captureHeight);
+			const captureCanvas = this.createCanvas(captureWidth, captureHeight);
+			const captureCtx = captureCanvas.getContext('2d');
+			if (!captureCtx) return;
+			captureCtx.putImageData(imageData, 0, 0);
+
+			const blurred = this.applyBlur(captureCanvas, blurRadius);
+			raster = { canvas: blurred };
+			this.backgroundBlurCache.set(key, raster);
+
+			while (this.backgroundBlurCache.size > BACKGROUND_BLUR_CACHE_LIMIT) {
+				const firstKey = this.backgroundBlurCache.keys().next().value;
+				if (typeof firstKey !== 'string') break;
+				this.backgroundBlurCache.delete(firstKey);
+			}
+		}
+
+		this.ctx.save();
+		this.applyShapeClip(command);
+		this.ctx.drawImage(raster.canvas, captureX, captureY);
+		this.ctx.restore();
+	}
+
+	private buildBackgroundBlurCacheKey(
+		command: DrawableCommand,
+		blurRadius: number,
+		capture: { x: number; y: number; width: number; height: number }
+	): string {
+		return JSON.stringify({
+			type: 'backgroundBlur',
+			nodeId: command.nodeId,
+			blurRadius,
+			capture,
+		});
+	}
+
+	private applyShapeClip(command: DrawableCommand): void {
+		if (command.type === 'rect') {
+			this.ctx.beginPath();
+			if (command.cornerRadius && command.cornerRadius > 0) {
+				const r = Math.min(command.cornerRadius, command.width / 2, command.height / 2);
+				this.ctx.roundRect(command.x, command.y, command.width, command.height, r);
+			} else {
+				this.ctx.rect(command.x, command.y, command.width, command.height);
+			}
+			this.ctx.clip();
+		} else if (command.type === 'ellipse') {
+			this.ctx.beginPath();
+			this.ctx.ellipse(command.x, command.y, command.radiusX, command.radiusY, 0, 0, Math.PI * 2);
+			this.ctx.clip();
+		} else if (command.type === 'path') {
+			const rawPath = new Path2D(command.d);
+			const path = new Path2D();
+			path.addPath(rawPath, new DOMMatrix().translate(command.x, command.y));
+			this.ctx.clip(path, command.fillRule ?? 'nonzero');
+		} else if (command.type === 'text') {
+			this.ctx.beginPath();
+			this.ctx.rect(command.x, command.y, command.width, command.height);
+			this.ctx.clip();
+		} else if (command.type === 'image') {
+			this.ctx.beginPath();
+			this.ctx.rect(command.x, command.y, command.width, command.height);
+			this.ctx.clip();
+		}
 	}
 
 	private hasMaskFill(command: Extract<DrawableCommand, { type: 'rect' | 'ellipse' | 'path' }>): boolean {
@@ -1301,6 +1425,7 @@ export class CanvasRenderer {
 		this.patternTileCache.clear();
 		this.shadowRasterCache.clear();
 		this.outlineRasterCache.clear();
+		this.backgroundBlurCache.clear();
 	}
 
 	private resolvePaint(

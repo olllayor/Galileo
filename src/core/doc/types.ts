@@ -188,6 +188,31 @@ export const shadowEffectSchema = z.discriminatedUnion('type', [
 export type ShadowEffect = z.infer<typeof shadowEffectSchema>;
 export type RenderableShadowEffect = z.infer<typeof dropShadowEffectSchema> | z.infer<typeof innerShadowEffectSchema>;
 
+export const layerBlurEffectSchema = z.object({
+	type: z.literal('layerBlur'),
+	blur: z.number().min(0),
+	enabled: z.boolean().optional(),
+});
+
+export const backgroundBlurEffectSchema = z.object({
+	type: z.literal('backgroundBlur'),
+	blur: z.number().min(0),
+	enabled: z.boolean().optional(),
+});
+
+export type LayerBlurEffect = z.infer<typeof layerBlurEffectSchema>;
+export type BackgroundBlurEffect = z.infer<typeof backgroundBlurEffectSchema>;
+
+export const effectSchema = z.discriminatedUnion('type', [
+	dropShadowEffectSchema,
+	innerShadowEffectSchema,
+	autoShadowEffectSchema,
+	layerBlurEffectSchema,
+	backgroundBlurEffectSchema,
+]);
+
+export type Effect = z.infer<typeof effectSchema>;
+
 export const positionSchema = z.object({
 	x: z.number(),
 	y: z.number(),
@@ -444,7 +469,7 @@ export const textStyleSchema = z.object({
 export const effectStyleSchema = z.object({
 	id: z.string(),
 	name: z.string(),
-	effects: shadowEffectSchema.array(),
+	effects: effectSchema.array(),
 });
 
 export const gridStyleSchema = z.object({
@@ -646,7 +671,7 @@ export const nodeSchema = z.object({
 	aspectRatioLocked: z.boolean().optional(),
 	clipContent: z.boolean().optional(),
 	shadowOverflow: z.enum(['visible', 'clipped', 'clip-content-only']).optional(),
-	effects: shadowEffectSchema.array().optional(),
+	effects: effectSchema.array().optional(),
 	effectStyleId: z.string().optional(),
 	effectBindings: shadowEffectBindingSchema.optional(),
 	effectVariables: z.record(z.union([z.string(), z.number()])).optional(),

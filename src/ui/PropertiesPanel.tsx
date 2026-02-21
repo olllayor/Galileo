@@ -17,6 +17,7 @@ import type {
 	Constraints,
 	ComponentOverridePatch,
 	Document,
+	Effect,
 	Layout,
 	LayoutGuideType,
 	LayoutSizing,
@@ -338,6 +339,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 			<div
 				style={{
 					width: `${width}px`,
+					height: '100%',
 					padding: spacing.md,
 					backgroundColor: colors.bg.secondary,
 					borderLeft: `1px solid ${colors.border.subtle}`,
@@ -531,20 +533,26 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	const effectStyles = Object.values(styles.effect).sort((a, b) => a.name.localeCompare(b.name));
 	const gridStyles = Object.values(styles.grid).sort((a, b) => a.name.localeCompare(b.name));
 
-	const updateEffects = (nextEffects: ShadowEffect[]) => {
+	const updateEffects = (nextEffects: Effect[]) => {
 		handleInputChange('effects', nextEffects);
 	};
 
-	const addEffect = (type: 'drop' | 'inner' | 'auto') => {
-		updateEffects([...effects, createDefaultShadowEffect(type)]);
+	const addEffect = (type: 'drop' | 'inner' | 'auto' | 'layerBlur' | 'backgroundBlur') => {
+		if (type === 'layerBlur') {
+			updateEffects([...effects, { type: 'layerBlur', blur: 10, enabled: true }]);
+		} else if (type === 'backgroundBlur') {
+			updateEffects([...effects, { type: 'backgroundBlur', blur: 10, enabled: true }]);
+		} else {
+			updateEffects([...effects, createDefaultShadowEffect(type)]);
+		}
 	};
 
-	const updateEffect = (index: number, updater: (effect: ShadowEffect) => ShadowEffect) => {
+	const updateEffect = (index: number, updater: (effect: Effect) => Effect) => {
 		updateEffects(effects.map((effect, i) => (i === index ? updater(effect) : effect)));
 	};
 
-	const updateEffectPatch = (index: number, updates: Partial<ShadowEffect>) => {
-		updateEffect(index, (effect) => ({ ...effect, ...updates } as ShadowEffect));
+	const updateEffectPatch = (index: number, updates: Partial<Effect>) => {
+		updateEffect(index, (effect) => ({ ...effect, ...updates } as Effect));
 	};
 
 	const updateAutoBinding = (index: number, field: AutoShadowBindingField, bindingKey: string) => {
@@ -609,6 +617,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 		<div
 			style={{
 				width: `${width}px`,
+				height: '100%',
 				padding: spacing.md,
 				backgroundColor: colors.bg.secondary,
 				borderLeft: `1px solid ${colors.border.subtle}`,
@@ -2839,6 +2848,40 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 				<div style={{ display: 'flex', gap: spacing.sm, marginBottom: spacing.sm }}>
 					<button
 						type="button"
+						onClick={() => addEffect('layerBlur')}
+						style={{
+							padding: `${spacing.xs} ${spacing.sm}`,
+							borderRadius: radii.sm,
+							border: `1px solid ${colors.border.default}`,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.secondary,
+							fontSize: typography.fontSize.md,
+							cursor: 'pointer',
+							flex: 1,
+						}}
+					>
+						+ Layer Blur
+					</button>
+					<button
+						type="button"
+						onClick={() => addEffect('backgroundBlur')}
+						style={{
+							padding: `${spacing.xs} ${spacing.sm}`,
+							borderRadius: radii.sm,
+							border: `1px solid ${colors.border.default}`,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.secondary,
+							fontSize: typography.fontSize.md,
+							cursor: 'pointer',
+							flex: 1,
+						}}
+					>
+						+ BG Blur
+					</button>
+				</div>
+				<div style={{ display: 'flex', gap: spacing.sm, marginBottom: spacing.sm }}>
+					<button
+						type="button"
 						onClick={() => onCopyEffects?.(selectedNode.id)}
 						disabled={effects.length === 0}
 						style={{
@@ -2931,7 +2974,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								:::
 							</div>
 							<div style={{ flex: 1, fontSize: typography.fontSize.sm, color: colors.text.secondary }}>
-								{effect.type === 'drop' ? 'Drop shadow' : effect.type === 'inner' ? 'Inner shadow' : 'Auto shadow'}
+								{effect.type === 'drop' ? 'Drop shadow' : effect.type === 'inner' ? 'Inner shadow' : effect.type === 'auto' ? 'Auto shadow' : effect.type === 'layerBlur' ? 'Layer blur' : 'Background blur'}
 							</div>
 							<button
 								type="button"
@@ -3355,6 +3398,39 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									</div>
 								</div>
 							</>
+						)}
+
+						{(effect.type === 'layerBlur' || effect.type === 'backgroundBlur') && (
+							<div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: spacing.sm }}>
+								<div>
+									<label
+										style={{
+											display: 'block',
+											fontSize: typography.fontSize.xs,
+											color: colors.text.tertiary,
+											marginBottom: '4px',
+										}}
+									>
+										Blur radius
+									</label>
+									<ScrubbableNumberInput
+										value={safeNumber(effect.blur)}
+										onChange={(value) => updateEffectPatch(index, { blur: Math.max(0, value) })}
+										min={0}
+										step={1}
+										scrubStep={0.25}
+										inputStyle={{
+											width: '100%',
+											padding: spacing.xs,
+											border: `1px solid ${colors.border.default}`,
+											borderRadius: radii.sm,
+											fontSize: typography.fontSize.md,
+											backgroundColor: colors.bg.secondary,
+											color: colors.text.primary,
+										}}
+									/>
+								</div>
+							</div>
 						)}
 					</div>
 				))}

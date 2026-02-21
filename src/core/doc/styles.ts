@@ -1,9 +1,9 @@
 import type {
 	Color,
 	Document,
+	Effect,
 	LayoutGuide,
 	Node,
-	ShadowEffect,
 	StyleVariableCollection,
 	StyleVariableToken,
 } from './types';
@@ -17,7 +17,7 @@ type ResolvedNodeStyleProps = {
 	lineHeightPx: number | undefined;
 	letterSpacingPx: number | undefined;
 	textResizeMode: Node['textResizeMode'] | undefined;
-	effects: ShadowEffect[] | undefined;
+	effects: Effect[] | undefined;
 	layoutGuides: LayoutGuide | undefined;
 };
 
@@ -70,7 +70,7 @@ const cloneLayoutGuide = (guide: LayoutGuide | undefined): LayoutGuide | undefin
 	};
 };
 
-const cloneEffects = (effects: ShadowEffect[] | undefined): ShadowEffect[] | undefined => {
+const cloneEffects = (effects: Effect[] | undefined): Effect[] | undefined => {
 	if (!effects) return undefined;
 	return effects.map((effect) => {
 		if (effect.type === 'auto') {
@@ -196,7 +196,7 @@ export const resolveTextStyleProps = (
 	return next;
 };
 
-export const resolveEffectStyleEffects = (doc: Document, styleId: string | undefined): ShadowEffect[] | undefined => {
+export const resolveEffectStyleEffects = (doc: Document, styleId: string | undefined): Effect[] | undefined => {
 	if (!styleId) return undefined;
 	const style = doc.styles.effect[styleId];
 	if (!style) return undefined;
