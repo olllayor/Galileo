@@ -98,6 +98,24 @@
       flex-wrap: wrap;
     }
 
+    .brightness-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .brightness-slider {
+      width: 120px;
+    }
+
+    .brightness-value {
+      font-size: 11px;
+      color: #bdbdbd;
+      min-width: 76px;
+      text-align: right;
+    }
+
     .quality-label {
       font-size: 11px;
       color: #bdbdbd;
@@ -393,6 +411,11 @@
         </select>
         <span id="qualityHint" class="quality-hint"></span>
       </div>
+      <div class="brightness-control">
+        <span class="quality-label">Brightness</span>
+        <input id="brightnessSlider" class="brightness-slider" type="range" min="-20" max="20" step="1" value="6" />
+        <span id="brightnessValue" class="brightness-value">Brightness +6</span>
+      </div>
       <div class="divider"></div>
       <button id="download">Download</button>
       <button id="insert" class="ghost">Export to Galileo</button>
@@ -507,6 +530,8 @@
     const scaleSelect = document.getElementById('scaleSelect');
     const qualitySelect = document.getElementById('qualitySelect');
     const qualityHint = document.getElementById('qualityHint');
+    const brightnessSlider = document.getElementById('brightnessSlider');
+    const brightnessValue = document.getElementById('brightnessValue');
     const deviceSelect = document.getElementById('deviceSelect');
     const viewportOverlay = document.getElementById('viewportOverlay');
     const glCanvas = document.getElementById('glCanvas');
@@ -578,6 +603,20 @@
       high: 'High',
       ultra: 'Ultra',
     };
+
+    const LOOK_PROFILE = {
+      toneMapping: 'neutral_or_aces',
+      baseExposure: 1.06,
+      screenEmissiveIntensity: 0.45,
+      screenEnvMapIntensity: 0.06,
+      screenRoughness: 0.2,
+      screenMetalness: 0.0,
+      fastContrast: 1.0,
+    };
+
+    const BRIGHTNESS_MIN = -20;
+    const BRIGHTNESS_MAX = 20;
+    const BRIGHTNESS_DEFAULT = 6;
 
     const MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
     const MEMORY_LIMIT_PIXELS = 40_000_000;
@@ -661,6 +700,8 @@
       qualityCap: QUALITY_CAPS.default,
       qualityMaxAllowed: QUALITY_CAPS.default,
       qualityCapped: false,
+      brightnessValue: BRIGHTNESS_DEFAULT,
+      effectiveExposure: LOOK_PROFILE.baseExposure,
       rotationX: -0.2,
       rotationY: -0.4,
       dragging: false,
@@ -772,7 +813,97 @@
       }
     };
 
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+    const formatSignedValue = (value) => (value >= 0 ? `+${value}` : `${value}`);
+
+    const getBrightnessMultiplier = (brightnessValueInput) => {
+      const value = clamp(Number(brightnessValueInput) || 0, BRIGHTNESS_MIN, BRIGHTNESS_MAX);
+      if (value >= 0) {
+        return 1 + (value / BRIGHTNESS_MAX) * 0.15;
+      }
+      return 1 + (value / Math.abs(BRIGHTNESS_MIN)) * 0.1;
+    };
+
+    const computeExposure = (brightnessValueInput) => {
+      return LOOK_PROFILE.baseExposure * getBrightnessMultiplier(brightnessValueInput);
+    };
+
+    const resolveToneMapping = () => {
+      if (LOOK_PROFILE.toneMapping === 'neutral_or_aces' && typeof THREE.NeutralToneMapping === 'number') {
+        return THREE.NeutralToneMapping;
+      }
+      return THREE.ACESFilmicToneMapping;
+    };
+
+    const updateBrightnessLabel = () => {
+      if (!brightnessValue) return;
+      brightnessValue.textContent = `Brightness ${formatSignedValue(state.brightnessValue)}`;
+    };
+
+    const applyLookToRenderer = () => {
+      if (!state.renderer) return;
+      state.effectiveExposure = computeExposure(state.brightnessValue);
+      state.renderer.toneMapping = resolveToneMapping();
+      state.renderer.toneMappingExposure = state.effectiveExposure;
+    };
+
+    const applyScreenMaterialLook = (material, texture) => {
+      if (!material) return;
+      const brightnessMultiplier = getBrightnessMultiplier(state.brightnessValue);
+
+      if (texture) {
+        material.map = texture;
+      }
+      if ('color' in material) {
+        material.color = new THREE.Color(0xffffff);
+      }
+      if ('transparent' in material) {
+        material.transparent = false;
+        material.opacity = 1;
+      }
+      if ('emissive' in material) {
+        material.emissive = new THREE.Color(0xffffff);
+      }
+      if ('emissiveMap' in material) {
+        material.emissiveMap = texture || material.map || null;
+      }
+      if ('emissiveIntensity' in material) {
+        material.emissiveIntensity = LOOK_PROFILE.screenEmissiveIntensity * brightnessMultiplier;
+      }
+      if ('toneMapped' in material) {
+        material.toneMapped = false;
+      }
+      if ('roughness' in material) {
+        material.roughness = LOOK_PROFILE.screenRoughness;
+      }
+      if ('metalness' in material) {
+        material.metalness = LOOK_PROFILE.screenMetalness;
+      }
+      if ('envMapIntensity' in material) {
+        material.envMapIntensity = LOOK_PROFILE.screenEnvMapIntensity;
+      }
+      material.needsUpdate = true;
+    };
+
+    const applyLookToScreenMaterials = () => {
+      const targets = state.screenMeshTargets?.length
+        ? state.screenMeshTargets
+        : (state.screenMesh ? [state.screenMesh] : []);
+      targets.forEach((mesh) => {
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        materials.forEach((material) => applyScreenMaterialLook(material, null));
+      });
+    };
+
+    const getFastCanvasFilter = () => {
+      const brightnessPercent = Math.round(getBrightnessMultiplier(state.brightnessValue) * 100);
+      const contrastPercent = Math.round(LOOK_PROFILE.fastContrast * 100);
+      return `brightness(${brightnessPercent}%) contrast(${contrastPercent}%)`;
+    };
+
     updateQualityState();
+    updateBrightnessLabel();
 
     const loadAsset = async (ref) => {
       if (!ref || !ref.scope || !ref.path) {
@@ -912,7 +1043,13 @@
       }
       const texture = new THREE.DataTexture(ldr, width, height, THREE.RGBAFormat);
       texture.mapping = THREE.EquirectangularReflectionMapping;
-      texture.colorSpace = THREE.SRGBColorSpace;
+      if (typeof THREE.LinearSRGBColorSpace === 'string') {
+        texture.colorSpace = THREE.LinearSRGBColorSpace;
+      } else if (typeof THREE.NoColorSpace === 'string') {
+        texture.colorSpace = THREE.NoColorSpace;
+      } else {
+        texture.colorSpace = THREE.SRGBColorSpace;
+      }
       texture.needsUpdate = true;
       return texture;
     };
@@ -1237,8 +1374,9 @@
       return info;
     };
 
-    const applyTextureToMesh = (mesh, texture) => {
+    const applyTextureToMesh = (mesh, texture, isScreenMesh = false) => {
       if (!mesh || !texture) return;
+
       const uvInfo = normalizeScreenUVs(mesh);
       if (uvInfo) {
         texture.offset.set(uvInfo.offsetX, uvInfo.offsetY);
@@ -1248,27 +1386,32 @@
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       materials.forEach((material) => {
         if (!material) return;
-        material.map = texture;
-        if ('color' in material) {
-          material.color = new THREE.Color(0xffffff);
-        }
-        if ('transparent' in material) {
-          material.transparent = false;
-          material.opacity = 1;
-        }
-        if ('emissive' in material) {
-          material.emissive = new THREE.Color(0xffffff);
-          material.emissiveMap = texture;
-          material.emissiveIntensity = 1;
+
+        if (isScreenMesh) {
+          applyScreenMaterialLook(material, texture);
+        } else {
+          material.map = texture;
+          if ('color' in material) {
+            material.color = new THREE.Color(0xffffff);
+          }
+          if ('transparent' in material) {
+            material.transparent = false;
+            material.opacity = 1;
+          }
+          if ('emissive' in material) {
+            material.emissive = new THREE.Color(0xffffff);
+            material.emissiveMap = texture;
+            material.emissiveIntensity = 1;
+          }
         }
         material.needsUpdate = true;
       });
     };
 
-    const applyTextureToMeshes = (meshes, texture) => {
+    const applyTextureToMeshes = (meshes, texture, isScreenMesh = false) => {
       if (!meshes || !texture) return;
       const list = Array.isArray(meshes) ? meshes : [meshes];
-      list.forEach((mesh) => applyTextureToMesh(mesh, texture));
+      list.forEach((mesh) => applyTextureToMesh(mesh, texture, isScreenMesh));
     };
 
     const setupScene = () => {
@@ -1282,24 +1425,26 @@
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       // Use higher pixel ratio for better quality (capped at 2 for performance)
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-      // Enable tone mapping for better color reproduction
-      renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.0;
 
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
       camera.position.set(0, 0, 5);
 
-      const ambient = new THREE.AmbientLight(0xffffff, 0.9);
-      const hemisphere = new THREE.HemisphereLight(0xffffff, 0x333333, 0.6);
-      const directional = new THREE.DirectionalLight(0xffffff, 1.4);
-      directional.position.set(2, 3, 5);
-      scene.add(ambient, hemisphere, directional);
+      const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+      const hemisphere = new THREE.HemisphereLight(0xffffff, 0x444444, 0.4);
+      const keyLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      keyLight.position.set(3, 4, 5);
+      const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+      fillLight.position.set(-3, 1, 3);
+      const rimLight = new THREE.DirectionalLight(0xffffff, 0.4);
+      rimLight.position.set(0, 2, -4);
+      scene.add(ambient, hemisphere, keyLight, fillLight, rimLight);
 
       state.renderer = renderer;
       state.scene = scene;
       state.camera = camera;
       state.maxTextureSize = renderer.capabilities?.maxTextureSize || QUALITY_CAPS.default;
+      applyLookToRenderer();
       updateQualityState(state.qualityRequested);
     };
 
@@ -1423,7 +1568,7 @@
         } else if (state.selectionTexture) {
           state.modelScreenAspect = getScreenAspect(state.screenMesh);
           const targets = state.screenMeshTargets?.length ? state.screenMeshTargets : state.screenMesh;
-          applyTextureToMeshes(targets, state.selectionTexture);
+          applyTextureToMeshes(targets, state.selectionTexture, true);
         } else {
           state.modelScreenAspect = getScreenAspect(state.screenMesh);
         }
@@ -1725,6 +1870,8 @@
 
       const fitMode = state.selectionFit || 'cover';
       const useContain = fitMode === 'contain' || fitMode === 'exact';
+      ctx.save();
+      ctx.filter = getFastCanvasFilter();
       if (preset.screenRect) {
         if (useContain) {
           drawImageContain(ctx, selectionImg, preset.screenRect);
@@ -1740,6 +1887,8 @@
           : createCoverCanvas(selectionImg, quadSize.width, quadSize.height);
         drawImageToQuad(ctx, fitCanvas, preset.screenQuad);
       }
+      ctx.restore();
+      ctx.filter = 'none';
 
       if (preset.framePng) {
         const frame = await loadImageAsset(preset.framePng);
@@ -1930,7 +2079,7 @@
         const texture = await createTextureFromSnapshot(snapshot, state.selectionFit, renderAspect);
         state.selectionTexture = texture;
         const targets = state.screenMeshTargets?.length ? state.screenMeshTargets : state.screenMesh;
-        applyTextureToMeshes(targets, texture);
+        applyTextureToMeshes(targets, texture, true);
 
         // Update status with match quality indicator
         let baseStatus = '';
@@ -2002,7 +2151,7 @@
         state.selectionTexture = hqTexture;
         if (state.screenMesh) {
           const targets = state.screenMeshTargets?.length ? state.screenMeshTargets : state.screenMesh;
-          applyTextureToMeshes(targets, hqTexture);
+          applyTextureToMeshes(targets, hqTexture, true);
         }
         if (info.baseStatus) {
           setStatus(info.baseStatus);
@@ -2032,8 +2181,9 @@
       const viewHeight = viewport.clientHeight;
       const { width: exportWidth, height: exportHeight } = getOutputDimensions();
 
-      // Temporarily disable pixel ratio for export (we're already scaling)
+      // Temporarily set lower pixel ratio for export (we're already scaling)
       const originalPixelRatio = state.renderer.getPixelRatio();
+
       state.renderer.setPixelRatio(1);
 
       state.renderer.setSize(exportWidth, exportHeight, false);
@@ -2219,7 +2369,7 @@
           const texture = await createTextureFromSnapshot(state.selectionSnapshot, mode, renderAspect);
           state.selectionTexture = texture;
           const targets = state.screenMeshTargets?.length ? state.screenMeshTargets : state.screenMesh;
-          applyTextureToMeshes(targets, texture);
+          applyTextureToMeshes(targets, texture, true);
           state.output = null; // Invalidate cached output
           setStatus(`Fit mode: ${mode}`);
         } catch (error) {
@@ -2276,6 +2426,17 @@
       qualitySelect.addEventListener('change', async () => {
         updateQualityState(qualitySelect.value);
         await refreshSelectionForQuality();
+      });
+    }
+    if (brightnessSlider) {
+      brightnessSlider.addEventListener('input', () => {
+        const nextValue = clamp(Number(brightnessSlider.value), BRIGHTNESS_MIN, BRIGHTNESS_MAX);
+        state.brightnessValue = nextValue;
+        updateBrightnessLabel();
+        applyLookToRenderer();
+        applyLookToScreenMaterials();
+        state.output = null;
+        render();
       });
     }
     if (deviceSelect) {

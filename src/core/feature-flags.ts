@@ -7,3 +7,5 @@ export const ENABLE_TEXT_PARITY_V1 = true;
 export const ENABLE_FIGMA_INTEROP_V1 = true;
 export const ENABLE_COLLAB_V1 = true;
 export const ENABLE_COLLAB_TEXT_LOCKS_V1 = true;
+export const ENABLE_AI_ASSISTANT_V1 = true;
+export const ENABLE_AI_MODEL_PICKER_V1 = true;

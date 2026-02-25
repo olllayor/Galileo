@@ -15,8 +15,22 @@ import { CommandPalette, type CommandPaletteItem } from './ui/CommandPalette';
 import { PrototypePanel } from './ui/PrototypePanel';
 import { PrototypeLinksOverlay } from './ui/PrototypeLinksOverlay';
 import { PrototypePlayer } from './ui/PrototypePlayer';
+import { AIPanel } from './ui/AIPanel';
+import { RightPanelTabs } from './ui/RightPanelTabs';
 import { panels, colors } from './ui/design-system';
 import { useCollaborativeDocument } from './hooks/useCollaborativeDocument';
+import { buildAIEditContext } from './ai/context-builder';
+import { AIClientError, requestAIEdit, requestAIImageGenerate } from './ai/client';
+import { hydrateAICommandDrafts } from './ai/command-drafts';
+import { applyAICommandPreview } from './ai/preview';
+import type { AIAssistantStatus, AICommandDraft, AIImageSize } from './ai/contracts';
+import {
+	DEFAULT_IMAGE_MODEL_ID,
+	DEFAULT_IMAGE_SIZE,
+	DEFAULT_TEXT_MODEL_ID,
+	IMAGE_MODEL_OPTIONS,
+	TEXT_MODEL_OPTIONS,
+} from './ai/model-catalog';
 import {
 	createRectangleTool,
 	createEllipseTool,
@@ -36,6 +50,8 @@ import {
 	type HitKind,
 } from './interaction/tools';
 import {
+	ENABLE_AI_ASSISTANT_V1,
+	ENABLE_AI_MODEL_PICKER_V1,
 	ENABLE_BOOLEAN_V1,
 	ENABLE_COLLAB_TEXT_LOCKS_V1,
 	ENABLE_COLLAB_V1,
@@ -416,6 +432,23 @@ type PageEditorState = {
 	panOffset: { x: number; y: number };
 	zoom: number;
 	containerFocusId: string | null;
+};
+
+type RightPanelTab = 'properties' | 'ai';
+type AIAssistantMode = 'edit' | 'image';
+
+type AIEditPreviewState = {
+	requestId: string;
+	drafts: AICommandDraft[];
+	commands: Command[];
+	selectionKey: string;
+};
+
+type AIImagePreviewState = {
+	requestId: string;
+	modelId: string;
+	size: AIImageSize;
+	images: Array<{ mimeType: string; base64: string; width: number; height: number }>;
 };
 
 const DEFAULT_PAGE_EDITOR_STATE: PageEditorState = {
@@ -1448,6 +1481,29 @@ export const App: React.FC = () => {
 		}
 		return panels.right.width;
 	});
+	const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('properties');
+	const [aiMode, setAIMode] = useState<AIAssistantMode>('edit');
+	const [aiStatus, setAIStatus] = useState<AIAssistantStatus>('idle');
+	const [aiSummary, setAISummary] = useState('');
+	const [aiWarnings, setAIWarnings] = useState<string[]>([]);
+	const [aiErrorMessage, setAIErrorMessage] = useState<string | null>(null);
+	const [aiEditPreviewState, setAIEditPreviewState] = useState<AIEditPreviewState | null>(null);
+	const [aiImagePreviewState, setAIImagePreviewState] = useState<AIImagePreviewState | null>(null);
+	const [aiTextModelId, setAITextModelId] = useState<string>(() => {
+		const stored = localStorage.getItem('galileo.ai.textModelId');
+		if (stored && TEXT_MODEL_OPTIONS.some((option) => option.id === stored)) return stored;
+		return DEFAULT_TEXT_MODEL_ID;
+	});
+	const [aiImageModelId, setAIImageModelId] = useState<string>(() => {
+		const stored = localStorage.getItem('galileo.ai.imageModelId');
+		if (stored && IMAGE_MODEL_OPTIONS.some((option) => option.id === stored)) return stored;
+		return DEFAULT_IMAGE_MODEL_ID;
+	});
+	const [aiImageSize, setAIImageSize] = useState<AIImageSize>(() => {
+		const stored = localStorage.getItem('galileo.ai.imageSize');
+		if (stored === '1024x1024' || stored === '1536x1024' || stored === '1024x1536') return stored;
+		return DEFAULT_IMAGE_SIZE;
+	});
 	const [panelResizeState, setPanelResizeState] = useState<PanelResizeState | null>(null);
 	const panelResizeRafRef = useRef<number | null>(null);
 	const panelResizePendingWidthRef = useRef<number | null>(null);
@@ -1555,6 +1611,18 @@ export const App: React.FC = () => {
 	useEffect(() => {
 		localStorage.setItem(RECENT_COMPONENTS_STORAGE_KEY, JSON.stringify(recentComponentIds.slice(0, 12)));
 	}, [recentComponentIds]);
+
+	useEffect(() => {
+		localStorage.setItem('galileo.ai.textModelId', aiTextModelId);
+	}, [aiTextModelId]);
+
+	useEffect(() => {
+		localStorage.setItem('galileo.ai.imageModelId', aiImageModelId);
+	}, [aiImageModelId]);
+
+	useEffect(() => {
+		localStorage.setItem('galileo.ai.imageSize', aiImageSize);
+	}, [aiImageSize]);
 
 	useEffect(() => {
 		if (panelResizeState) return;
@@ -1834,6 +1902,14 @@ export const App: React.FC = () => {
 			setZoom(savedState.zoom > 0 ? savedState.zoom : DEFAULT_PAGE_EDITOR_STATE.zoom);
 			setContainerFocusId(sanitizeContainerFocusForPage(document, savedState.containerFocusId, targetPage.rootId));
 			setPreviewDocument(null);
+			setAIEditPreviewState(null);
+			setAIImagePreviewState(null);
+			setAIStatus('idle');
+			setAISummary('');
+			setAIWarnings([]);
+			setAIErrorMessage(null);
+			setAIMode('edit');
+			setRightPanelTab('properties');
 			setDragState(null);
 			setTransformSession(null);
 			setTextCreationDragState(null);
@@ -1872,10 +1948,336 @@ export const App: React.FC = () => {
 		() => selectedIds.filter((id) => id !== displayDocument.rootId),
 		[selectedIds, displayDocument.rootId],
 	);
+	const aiSelectionKey = useMemo(() => selectionIds.slice().sort().join(','), [selectionIds]);
 	const selectionBounds = useMemo(
 		() => getSelectionBounds(displayDocument, selectionIds, boundsMap),
 		[displayDocument, selectionIds, boundsMap],
 	);
+	const openAIAssistant = useCallback(() => {
+		if (!ENABLE_AI_ASSISTANT_V1) return;
+		setRightPanelCollapsed(false);
+		localStorage.setItem('galileo.ui.rightPanelCollapsed', 'false');
+		setRightPanelTab('ai');
+	}, []);
+	const openPropertiesTab = useCallback(() => {
+		setRightPanelTab('properties');
+	}, []);
+	const handleRunAIEdit = useCallback(
+		async (prompt: string, signal: AbortSignal, modelId?: string) => {
+			if (!ENABLE_AI_ASSISTANT_V1) return;
+			setAIStatus('generating');
+			setAIErrorMessage(null);
+			setAIWarnings([]);
+			setAIEditPreviewState(null);
+			setAIImagePreviewState(null);
+			setPreviewDocument(null);
+			const requestId = generateId();
+			try {
+				const aiContext = buildAIEditContext(document, selectionIds, activePageId, canvasSize);
+				const aiResponse = await requestAIEdit({
+					requestId,
+					prompt,
+					modelId,
+					context: aiContext,
+					signal,
+				});
+
+				const viewportCenter = {
+					x: (canvasSize.width / 2 - panOffset.x) / zoom,
+					y: (canvasSize.height / 2 - panOffset.y) / zoom,
+				};
+				const hydrated = hydrateAICommandDrafts({
+					document,
+					drafts: aiResponse.commandDrafts,
+					selectedIds: selectionIds,
+					activePageRootId,
+					activePageNodeIds,
+					fallbackPosition: viewportCenter,
+				});
+				const combinedWarnings = [...aiResponse.warnings, ...hydrated.warnings];
+				setAISummary(aiResponse.summary);
+				setAIWarnings(combinedWarnings);
+				setAITextModelId(aiResponse.modelId);
+
+				if (hydrated.commands.length === 0) {
+					setAIStatus('error');
+					setAIErrorMessage(
+						combinedWarnings[0] ?? 'No safe edits were generated for the current selection. Refine your prompt.',
+					);
+					return;
+				}
+
+				const previewDoc = applyAICommandPreview(document, hydrated.commands);
+				setPreviewDocument(previewDoc);
+				setAIEditPreviewState({
+					requestId: aiResponse.requestId,
+					drafts: aiResponse.commandDrafts,
+					commands: hydrated.commands,
+					selectionKey: aiSelectionKey,
+				});
+				setAIStatus('preview-ready');
+				setAIErrorMessage(null);
+			} catch (error) {
+				if (signal.aborted) {
+					setAIStatus('idle');
+					setAIErrorMessage(null);
+					return;
+				}
+				if (error instanceof AIClientError) {
+					const code = error.message;
+					if (
+						(code === 'model_not_allowed' || code === 'unsupported_model' || code === 'modality_mismatch') &&
+						aiTextModelId !== DEFAULT_TEXT_MODEL_ID
+					) {
+						setAITextModelId(DEFAULT_TEXT_MODEL_ID);
+						setAIWarnings(['Selected model is unavailable for this deployment. Switched to default model.']);
+					}
+				}
+				const message =
+					error instanceof AIClientError
+						? error.message
+						: error instanceof Error
+							? error.message
+							: 'Failed to generate AI edit preview.';
+				setAIStatus('error');
+				setAIErrorMessage(message);
+			}
+		},
+		[
+			activePageId,
+			activePageNodeIds,
+			activePageRootId,
+			aiSelectionKey,
+			aiTextModelId,
+			canvasSize,
+			document,
+			panOffset.x,
+			panOffset.y,
+			selectionIds,
+			zoom,
+		],
+	);
+	const handleRunAIImage = useCallback(
+		async (prompt: string, signal: AbortSignal, modelId?: string, size?: AIImageSize) => {
+			if (!ENABLE_AI_ASSISTANT_V1) return;
+			setAIStatus('generating');
+			setAIErrorMessage(null);
+			setAIWarnings([]);
+			setAIEditPreviewState(null);
+			setAIImagePreviewState(null);
+			setPreviewDocument(null);
+			const requestId = generateId();
+			const imageSize = size ?? aiImageSize;
+			try {
+				const response = await requestAIImageGenerate({
+					requestId,
+					prompt,
+					modelId,
+					context: {
+						activePageId,
+						selectionSummary: selectionIds.length > 0 ? `Selected: ${selectionIds.length} nodes` : 'No selection',
+						canvas: canvasSize,
+					},
+					image: {
+						size: imageSize,
+						count: 1,
+					},
+					signal,
+				});
+				const enrichedImages = await Promise.all(
+					response.images.map(async (image) => {
+						const dataUrl = buildDataUrl(image.mimeType, image.base64);
+						try {
+							const dimensions = await getImageSize(dataUrl);
+							return { ...image, width: dimensions.width, height: dimensions.height };
+						} catch {
+							return { ...image, width: 1024, height: 1024 };
+						}
+					}),
+				);
+				setAISummary(response.summary);
+				setAIWarnings(response.warnings);
+				setAIImageModelId(response.modelId);
+				setAIImagePreviewState({
+					requestId: response.requestId,
+					modelId: response.modelId,
+					size: imageSize,
+					images: enrichedImages,
+				});
+				setAIStatus('preview-ready');
+				setAIErrorMessage(null);
+			} catch (error) {
+				if (signal.aborted) {
+					setAIStatus('idle');
+					setAIErrorMessage(null);
+					return;
+				}
+				if (error instanceof AIClientError) {
+					const code = error.message;
+					if (
+						(code === 'model_not_allowed' || code === 'unsupported_model' || code === 'modality_mismatch') &&
+						aiImageModelId !== DEFAULT_IMAGE_MODEL_ID
+					) {
+						setAIImageModelId(DEFAULT_IMAGE_MODEL_ID);
+						setAIWarnings(['Selected image model is unavailable for this deployment. Switched to default model.']);
+					}
+				}
+				const message =
+					error instanceof AIClientError
+						? error.message
+						: error instanceof Error
+							? error.message
+							: 'Failed to generate AI image preview.';
+				setAIStatus('error');
+				setAIErrorMessage(message);
+			}
+		},
+		[activePageId, aiImageModelId, aiImageSize, canvasSize, selectionIds.length],
+	);
+	const handleApplyAIPreview = useCallback(() => {
+		if (aiMode === 'edit') {
+			if (!aiEditPreviewState) return;
+			if (aiEditPreviewState.commands.length === 1) {
+				executeCommand(aiEditPreviewState.commands[0]);
+			} else {
+				executeCommand({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'ai',
+					description: 'Apply AI edits',
+					type: 'batch',
+					payload: {
+						commands: aiEditPreviewState.commands,
+					},
+				} as Command);
+			}
+			setAIEditPreviewState(null);
+			setPreviewDocument(null);
+			setAIStatus('applied');
+			setAIErrorMessage(null);
+			return;
+		}
+		if (!aiImagePreviewState) return;
+		const centerWorld = {
+			x: (canvasSize.width / 2 - panOffset.x) / Math.max(zoom, 0.0001),
+			y: (canvasSize.height / 2 - panOffset.y) / Math.max(zoom, 0.0001),
+		};
+		const commands: Command[] = [];
+		for (let index = 0; index < aiImagePreviewState.images.length; index += 1) {
+			const image = aiImagePreviewState.images[index];
+			const assetId = generateId();
+			const nodeId = generateId();
+			const maxDimension = 900;
+			const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+			const width = Math.max(1, Math.round(image.width * scale));
+			const height = Math.max(1, Math.round(image.height * scale));
+			const offset = index * 24;
+			commands.push({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'ai',
+				description: 'Create AI image asset',
+				type: 'createAsset',
+				payload: {
+					id: assetId,
+					asset: {
+						type: 'image',
+						mime: image.mimeType,
+						dataBase64: image.base64,
+						width: image.width,
+						height: image.height,
+					},
+				},
+			} as Command);
+			commands.push({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'ai',
+				description: 'Insert AI image',
+				type: 'createNode',
+				payload: {
+					id: nodeId,
+					parentId: activePageRootId,
+					node: {
+						type: 'image',
+						name: 'AI Image',
+						position: {
+							x: centerWorld.x - width / 2 + offset,
+							y: centerWorld.y - height / 2 + offset,
+						},
+						size: { width, height },
+						image: {
+							mime: image.mimeType,
+							assetId,
+						},
+						visible: true,
+						aspectRatioLocked: true,
+					},
+				},
+			} as Command);
+		}
+		if (commands.length === 1) {
+			executeCommand(commands[0]);
+		} else {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'ai',
+				description: 'Apply AI images',
+				type: 'batch',
+				payload: { commands },
+			} as Command);
+		}
+		setAIImagePreviewState(null);
+		setAIStatus('applied');
+		setAIErrorMessage(null);
+	}, [
+		activePageRootId,
+		aiEditPreviewState,
+		aiImagePreviewState,
+		aiMode,
+		canvasSize.height,
+		canvasSize.width,
+		executeCommand,
+		panOffset.x,
+		panOffset.y,
+		zoom,
+	]);
+	const handleRejectAIPreview = useCallback(() => {
+		setAIEditPreviewState(null);
+		setAIImagePreviewState(null);
+		setPreviewDocument(null);
+		setAIStatus('idle');
+		setAIErrorMessage(null);
+	}, []);
+	const handleRefreshAIPreview = useCallback(() => {
+		if (aiMode !== 'edit' || !aiEditPreviewState) return;
+		const previewDoc = applyAICommandPreview(document, aiEditPreviewState.commands);
+		setPreviewDocument(previewDoc);
+		setAIStatus('preview-ready');
+		setAIErrorMessage(null);
+	}, [aiEditPreviewState, aiMode, document]);
+	useEffect(() => {
+		if (!aiEditPreviewState) return;
+		if (aiEditPreviewState.selectionKey === aiSelectionKey) return;
+		setAIEditPreviewState(null);
+		setPreviewDocument(null);
+		setAIStatus('error');
+		setAIErrorMessage('Selection changed. Re-run AI to generate a fresh preview.');
+	}, [aiEditPreviewState, aiSelectionKey]);
+	useEffect(() => {
+		if (aiMode === 'edit') return;
+		if (!previewDocument) return;
+		setPreviewDocument(null);
+	}, [aiMode, previewDocument]);
+	useEffect(() => {
+		if (aiMode !== 'edit') return;
+		if (!aiEditPreviewState || aiStatus !== 'preview-ready') return;
+		if (previewDocument) return;
+		setAIEditPreviewState(null);
+		setAIStatus('error');
+		setAIErrorMessage('AI preview was cleared by another action. Re-run AI to continue.');
+	}, [aiEditPreviewState, aiMode, aiStatus, previewDocument]);
 	const activePagePrototype = useMemo(
 		() => document.prototype.pages[activePageId] ?? { interactionsBySource: {} },
 		[document.prototype.pages, activePageId],
@@ -8874,6 +9276,11 @@ export const App: React.FC = () => {
 				setCommandPaletteOpen((prev) => !prev);
 				return;
 			}
+			if (isCmd && key === 'j' && isEditorView && ENABLE_AI_ASSISTANT_V1) {
+				e.preventDefault();
+				openAIAssistant();
+				return;
+			}
 
 			if (commandPaletteOpen) {
 				if (e.key === 'Escape') {
@@ -9271,6 +9678,7 @@ export const App: React.FC = () => {
 		handleLoad,
 		handleOpenFigmaImport,
 		handleImportImage,
+		openAIAssistant,
 		executeCommand,
 		copySelectionToClipboard,
 		copyEffects,
@@ -9365,6 +9773,33 @@ export const App: React.FC = () => {
 				shortcut: 'Cmd+W',
 				action: handleBackToProjects,
 			});
+			if (ENABLE_AI_ASSISTANT_V1) {
+				items.push({
+					id: 'command-open-ai-assistant',
+					label: 'Open AI Assistant',
+					section: 'Commands',
+					shortcut: 'Cmd+J',
+					action: openAIAssistant,
+				});
+				items.push({
+					id: 'command-open-ai-edit-mode',
+					label: 'AI Edit Mode',
+					section: 'Commands',
+					action: () => {
+						setAIMode('edit');
+						openAIAssistant();
+					},
+				});
+				items.push({
+					id: 'command-open-ai-image-mode',
+					label: 'AI Image Mode',
+					section: 'Commands',
+					action: () => {
+						setAIMode('image');
+						openAIAssistant();
+					},
+				});
+			}
 			items.push({
 				id: 'command-zoom-in',
 				label: 'Zoom In',
@@ -9456,6 +9891,7 @@ export const App: React.FC = () => {
 		currentPath,
 		fileName,
 		handleBackToProjects,
+		openAIAssistant,
 		handleCreateProject,
 		handleOpenFigmaImport,
 		handleOpenFile,
@@ -9849,67 +10285,102 @@ export const App: React.FC = () => {
 									onOpenJoinModal={handleJoinCollab}
 								/>
 							)}
+							{editorMode === 'design' && ENABLE_AI_ASSISTANT_V1 && (
+								<RightPanelTabs activeTab={rightPanelTab} onChange={setRightPanelTab} />
+							)}
 							<div style={{ flex: 1, overflow: 'hidden' }}>
-						{editorMode === 'prototype' ? (
-							<PrototypePanel
-								pageId={activePageId}
-								width={rightPanelWidth}
-								collapsed={rightPanelCollapsed}
-								isResizing={panelResizeState !== null}
-								onToggleCollapsed={toggleRightPanel}
-								frames={prototypeFrameOptions}
-								selectedFrameId={selectedPrototypeFrameId}
-								pagePrototype={activePagePrototype}
-								onSetStartFrame={setPrototypeStartFrame}
-								onSetInteraction={setPrototypeInteraction}
-								onLaunchPreview={launchPrototypePreview}
-							/>
-						) : (
-							<PropertiesPanel
-								selectedNode={selectedNode}
-								document={document}
-								styles={document.styles}
-								width={rightPanelWidth}
-								collapsed={rightPanelCollapsed}
-								isResizing={panelResizeState !== null}
-								onToggleCollapsed={toggleRightPanel}
-								onUpdateNode={handleUpdateNode}
-								onOpenPlugin={handleOpenPlugin}
-								onRemoveBackground={removeBackgroundForImage}
-								onClearBackground={clearBackgroundRemoval}
-								onUpdateImageOutline={updateImageOutline}
-								isRemovingBackground={isRemovingBackground}
-								zoom={zoom}
-								onZoomTo={handleZoomTo}
-								onZoomToFit={handleZoomToFit}
-								onZoomToSelection={handleZoomToSelection}
-								onCopyEffects={(nodeId) => copyEffects(nodeId)}
-								onPasteEffects={(nodeId) => pasteEffects([nodeId])}
-								canPasteEffects={Boolean(effectsClipboardRef.current?.length)}
-								textOverflow={selectedTextOverflow}
-								componentContext={componentPanelContext}
-								onSetComponentVariant={setComponentInstanceVariant}
-								onDetachComponentInstance={detachComponentInstance}
-								onResetComponentOverride={(instanceId, sourceNodeId) =>
-									setComponentInstanceOverride(instanceId, sourceNodeId, undefined, true)
-								}
-								onResetAllComponentOverrides={resetAllComponentOverrides}
-								onCreateSharedStyleFromNode={createSharedStyleFromNode}
-								onUpdateDocumentAppearance={updateDocumentAppearance}
-								onPickImageAssetForPaint={pickImageAssetForPaint}
-								vectorTarget={
-									editablePathNode?.type === 'path'
-										? {
-												pathId: editablePathNode.id,
-												closed: editablePathNode.vector?.closed ?? false,
-												pointCount: editablePathPointCount,
-												selectedPointId: vectorEditSession?.selectedPointId ?? null,
-											}
-										: null
-								}
-								onToggleVectorClosed={toggleVectorClosed}
-							/>
-						)}
+								{editorMode === 'prototype' ? (
+									<PrototypePanel
+										pageId={activePageId}
+										width={rightPanelWidth}
+										collapsed={rightPanelCollapsed}
+										isResizing={panelResizeState !== null}
+										onToggleCollapsed={toggleRightPanel}
+										frames={prototypeFrameOptions}
+										selectedFrameId={selectedPrototypeFrameId}
+										pagePrototype={activePagePrototype}
+										onSetStartFrame={setPrototypeStartFrame}
+										onSetInteraction={setPrototypeInteraction}
+										onLaunchPreview={launchPrototypePreview}
+									/>
+								) : ENABLE_AI_ASSISTANT_V1 && rightPanelTab === 'ai' ? (
+									<AIPanel
+										mode={aiMode}
+										onModeChange={setAIMode}
+										status={aiStatus}
+										selectionCount={selectionIds.length}
+										summary={aiSummary}
+										warnings={aiWarnings}
+										errorMessage={aiErrorMessage}
+										proposedChanges={
+											aiMode === 'edit'
+												? aiEditPreviewState?.commands.map((command) => command.description ?? command.type) ?? []
+												: aiImagePreviewState?.images.map(
+														(image, index) => `Image ${index + 1}: ${image.mimeType} (${image.width}x${image.height})`,
+													) ?? []
+										}
+										textModels={TEXT_MODEL_OPTIONS}
+										imageModels={IMAGE_MODEL_OPTIONS}
+										selectedTextModelId={aiTextModelId}
+										selectedImageModelId={aiImageModelId}
+										selectedImageSize={aiImageSize}
+										enableModelPicker={ENABLE_AI_MODEL_PICKER_V1}
+										onSelectTextModel={setAITextModelId}
+										onSelectImageModel={setAIImageModelId}
+										onSelectImageSize={setAIImageSize}
+										onRunEdit={handleRunAIEdit}
+										onRunImage={handleRunAIImage}
+										onPreview={handleRefreshAIPreview}
+										onApply={handleApplyAIPreview}
+										onReject={handleRejectAIPreview}
+										onOpenProperties={openPropertiesTab}
+									/>
+								) : (
+									<PropertiesPanel
+										selectedNode={selectedNode}
+										document={document}
+										styles={document.styles}
+										width={rightPanelWidth}
+										collapsed={rightPanelCollapsed}
+										isResizing={panelResizeState !== null}
+										onToggleCollapsed={toggleRightPanel}
+										onUpdateNode={handleUpdateNode}
+										onOpenPlugin={handleOpenPlugin}
+										onRemoveBackground={removeBackgroundForImage}
+										onClearBackground={clearBackgroundRemoval}
+										onUpdateImageOutline={updateImageOutline}
+										isRemovingBackground={isRemovingBackground}
+										zoom={zoom}
+										onZoomTo={handleZoomTo}
+										onZoomToFit={handleZoomToFit}
+										onZoomToSelection={handleZoomToSelection}
+										onCopyEffects={(nodeId) => copyEffects(nodeId)}
+										onPasteEffects={(nodeId) => pasteEffects([nodeId])}
+										canPasteEffects={Boolean(effectsClipboardRef.current?.length)}
+										textOverflow={selectedTextOverflow}
+										componentContext={componentPanelContext}
+										onSetComponentVariant={setComponentInstanceVariant}
+										onDetachComponentInstance={detachComponentInstance}
+										onResetComponentOverride={(instanceId, sourceNodeId) =>
+											setComponentInstanceOverride(instanceId, sourceNodeId, undefined, true)
+										}
+										onResetAllComponentOverrides={resetAllComponentOverrides}
+										onCreateSharedStyleFromNode={createSharedStyleFromNode}
+										onUpdateDocumentAppearance={updateDocumentAppearance}
+										onPickImageAssetForPaint={pickImageAssetForPaint}
+										vectorTarget={
+											editablePathNode?.type === 'path'
+												? {
+														pathId: editablePathNode.id,
+														closed: editablePathNode.vector?.closed ?? false,
+														pointCount: editablePathPointCount,
+														selectedPointId: vectorEditSession?.selectedPointId ?? null,
+													}
+												: null
+										}
+										onToggleVectorClosed={toggleVectorClosed}
+									/>
+								)}
 							</div>
 						</div>
 					</div>
