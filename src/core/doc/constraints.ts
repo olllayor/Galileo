@@ -55,6 +55,12 @@ export const computeConstrainedBounds = (
 		case 'center':
 			x = nextWidth / 2 + centerOffsetX - width / 2;
 			break;
+		case 'scale': {
+			const ratio = startWidth === 0 ? 1 : nextWidth / startWidth;
+			x = left * ratio;
+			width = clampSize(bounds.width * ratio);
+			break;
+		}
 		case 'left':
 		default:
 			x = left;
@@ -72,6 +78,12 @@ export const computeConstrainedBounds = (
 		case 'center':
 			y = nextHeight / 2 + centerOffsetY - height / 2;
 			break;
+		case 'scale': {
+			const ratio = startHeight === 0 ? 1 : nextHeight / startHeight;
+			y = top * ratio;
+			height = clampSize(bounds.height * ratio);
+			break;
+		}
 		case 'top':
 		default:
 			y = top;

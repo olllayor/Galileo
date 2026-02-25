@@ -74,10 +74,11 @@ const runSingleBenchmark = async (
 	const totalTimeMs = performance.now() - startTime;
 
 	const fileSizeKb = (result.dataBase64.length * 0.75) / 1024; // base64 to bytes
+	const benchmarkFormat: 'png' | 'webp' = options.format === 'webp' ? 'webp' : 'png';
 
 	return {
 		label,
-		format: options.format ?? 'png',
+		format: benchmarkFormat,
 		encoder: options.useNativeEncoder ? 'rust' : 'canvas',
 		width: result.width,
 		height: result.height,

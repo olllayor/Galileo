@@ -1,11 +1,64 @@
 import { z } from 'zod';
 
+export const layerBlendModeSchema = z.enum([
+	'normal',
+	'multiply',
+	'screen',
+	'overlay',
+	'darken',
+	'lighten',
+	'color-dodge',
+	'color-burn',
+	'hard-light',
+	'soft-light',
+	'difference',
+	'exclusion',
+	'hue',
+	'saturation',
+	'color',
+	'luminosity',
+]);
+export type LayerBlendMode = z.infer<typeof layerBlendModeSchema>;
+
+const gradientStopSchema = z.object({
+	offset: z.number(),
+	color: z.string(),
+});
+
 const gradientSchema = z
 	.object({
 		type: z.literal('gradient'),
-		stops: z.any().array(),
+		kind: z.enum(['linear', 'radial']).optional(),
+		stops: gradientStopSchema.array().min(1),
+		from: z.object({ x: z.number(), y: z.number() }).optional(),
+		to: z.object({ x: z.number(), y: z.number() }).optional(),
+		center: z.object({ x: z.number(), y: z.number() }).optional(),
+		radius: z.number().optional(),
+		innerRadius: z.number().optional(),
+		angle: z.number().optional(),
 	})
 	.passthrough();
+
+const patternSchema = z.object({
+	type: z.literal('pattern'),
+	pattern: z.enum(['grid', 'dots', 'stripes', 'noise']),
+	fg: z.string(),
+	bg: z.string(),
+	scale: z.number(),
+	rotation: z.number(),
+	opacity: z.number().optional(),
+});
+
+const imagePaintSchema = z.object({
+	type: z.literal('image'),
+	assetId: z.string(),
+	fit: z.enum(['fill', 'fit', 'tile']),
+	opacity: z.number().optional(),
+	tileScale: z.number().optional(),
+	tileOffsetX: z.number().optional(),
+	tileOffsetY: z.number().optional(),
+	rotation: z.number().optional(),
+});
 
 export const colorSchema = z.union([
 	z.object({
@@ -13,6 +66,8 @@ export const colorSchema = z.union([
 		value: z.string(),
 	}),
 	gradientSchema,
+	patternSchema,
+	imagePaintSchema,
 ]);
 
 export type Color = z.infer<typeof colorSchema>;
@@ -21,9 +76,50 @@ export const strokeSchema = z.object({
 	color: colorSchema,
 	width: z.number(),
 	style: z.enum(['solid', 'dashed', 'dotted']),
+	align: z.enum(['inside', 'center', 'outside']).optional(),
+	cap: z.enum(['butt', 'round', 'square']).optional(),
+	join: z.enum(['miter', 'round', 'bevel']).optional(),
+	miterLimit: z.number().optional(),
+	dashPattern: z.array(z.number()).optional(),
+	dashOffset: z.number().optional(),
+	opacity: z.number().optional(),
+	blendMode: layerBlendModeSchema.optional(),
+	visible: z.boolean().optional(),
 });
 
 export type Stroke = z.infer<typeof strokeSchema>;
+
+export const paintLayerSchema = z.object({
+	id: z.string(),
+	visible: z.boolean().optional(),
+	opacity: z.number().optional(),
+	blendMode: layerBlendModeSchema.optional(),
+	paint: colorSchema,
+});
+export type PaintLayer = z.infer<typeof paintLayerSchema>;
+
+export const strokeLayerSchema = z.object({
+	id: z.string(),
+	visible: z.boolean().optional(),
+	opacity: z.number().optional(),
+	blendMode: layerBlendModeSchema.optional(),
+	paint: colorSchema,
+	width: z.number(),
+	align: z.enum(['inside', 'center', 'outside']).optional(),
+	cap: z.enum(['butt', 'round', 'square']).optional(),
+	join: z.enum(['miter', 'round', 'bevel']).optional(),
+	miterLimit: z.number().optional(),
+	dashPattern: z.array(z.number()).optional(),
+	dashOffset: z.number().optional(),
+});
+export type StrokeLayer = z.infer<typeof strokeLayerSchema>;
+
+export const maskSettingsSchema = z.object({
+	sourceNodeId: z.string().optional(),
+	mode: z.enum(['alpha', 'luminance']),
+	enabled: z.boolean(),
+});
+export type MaskSettings = z.infer<typeof maskSettingsSchema>;
 
 export const shadowBlendModeSchema = z.enum(['normal', 'multiply', 'screen', 'overlay']);
 export type ShadowBlendMode = z.infer<typeof shadowBlendModeSchema>;
@@ -91,6 +187,31 @@ export const shadowEffectSchema = z.discriminatedUnion('type', [
 ]);
 export type ShadowEffect = z.infer<typeof shadowEffectSchema>;
 export type RenderableShadowEffect = z.infer<typeof dropShadowEffectSchema> | z.infer<typeof innerShadowEffectSchema>;
+
+export const layerBlurEffectSchema = z.object({
+	type: z.literal('layerBlur'),
+	blur: z.number().min(0),
+	enabled: z.boolean().optional(),
+});
+
+export const backgroundBlurEffectSchema = z.object({
+	type: z.literal('backgroundBlur'),
+	blur: z.number().min(0),
+	enabled: z.boolean().optional(),
+});
+
+export type LayerBlurEffect = z.infer<typeof layerBlurEffectSchema>;
+export type BackgroundBlurEffect = z.infer<typeof backgroundBlurEffectSchema>;
+
+export const effectSchema = z.discriminatedUnion('type', [
+	dropShadowEffectSchema,
+	innerShadowEffectSchema,
+	autoShadowEffectSchema,
+	layerBlurEffectSchema,
+	backgroundBlurEffectSchema,
+]);
+
+export type Effect = z.infer<typeof effectSchema>;
 
 export const positionSchema = z.object({
 	x: z.number(),
@@ -207,6 +328,7 @@ export type ImageOutline = z.infer<typeof imageOutlineSchema>;
 export const layoutSchema = z.object({
 	type: z.literal('auto'),
 	direction: z.enum(['row', 'column']),
+	wrap: z.enum(['nowrap', 'wrap']).optional(),
 	gap: z.number(),
 	padding: z.object({
 		top: z.number(),
@@ -214,7 +336,7 @@ export const layoutSchema = z.object({
 		bottom: z.number(),
 		left: z.number(),
 	}),
-	alignment: z.enum(['start', 'center', 'end']),
+	alignment: z.enum(['start', 'center', 'end', 'space-between']),
 	crossAlignment: z.enum(['start', 'center', 'end', 'stretch']).optional(),
 });
 
@@ -223,18 +345,39 @@ export type Layout = z.infer<typeof layoutSchema>;
 export const layoutSizingSchema = z.object({
 	horizontal: z.enum(['fixed', 'hug', 'fill']),
 	vertical: z.enum(['fixed', 'hug', 'fill']),
+	minWidth: z.number().min(0).optional(),
+	maxWidth: z.number().min(0).optional(),
+	minHeight: z.number().min(0).optional(),
+	maxHeight: z.number().min(0).optional(),
 });
 
 export type LayoutSizing = z.infer<typeof layoutSizingSchema>;
 
 export const textAlignSchema = z.enum(['left', 'center', 'right']);
 export const textResizeModeSchema = z.enum(['auto-width', 'auto-height', 'fixed']);
+export const textListTypeSchema = z.enum(['none', 'bullet', 'numbered']);
+export const textOverflowModeSchema = z.enum(['clip', 'ellipsis', 'visible']);
+export const textSpanSchema = z.object({
+	start: z.number().int().min(0),
+	end: z.number().int().min(0),
+	fill: colorSchema.optional(),
+	fontSize: z.number().optional(),
+	fontFamily: z.string().optional(),
+	fontWeight: z.enum(['normal', 'bold', '500', '600']).optional(),
+	textAlign: textAlignSchema.optional(),
+	lineHeightPx: z.number().optional(),
+	letterSpacingPx: z.number().optional(),
+	textStyleId: z.string().optional(),
+});
 
 export type TextAlign = z.infer<typeof textAlignSchema>;
 export type TextResizeMode = z.infer<typeof textResizeModeSchema>;
+export type TextListType = z.infer<typeof textListTypeSchema>;
+export type TextOverflowMode = z.infer<typeof textOverflowModeSchema>;
+export type TextSpan = z.infer<typeof textSpanSchema>;
 
-export const constraintAxisXSchema = z.enum(['left', 'right', 'left-right', 'center']);
-export const constraintAxisYSchema = z.enum(['top', 'bottom', 'top-bottom', 'center']);
+export const constraintAxisXSchema = z.enum(['left', 'right', 'left-right', 'center', 'scale']);
+export const constraintAxisYSchema = z.enum(['top', 'bottom', 'top-bottom', 'center', 'scale']);
 export const constraintsSchema = z.object({
 	horizontal: constraintAxisXSchema,
 	vertical: constraintAxisYSchema,
@@ -326,7 +469,7 @@ export const textStyleSchema = z.object({
 export const effectStyleSchema = z.object({
 	id: z.string(),
 	name: z.string(),
-	effects: shadowEffectSchema.array(),
+	effects: effectSchema.array(),
 });
 
 export const gridStyleSchema = z.object({
@@ -409,8 +552,12 @@ export const componentOverridePatchSchema = z
 	.object({
 		text: z.string().optional(),
 		fill: colorSchema.optional(),
+		fills: paintLayerSchema.array().optional(),
 		fillStyleId: z.string().optional(),
 		stroke: strokeSchema.optional(),
+		strokes: strokeLayerSchema.array().optional(),
+		blendMode: layerBlendModeSchema.optional(),
+		mask: maskSettingsSchema.optional(),
 		opacity: z.number().optional(),
 		visible: z.boolean().optional(),
 		textStyleId: z.string().optional(),
@@ -457,6 +604,7 @@ const nodeImageSchema = z
 export const nodeSchema = z.object({
 	id: z.string(),
 	type: z.enum(['frame', 'group', 'rectangle', 'text', 'image', 'componentInstance', 'ellipse', 'path', 'boolean']),
+	shapeKind: z.enum(['line', 'arrow', 'polygon', 'star']).optional(),
 	name: z.string().optional(),
 	children: z.string().array().optional(),
 
@@ -467,8 +615,12 @@ export const nodeSchema = z.object({
 	layout: layoutSchema.optional(),
 
 	fill: colorSchema.optional(),
+	fills: paintLayerSchema.array().optional(),
 	fillStyleId: z.string().optional(),
 	stroke: strokeSchema.optional(),
+	strokes: strokeLayerSchema.array().optional(),
+	blendMode: layerBlendModeSchema.optional(),
+	mask: maskSettingsSchema.optional(),
 	opacity: z.number().optional(),
 	cornerRadius: z.number().optional(),
 
@@ -481,6 +633,10 @@ export const nodeSchema = z.object({
 	lineHeightPx: z.number().optional(),
 	letterSpacingPx: z.number().optional(),
 	textResizeMode: textResizeModeSchema.optional(),
+	textListType: textListTypeSchema.optional(),
+	textOverflowMode: textOverflowModeSchema.optional(),
+	paragraphSpacingPx: z.number().min(0).optional(),
+	textSpans: z.array(textSpanSchema).optional(),
 
 	image: nodeImageSchema.optional(),
 
@@ -515,7 +671,7 @@ export const nodeSchema = z.object({
 	aspectRatioLocked: z.boolean().optional(),
 	clipContent: z.boolean().optional(),
 	shadowOverflow: z.enum(['visible', 'clipped', 'clip-content-only']).optional(),
-	effects: shadowEffectSchema.array().optional(),
+	effects: effectSchema.array().optional(),
 	effectStyleId: z.string().optional(),
 	effectBindings: shadowEffectBindingSchema.optional(),
 	effectVariables: z.record(z.union([z.string(), z.number()])).optional(),
@@ -523,6 +679,8 @@ export const nodeSchema = z.object({
 	layoutGuides: layoutGuideSchema.optional(),
 	gridStyleId: z.string().optional(),
 	layoutSizing: layoutSizingSchema.optional(),
+	layoutAlign: z.enum(['auto', 'start', 'center', 'end', 'stretch']).optional(),
+	layoutAbsolute: z.boolean().optional(),
 });
 
 export type Node = z.infer<typeof nodeSchema>;
@@ -574,6 +732,66 @@ export const pageSchema = z.object({
 
 export type Page = z.infer<typeof pageSchema>;
 
+export const prototypeTransitionSchema = z.enum([
+	'instant',
+	'dissolve',
+	'slide-left',
+	'slide-right',
+	'slide-up',
+	'slide-down',
+]);
+
+export const prototypeTriggerSchema = z.enum(['click', 'hover', 'key', 'delay', 'drag']);
+export const prototypeActionSchema = z.enum(['navigate', 'overlay', 'open-link', 'back']);
+
+export const prototypeInteractionSchema = z.object({
+	action: prototypeActionSchema.optional(),
+	targetFrameId: z.string().optional(),
+	transition: prototypeTransitionSchema,
+	key: z.string().optional(),
+	delayMs: z.number().min(0).optional(),
+	url: z.string().optional(),
+});
+
+export const prototypeSourceInteractionsSchema = z.object({
+	click: prototypeInteractionSchema.optional(),
+	hover: prototypeInteractionSchema.optional(),
+	key: prototypeInteractionSchema.optional(),
+	delay: prototypeInteractionSchema.optional(),
+	drag: prototypeInteractionSchema.optional(),
+});
+
+export const prototypePageGraphSchema = z.object({
+	startFrameId: z.string().optional(),
+	interactionsBySource: z.record(z.string(), prototypeSourceInteractionsSchema),
+});
+
+export const prototypeGraphSchema = z.object({
+	pages: z.record(z.string(), prototypePageGraphSchema),
+});
+
+export const documentAppearanceSchema = z.object({
+	recentSwatches: z.array(z.string()),
+	sampleSwatches: z.array(z.string()),
+});
+
+export type PrototypeTransition = z.infer<typeof prototypeTransitionSchema>;
+export type PrototypeTrigger = z.infer<typeof prototypeTriggerSchema>;
+export type PrototypeAction = z.infer<typeof prototypeActionSchema>;
+export type PrototypeInteraction = z.infer<typeof prototypeInteractionSchema>;
+export type PrototypeSourceInteractions = z.infer<typeof prototypeSourceInteractionsSchema>;
+export type PrototypePageGraph = z.infer<typeof prototypePageGraphSchema>;
+export type PrototypeGraph = z.infer<typeof prototypeGraphSchema>;
+export type DocumentAppearance = z.infer<typeof documentAppearanceSchema>;
+
+export const createEmptyPrototypePageGraph = (): PrototypePageGraph => ({
+	interactionsBySource: {},
+});
+
+export const createEmptyPrototypeGraph = (pageIds: string[] = []): PrototypeGraph => ({
+	pages: Object.fromEntries(pageIds.map((pageId) => [pageId, createEmptyPrototypePageGraph()])),
+});
+
 export const documentSchema = z.object({
 	version: z.number().int().nonnegative(),
 	rootId: z.string(),
@@ -584,12 +802,14 @@ export const documentSchema = z.object({
 	components: componentsLibrarySchema,
 	styles: styleLibrarySchema,
 	variables: styleVariableLibrarySchema,
+	appearance: documentAppearanceSchema.optional(),
+	prototype: prototypeGraphSchema,
 });
 
 export type Document = z.infer<typeof documentSchema>;
 
 export const createDocument = (): Document => ({
-	version: 9,
+	version: 13,
 	rootId: 'root',
 	pages: [
 		{
@@ -626,6 +846,11 @@ export const createDocument = (): Document => ({
 		tokens: {},
 		activeModeByCollection: {},
 	},
+	appearance: {
+		recentSwatches: [],
+		sampleSwatches: ['#ffffff', '#d9d9d9', '#000000', '#ff5e5b', '#00a884', '#3a7bff'],
+	},
+	prototype: createEmptyPrototypeGraph(['page_1']),
 });
 
 export const validateDocument = (doc: unknown): doc is Document => {

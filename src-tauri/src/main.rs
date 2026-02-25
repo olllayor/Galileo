@@ -16,6 +16,7 @@ use std::os::raw::c_char;
 
 mod background_remove;
 mod draft_store;
+mod figma;
 mod unsplash;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,6 +63,7 @@ pub struct SaveBinaryArgs {
 #[serde(rename_all = "camelCase")]
 pub struct SaveImageDialogArgs {
     pub suggested_name: Option<String>,
+    pub extensions: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -183,9 +185,21 @@ fn load_text(path: String) -> Result<String, String> {
 
 #[tauri::command]
 fn show_save_image_dialog(args: SaveImageDialogArgs) -> Result<Option<String>, String> {
-    let mut dialog = rfd::FileDialog::new()
-        .add_filter("PNG", &["png"])
-        .set_title("Export Image");
+    let mut dialog = rfd::FileDialog::new().set_title("Export");
+    if let Some(extensions) = args.extensions.clone() {
+        let filtered: Vec<String> = extensions
+            .into_iter()
+            .filter(|ext| !ext.trim().is_empty())
+            .collect();
+        if filtered.is_empty() {
+            dialog = dialog.add_filter("Image", &["png"]);
+        } else {
+            let refs: Vec<&str> = filtered.iter().map(|ext| ext.as_str()).collect();
+            dialog = dialog.add_filter("Export", &refs);
+        }
+    } else {
+        dialog = dialog.add_filter("Image", &["png"]);
+    }
     if let Some(name) = args.suggested_name {
         dialog = dialog.set_file_name(&name);
     }
@@ -400,6 +414,10 @@ fn main() {
             unsplash::unsplash_get_photo,
             unsplash::unsplash_track_download,
             unsplash::unsplash_fetch_image,
+            figma::figma_fetch_file,
+            figma::figma_fetch_nodes,
+            figma::figma_fetch_images,
+            figma::figma_fetch_local_variables,
         ])
         .setup(|_app| {
             log_env_diagnostics();

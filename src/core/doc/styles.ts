@@ -1,9 +1,9 @@
 import type {
 	Color,
 	Document,
+	Effect,
 	LayoutGuide,
 	Node,
-	ShadowEffect,
 	StyleVariableCollection,
 	StyleVariableToken,
 } from './types';
@@ -17,7 +17,7 @@ type ResolvedNodeStyleProps = {
 	lineHeightPx: number | undefined;
 	letterSpacingPx: number | undefined;
 	textResizeMode: Node['textResizeMode'] | undefined;
-	effects: ShadowEffect[] | undefined;
+	effects: Effect[] | undefined;
 	layoutGuides: LayoutGuide | undefined;
 };
 
@@ -26,10 +26,21 @@ const cloneColor = (color: Color | undefined): Color | undefined => {
 	if (color.type === 'solid') {
 		return { type: 'solid', value: color.value };
 	}
+	if (color.type === 'gradient') {
+		return {
+			...color,
+			stops: Array.isArray(color.stops) ? [...color.stops] : [],
+		};
+	}
 	return {
 		...color,
-		stops: Array.isArray(color.stops) ? [...color.stops] : [],
 	};
+};
+
+const clonePrimaryFillLayerPaint = (node: Node): Color | undefined => {
+	const firstVisibleLayer = node.fills?.find((layer) => layer.visible !== false);
+	if (!firstVisibleLayer) return undefined;
+	return cloneColor(firstVisibleLayer.paint);
 };
 
 const cloneLayoutGuide = (guide: LayoutGuide | undefined): LayoutGuide | undefined => {
@@ -59,7 +70,7 @@ const cloneLayoutGuide = (guide: LayoutGuide | undefined): LayoutGuide | undefin
 	};
 };
 
-const cloneEffects = (effects: ShadowEffect[] | undefined): ShadowEffect[] | undefined => {
+const cloneEffects = (effects: Effect[] | undefined): Effect[] | undefined => {
 	if (!effects) return undefined;
 	return effects.map((effect) => {
 		if (effect.type === 'auto') {
@@ -185,7 +196,7 @@ export const resolveTextStyleProps = (
 	return next;
 };
 
-export const resolveEffectStyleEffects = (doc: Document, styleId: string | undefined): ShadowEffect[] | undefined => {
+export const resolveEffectStyleEffects = (doc: Document, styleId: string | undefined): Effect[] | undefined => {
 	if (!styleId) return undefined;
 	const style = doc.styles.effect[styleId];
 	if (!style) return undefined;
@@ -200,7 +211,7 @@ export const resolveGridStyle = (doc: Document, styleId: string | undefined): La
 };
 
 export const resolveNodeStyleProps = (doc: Document, node: Node): ResolvedNodeStyleProps => {
-	const fill = resolvePaintStyleFill(doc, node.fillStyleId) ?? cloneColor(node.fill);
+	const fill = resolvePaintStyleFill(doc, node.fillStyleId) ?? clonePrimaryFillLayerPaint(node) ?? cloneColor(node.fill);
 	const textStyleProps = resolveTextStyleProps(doc, node.textStyleId);
 	const effects = resolveEffectStyleEffects(doc, node.effectStyleId) ?? cloneEffects(node.effects);
 	const layoutGuides = resolveGridStyle(doc, node.gridStyleId) ?? cloneLayoutGuide(node.layoutGuides);

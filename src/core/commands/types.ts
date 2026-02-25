@@ -2,6 +2,7 @@ import type {
 	Asset,
 	BooleanOp,
 	ComponentDefinition,
+	DocumentAppearance,
 	ComponentOverridePatch,
 	ComponentSet,
 	ComponentVariantMap,
@@ -9,6 +10,8 @@ import type {
 	GridStyle,
 	Node,
 	PaintStyle,
+	PrototypeInteraction,
+	PrototypeTrigger,
 	StyleVariableCollection,
 	StyleVariableToken,
 	TextStyle,
@@ -137,6 +140,24 @@ export interface DeletePageCommand extends BaseCommand {
 	payload: {
 		pageId: string;
 		fallbackPageId?: string;
+	};
+}
+
+export interface SetPrototypeStartFrameCommand extends BaseCommand {
+	type: 'setPrototypeStartFrame';
+	payload: {
+		pageId: string;
+		frameId?: string;
+	};
+}
+
+export interface SetPrototypeInteractionCommand extends BaseCommand {
+	type: 'setPrototypeInteraction';
+	payload: {
+		pageId: string;
+		sourceFrameId: string;
+		trigger: PrototypeTrigger;
+		interaction?: PrototypeInteraction;
 	};
 }
 
@@ -349,6 +370,13 @@ export interface SetVariableCollectionModeCommand extends BaseCommand {
 	};
 }
 
+export interface SetDocumentAppearanceCommand extends BaseCommand {
+	type: 'setDocumentAppearance';
+	payload: {
+		appearance: DocumentAppearance;
+	};
+}
+
 export type Command =
 	| CreateNodeCommand
 	| DeleteNodeCommand
@@ -364,6 +392,8 @@ export type Command =
 	| RenamePageCommand
 	| ReorderPageCommand
 	| DeletePageCommand
+	| SetPrototypeStartFrameCommand
+	| SetPrototypeInteractionCommand
 	| CreateBooleanNodeCommand
 	| SetBooleanOpCommand
 	| SetBooleanIsolationCommand
@@ -386,7 +416,8 @@ export type Command =
 	| RemoveVariableCollectionCommand
 	| UpsertVariableTokenCommand
 	| RemoveVariableTokenCommand
-	| SetVariableCollectionModeCommand;
+	| SetVariableCollectionModeCommand
+	| SetDocumentAppearanceCommand;
 
 export const isCommand = (value: unknown): value is Command => {
 	if (typeof value !== 'object' || value === null) {

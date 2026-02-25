@@ -1,6 +1,44 @@
-import type { RenderableShadowEffect } from '../../core/doc/types';
+import type { LayerBlendMode, RenderableShadowEffect } from '../../core/doc/types';
 
-export type Paint = string | GradientPaint;
+export interface PatternPaint {
+  type: 'pattern';
+  pattern: 'grid' | 'dots' | 'stripes' | 'noise';
+  fg: string;
+  bg: string;
+  scale: number;
+  rotation: number;
+  opacity?: number;
+}
+
+export interface ImagePaintResolved {
+  type: 'image';
+  src: string;
+  fit: 'fill' | 'fit' | 'tile';
+  opacity?: number;
+  tileScale?: number;
+  tileOffsetX?: number;
+  tileOffsetY?: number;
+  rotation?: number;
+}
+
+export type Paint = string | GradientPaint | PatternPaint | ImagePaintResolved;
+
+export interface FillLayerPaint {
+  paint: Paint;
+  opacity?: number;
+  visible?: boolean;
+  blendMode?: LayerBlendMode;
+}
+
+export interface StrokeLayerPaint extends FillLayerPaint {
+  width: number;
+  align?: 'inside' | 'center' | 'outside';
+  cap?: 'butt' | 'round' | 'square';
+  join?: 'miter' | 'round' | 'bevel';
+  miterLimit?: number;
+  dashPattern?: number[];
+  dashOffset?: number;
+}
 
 export interface GradientStop {
   offset: number;
@@ -25,6 +63,11 @@ export interface ImageOutlineStyle {
   blur: number;
 }
 
+export interface BlurEffects {
+  layerBlur?: { blur: number };
+  backgroundBlur?: { blur: number };
+}
+
 export type DrawCommand =
   | DrawRectCommand
   | DrawTextCommand
@@ -46,9 +89,13 @@ export interface DrawRectCommand {
   fill?: Paint;
   stroke?: Paint;
   strokeWidth?: number;
+  fills?: FillLayerPaint[];
+  strokes?: StrokeLayerPaint[];
+  blendMode?: LayerBlendMode;
   cornerRadius?: number;
   opacity?: number;
   effects?: RenderableShadowEffect[];
+  blur?: BlurEffects;
 }
 
 export interface DrawTextCommand {
@@ -65,9 +112,14 @@ export interface DrawTextCommand {
   lineHeightPx?: number;
   letterSpacingPx: number;
   textResizeMode: 'auto-width' | 'auto-height' | 'fixed';
+  listType?: 'none' | 'bullet' | 'numbered';
+  paragraphSpacingPx?: number;
+  overflowMode?: 'clip' | 'ellipsis' | 'visible';
   fill?: string;
+  blendMode?: LayerBlendMode;
   opacity?: number;
   effects?: RenderableShadowEffect[];
+  blur?: BlurEffects;
 }
 
 export interface DrawTextOverflowIndicatorCommand {
@@ -90,8 +142,12 @@ export interface DrawEllipseCommand {
   fill?: Paint;
   stroke?: Paint;
   strokeWidth?: number;
+  fills?: FillLayerPaint[];
+  strokes?: StrokeLayerPaint[];
+  blendMode?: LayerBlendMode;
   opacity?: number;
   effects?: RenderableShadowEffect[];
+  blur?: BlurEffects;
 }
 
 export interface DrawImageCommand {
@@ -103,9 +159,12 @@ export interface DrawImageCommand {
   height: number;
   src: string;
   maskSrc?: string;
+  mask?: { sourceNodeId?: string; mode: 'alpha' | 'luminance'; enabled: boolean };
+  blendMode?: LayerBlendMode;
   outline?: ImageOutlineStyle;
   opacity?: number;
   effects?: RenderableShadowEffect[];
+  blur?: BlurEffects;
 }
 
 export interface DrawPathCommand {
@@ -119,9 +178,13 @@ export interface DrawPathCommand {
   fill?: Paint;
   stroke?: Paint;
   strokeWidth?: number;
+  fills?: FillLayerPaint[];
+  strokes?: StrokeLayerPaint[];
+  blendMode?: LayerBlendMode;
   opacity?: number;
   fillRule?: 'nonzero' | 'evenodd';
   effects?: RenderableShadowEffect[];
+  blur?: BlurEffects;
 }
 
 export interface ClipCommand {

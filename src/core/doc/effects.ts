@@ -1,6 +1,15 @@
 import { recordAutoShadowCompileDuration } from './performance';
 import { resolveVariableTokenValue } from './styles';
-import type { Document, Node, RenderableShadowEffect, ShadowBlendMode, ShadowEffect } from './types';
+import type {
+	BackgroundBlurEffect,
+	Document,
+	Effect,
+	LayerBlurEffect,
+	Node,
+	RenderableShadowEffect,
+	ShadowBlendMode,
+	ShadowEffect,
+} from './types';
 
 export type ShadowOverflow = 'visible' | 'clipped' | 'clip-content-only';
 
@@ -25,7 +34,7 @@ const isShadowBlendMode = (value: unknown): value is ShadowBlendMode => {
 	return value === 'normal' || value === 'multiply' || value === 'screen' || value === 'overlay';
 };
 
-const isRenderableShadowEffect = (effect: ShadowEffect): effect is RenderableShadowEffect => {
+const isRenderableShadowEffect = (effect: Effect): effect is RenderableShadowEffect => {
 	return effect.type === 'drop' || effect.type === 'inner';
 };
 
@@ -76,7 +85,7 @@ export const normalizeShadowEffect = (effect: RenderableShadowEffect): Renderabl
 	};
 };
 
-export const normalizeShadowEffects = (effects: ShadowEffect[] | undefined): RenderableShadowEffect[] => {
+export const normalizeShadowEffects = (effects: Effect[] | undefined): RenderableShadowEffect[] => {
 	if (!effects || effects.length === 0) return [];
 	return effects.filter(isRenderableShadowEffect).map(normalizeShadowEffect);
 };
@@ -218,6 +227,9 @@ export const compileShadowEffects = (node: Node, doc?: Document): RenderableShad
 	let autoCompileMs = 0;
 
 	for (const effect of effects) {
+		if (effect.type === 'layerBlur' || effect.type === 'backgroundBlur') {
+			continue;
+		}
 		if (effect.type === 'auto') {
 			const started = performance.now();
 			const resolved = resolveEffectVariables(node, effect, doc);
@@ -247,4 +259,49 @@ export const mapShadowBlendModeToComposite = (blendMode: ShadowBlendMode | undef
 		default:
 			return 'source-over';
 	}
+};
+
+export const isLayerBlurEffect = (effect: Effect): effect is LayerBlurEffect => {
+	return effect.type === 'layerBlur';
+};
+
+export const isBackgroundBlurEffect = (effect: Effect): effect is BackgroundBlurEffect => {
+	return effect.type === 'backgroundBlur';
+};
+
+export const normalizeLayerBlurEffect = (effect: LayerBlurEffect): LayerBlurEffect => {
+	const blur = Number.isFinite(effect.blur) ? Math.max(0, effect.blur) : 0;
+	return {
+		...effect,
+		blur,
+		enabled: effect.enabled !== false,
+	};
+};
+
+export const normalizeBackgroundBlurEffect = (effect: BackgroundBlurEffect): BackgroundBlurEffect => {
+	const blur = Number.isFinite(effect.blur) ? Math.max(0, effect.blur) : 0;
+	return {
+		...effect,
+		blur,
+		enabled: effect.enabled !== false,
+	};
+};
+
+export const extractLayerBlurEffect = (effects: Effect[] | undefined): LayerBlurEffect | null => {
+	if (!effects || effects.length === 0) return null;
+	const blur = effects.find(isLayerBlurEffect);
+	if (!blur || blur.enabled === false) return null;
+	return normalizeLayerBlurEffect(blur);
+};
+
+export const extractBackgroundBlurEffect = (effects: Effect[] | undefined): BackgroundBlurEffect | null => {
+	if (!effects || effects.length === 0) return null;
+	const blur = effects.find(isBackgroundBlurEffect);
+	if (!blur || blur.enabled === false) return null;
+	return normalizeBackgroundBlurEffect(blur);
+};
+
+export const hasBlurEffects = (effects: Effect[] | undefined): boolean => {
+	if (!effects || effects.length === 0) return false;
+	return effects.some((e) => (e.type === 'layerBlur' || e.type === 'backgroundBlur') && e.enabled !== false);
 };

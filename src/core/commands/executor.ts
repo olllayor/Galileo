@@ -8,6 +8,7 @@ import type {
 	Page,
 	StyleLibrary,
 	StyleVariableLibrary,
+	DocumentAppearance,
 	VectorData,
 	VectorPoint,
 	VectorSegment,
@@ -22,6 +23,7 @@ import {
 	normalizeComponentVariant,
 	resolveComponentDefinition,
 } from '../doc/components';
+import { normalizeNodeAppearance } from '../doc/appearance';
 
 type DraftDocument = {
 	version: number;
@@ -33,6 +35,8 @@ type DraftDocument = {
 	components: ComponentsLibrary;
 	styles: StyleLibrary;
 	variables: StyleVariableLibrary;
+	appearance?: DocumentAppearance;
+	prototype: Document['prototype'];
 };
 
 enablePatches();
@@ -48,16 +52,18 @@ export const applyCommand = (doc: Document, cmd: Command): Document => {
 const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 	ensurePagesMetadata(draft);
 	ensureStyleVariableLibraries(draft);
+	ensureDocumentAppearance(draft);
+	ensurePrototypeGraph(draft);
 
 	switch (cmd.type) {
-		case 'createNode': {
-			const { id, parentId, node, index } = cmd.payload;
-			const newNode = {
-				...node,
-				id,
-				children: [],
-			};
-			draft.nodes[id] = newNode;
+			case 'createNode': {
+				const { id, parentId, node, index } = cmd.payload;
+				const newNode = normalizeNodeAppearance({
+					...node,
+					id,
+					children: [],
+				} as Node);
+				draft.nodes[id] = newNode;
 
 			const parent = draft.nodes[parentId];
 			if (parent) {
@@ -91,6 +97,7 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			if (parent && parent.children) {
 				parent.children = parent.children.filter((childId: string) => childId !== id);
 			}
+			prunePrototypeGraph(draft);
 			break;
 		}
 
@@ -112,16 +119,18 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			break;
 		}
 
-		case 'setProps': {
-			const { id, props } = cmd.payload;
-			const node = draft.nodes[id];
-			if (node) {
-				Object.assign(node, props);
-				if (node.type === 'boolean') {
-					refreshBooleanNodeMetadata(draft, id);
+			case 'setProps': {
+				const { id, props } = cmd.payload;
+				const node = draft.nodes[id];
+				if (node) {
+					Object.assign(node, props);
+					const normalized = normalizeNodeAppearance(node);
+					Object.assign(node, normalized);
+					if (node.type === 'boolean') {
+						refreshBooleanNodeMetadata(draft, id);
+					}
 				}
-			}
-			break;
+				break;
 		}
 
 		case 'reorderChild': {
@@ -257,26 +266,26 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			const insertIndex =
 				typeof index === 'number' ? index : Math.max(0, parent.children.indexOf(orderedOperandIds[0]));
 
-			const booleanNode: Node = {
-				id,
-				type: 'boolean',
-				name: 'Boolean',
-				position: { x: minX, y: minY },
+				const booleanNode: Node = normalizeNodeAppearance({
+					id,
+					type: 'boolean',
+					name: 'Boolean',
+					position: { x: minX, y: minY },
 				size: { width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) },
 				children: orderedOperandIds,
 				visible: true,
 				fill: firstOperand?.fill,
 				stroke: firstOperand?.stroke,
 				opacity: firstOperand?.opacity,
-				booleanData: {
-					op,
-					operandIds: orderedOperandIds,
-					status: 'ok',
-					tolerance:
-						typeof tolerance === 'number' && Number.isFinite(tolerance) && tolerance > 0 ? tolerance : 0.001,
-				},
-			};
-			draft.nodes[id] = booleanNode;
+					booleanData: {
+						op,
+						operandIds: orderedOperandIds,
+						status: 'ok',
+						tolerance:
+							typeof tolerance === 'number' && Number.isFinite(tolerance) && tolerance > 0 ? tolerance : 0.001,
+					},
+				});
+				draft.nodes[id] = booleanNode;
 
 			for (const operandId of orderedOperandIds) {
 				const operand = draft.nodes[operandId];
@@ -460,6 +469,7 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			const insertIndex =
 				typeof index === 'number' ? Math.max(0, Math.min(index, draft.pages.length)) : draft.pages.length;
 			draft.pages.splice(insertIndex, 0, page);
+			ensurePrototypePageGraph(draft, pageId);
 			if (activate) {
 				draft.activePageId = pageId;
 			}
@@ -509,6 +519,100 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 				draft.rootId = draft.pages[0].rootId;
 			}
 			deleteNodeSubtree(draft, removedPage.rootId);
+			delete draft.prototype.pages[removedPage.id];
+			prunePrototypeGraph(draft);
+			break;
+		}
+
+		case 'setPrototypeStartFrame': {
+			const { pageId, frameId } = cmd.payload;
+			const page = draft.pages.find((entry) => entry.id === pageId);
+			if (!page) break;
+			const pagePrototype = ensurePrototypePageGraph(draft, pageId);
+			if (!frameId) {
+				pagePrototype.startFrameId = undefined;
+				break;
+			}
+			if (!isFrameInPage(draft, page.rootId, frameId)) break;
+			pagePrototype.startFrameId = frameId;
+			break;
+		}
+
+		case 'setPrototypeInteraction': {
+			const { pageId, sourceFrameId, trigger, interaction } = cmd.payload;
+			const page = draft.pages.find((entry) => entry.id === pageId);
+			if (!page) break;
+			if (!isFrameInPage(draft, page.rootId, sourceFrameId)) break;
+			const pagePrototype = ensurePrototypePageGraph(draft, pageId);
+			const current = pagePrototype.interactionsBySource[sourceFrameId] ?? {};
+
+			if (!interaction) {
+				const next = { ...current, [trigger]: undefined };
+				const hasAny = Object.values(next).some((entry) => entry !== undefined);
+				if (!hasAny) {
+					delete pagePrototype.interactionsBySource[sourceFrameId];
+				} else {
+					pagePrototype.interactionsBySource[sourceFrameId] = next;
+				}
+				break;
+			}
+
+			const action = interaction.action ?? 'navigate';
+			if ((action === 'navigate' || action === 'overlay') && !interaction.targetFrameId) break;
+			if (
+				interaction.targetFrameId &&
+				(action === 'navigate' || action === 'overlay') &&
+				!isFrameInPage(draft, page.rootId, interaction.targetFrameId)
+			) {
+				break;
+			}
+			pagePrototype.interactionsBySource[sourceFrameId] = {
+				...current,
+				[trigger]: { ...interaction, action },
+			};
+			break;
+		}
+
+		case 'setVariableCollectionMode': {
+			const { collectionId, modeId } = cmd.payload;
+			const collection = draft.variables.collections[collectionId];
+			if (!collection) break;
+			if (!collection.modes.some((mode) => mode.id === modeId)) break;
+			draft.variables.activeModeByCollection[collectionId] = modeId;
+			break;
+		}
+
+		case 'upsertVariableCollection': {
+			const { collection } = cmd.payload;
+			draft.variables.collections[collection.id] = collection;
+			const fallbackModeId = collection.defaultModeId ?? collection.modes[0]?.id;
+			if (fallbackModeId && !draft.variables.activeModeByCollection[collection.id]) {
+				draft.variables.activeModeByCollection[collection.id] = fallbackModeId;
+			}
+			break;
+		}
+
+		case 'removeVariableCollection': {
+			const { collectionId } = cmd.payload;
+			delete draft.variables.collections[collectionId];
+			delete draft.variables.activeModeByCollection[collectionId];
+			for (const [tokenId, token] of Object.entries(draft.variables.tokens)) {
+				if (token.collectionId === collectionId) {
+					delete draft.variables.tokens[tokenId];
+				}
+			}
+			break;
+		}
+
+		case 'upsertVariableToken': {
+			const { token } = cmd.payload;
+			draft.variables.tokens[token.id] = token;
+			break;
+		}
+
+		case 'removeVariableToken': {
+			const { tokenId } = cmd.payload;
+			delete draft.variables.tokens[tokenId];
 			break;
 		}
 
@@ -559,13 +663,13 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			const definition = resolveComponentDefinition(draft.components, componentId, normalizedVariant);
 			if (!definition) break;
 			const templateRoot = definition.templateNodes[definition.templateRootId];
-			const materialized = materializeComponentInstance(definition, id, {});
-			for (const [runtimeId, runtimeNode] of Object.entries(materialized.nodes)) {
-				if (isMainPreview) {
-					runtimeNode.locked = true;
+				const materialized = materializeComponentInstance(definition, id, {});
+				for (const [runtimeId, runtimeNode] of Object.entries(materialized.nodes)) {
+					if (isMainPreview) {
+						runtimeNode.locked = true;
+					}
+					draft.nodes[runtimeId] = normalizeNodeAppearance(runtimeNode);
 				}
-				draft.nodes[runtimeId] = runtimeNode;
-			}
 			draft.nodes[id] = {
 				id,
 				type: 'componentInstance',
@@ -669,48 +773,14 @@ const applyCommandToDraft = (draft: DraftDocument, cmd: Command): void => {
 			break;
 		}
 
-		case 'upsertVariableCollection': {
-			const { collection } = cmd.payload;
-			draft.variables.collections[collection.id] = collection;
-			const fallbackModeId = collection.defaultModeId ?? collection.modes[0]?.id;
-			if (fallbackModeId && !draft.variables.activeModeByCollection[collection.id]) {
-				draft.variables.activeModeByCollection[collection.id] = fallbackModeId;
-			}
+		case 'setDocumentAppearance': {
+			draft.appearance = {
+				recentSwatches: cmd.payload.appearance.recentSwatches.slice(0, 64),
+				sampleSwatches: cmd.payload.appearance.sampleSwatches.slice(0, 64),
+			};
 			break;
 		}
 
-		case 'removeVariableCollection': {
-			const { collectionId } = cmd.payload;
-			delete draft.variables.collections[collectionId];
-			delete draft.variables.activeModeByCollection[collectionId];
-			for (const [tokenId, token] of Object.entries(draft.variables.tokens)) {
-				if (token.collectionId === collectionId) {
-					delete draft.variables.tokens[tokenId];
-				}
-			}
-			break;
-		}
-
-		case 'upsertVariableToken': {
-			const { token } = cmd.payload;
-			draft.variables.tokens[token.id] = token;
-			break;
-		}
-
-		case 'removeVariableToken': {
-			const { tokenId } = cmd.payload;
-			delete draft.variables.tokens[tokenId];
-			break;
-		}
-
-		case 'setVariableCollectionMode': {
-			const { collectionId, modeId } = cmd.payload;
-			const collection = draft.variables.collections[collectionId];
-			if (!collection) break;
-			if (!collection.modes.some((mode) => mode.id === modeId)) break;
-			draft.variables.activeModeByCollection[collectionId] = modeId;
-			break;
-		}
 	}
 };
 
@@ -724,6 +794,8 @@ const asDocument = (draft: DraftDocument): Document => ({
 	components: draft.components,
 	styles: draft.styles,
 	variables: draft.variables,
+	appearance: draft.appearance,
+	prototype: draft.prototype,
 });
 
 const ensurePagesMetadata = (draft: DraftDocument): void => {
@@ -768,6 +840,132 @@ const ensureStyleVariableLibraries = (draft: DraftDocument): void => {
 	if (!draft.variables.activeModeByCollection) draft.variables.activeModeByCollection = {};
 };
 
+const ensurePrototypeGraph = (draft: DraftDocument): void => {
+	if (!draft.prototype || typeof draft.prototype !== 'object') {
+		draft.prototype = { pages: {} };
+	}
+	if (!draft.prototype.pages || typeof draft.prototype.pages !== 'object') {
+		draft.prototype.pages = {};
+	}
+	for (const page of draft.pages) {
+		ensurePrototypePageGraph(draft, page.id);
+	}
+};
+
+const ensureDocumentAppearance = (draft: DraftDocument): void => {
+	if (!draft.appearance) {
+		draft.appearance = {
+			recentSwatches: [],
+			sampleSwatches: ['#ffffff', '#d9d9d9', '#000000', '#ff5e5b', '#00a884', '#3a7bff'],
+		};
+		return;
+	}
+	draft.appearance.recentSwatches = Array.isArray(draft.appearance.recentSwatches)
+		? draft.appearance.recentSwatches.slice(0, 64)
+		: [];
+	draft.appearance.sampleSwatches = Array.isArray(draft.appearance.sampleSwatches)
+		? draft.appearance.sampleSwatches.slice(0, 64)
+		: ['#ffffff', '#d9d9d9', '#000000', '#ff5e5b', '#00a884', '#3a7bff'];
+};
+
+const ensurePrototypePageGraph = (draft: DraftDocument, pageId: string): Document['prototype']['pages'][string] => {
+	if (!draft.prototype.pages[pageId]) {
+		draft.prototype.pages[pageId] = {
+			interactionsBySource: {},
+		};
+	}
+	if (!draft.prototype.pages[pageId].interactionsBySource) {
+		draft.prototype.pages[pageId].interactionsBySource = {};
+	}
+	return draft.prototype.pages[pageId];
+};
+
+const collectPageNodeIds = (draft: DraftDocument, pageRootId: string): Set<string> => {
+	const ids = new Set<string>();
+	const queue = [pageRootId];
+	while (queue.length > 0) {
+		const nodeId = queue.shift();
+		if (!nodeId || ids.has(nodeId)) continue;
+		const node = draft.nodes[nodeId];
+		if (!node) continue;
+		ids.add(nodeId);
+		for (const childId of node.children ?? []) {
+			queue.push(childId);
+		}
+	}
+	return ids;
+};
+
+const isFrameInPage = (draft: DraftDocument, pageRootId: string, frameId: string): boolean => {
+	if (frameId === pageRootId) return false;
+	const node = draft.nodes[frameId];
+	if (!node || node.type !== 'frame') return false;
+	return collectPageNodeIds(draft, pageRootId).has(frameId);
+};
+
+const prunePrototypeGraph = (draft: DraftDocument): void => {
+	ensurePrototypeGraph(draft);
+	const validPageIds = new Set(draft.pages.map((page) => page.id));
+	for (const pageId of Object.keys(draft.prototype.pages)) {
+		if (!validPageIds.has(pageId)) {
+			delete draft.prototype.pages[pageId];
+		}
+	}
+
+	for (const page of draft.pages) {
+		const pagePrototype = ensurePrototypePageGraph(draft, page.id);
+		const pageNodeIds = collectPageNodeIds(draft, page.rootId);
+		const validFrames = new Set<string>();
+		for (const nodeId of pageNodeIds) {
+			const node = draft.nodes[nodeId];
+			if (!node || node.type !== 'frame' || nodeId === page.rootId) continue;
+			validFrames.add(nodeId);
+		}
+
+		if (!pagePrototype.startFrameId || !validFrames.has(pagePrototype.startFrameId)) {
+			pagePrototype.startFrameId = undefined;
+		}
+
+		for (const [sourceFrameId, sourceInteractions] of Object.entries(pagePrototype.interactionsBySource ?? {})) {
+			if (!validFrames.has(sourceFrameId)) {
+				delete pagePrototype.interactionsBySource[sourceFrameId];
+				continue;
+			}
+
+			const sanitizeInteraction = (interaction: (typeof sourceInteractions)[keyof typeof sourceInteractions]) => {
+				if (!interaction) return undefined;
+				const action = interaction.action ?? 'navigate';
+				if (action === 'navigate' || action === 'overlay') {
+					if (!interaction.targetFrameId || !validFrames.has(interaction.targetFrameId)) {
+						return undefined;
+					}
+					return { ...interaction, action };
+				}
+				if (interaction.targetFrameId && !validFrames.has(interaction.targetFrameId)) {
+					return { ...interaction, action, targetFrameId: undefined };
+				}
+				return { ...interaction, action };
+			};
+
+			const nextInteractions = {
+				click: sanitizeInteraction(sourceInteractions.click),
+				hover: sanitizeInteraction(sourceInteractions.hover),
+				key: sanitizeInteraction(sourceInteractions.key),
+				delay: sanitizeInteraction(sourceInteractions.delay),
+				drag: sanitizeInteraction(sourceInteractions.drag),
+			};
+
+			const hasAny = Object.values(nextInteractions).some((entry) => entry !== undefined);
+			if (!hasAny) {
+				delete pagePrototype.interactionsBySource[sourceFrameId];
+				continue;
+			}
+
+			pagePrototype.interactionsBySource[sourceFrameId] = nextInteractions;
+		}
+	}
+};
+
 const deleteNodeSubtree = (draft: DraftDocument, nodeId: string): void => {
 	const ids = collectNodes(draft, nodeId);
 	for (const id of ids) {
@@ -788,7 +986,7 @@ const rematerializeComponentInstanceDraft = (draft: DraftDocument, instanceId: s
 
 	const materialized = materializeComponentInstance(definition, instanceId, instance.componentOverrides ?? {});
 	for (const [runtimeId, runtimeNode] of Object.entries(materialized.nodes)) {
-		draft.nodes[runtimeId] = runtimeNode;
+		draft.nodes[runtimeId] = normalizeNodeAppearance(runtimeNode);
 	}
 	instance.children = [...materialized.rootChildIds];
 	const templateRoot = definition.templateNodes[definition.templateRootId];

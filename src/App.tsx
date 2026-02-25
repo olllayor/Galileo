@@ -12,10 +12,32 @@ import { ProjectsScreen } from './ui/ProjectsScreen';
 import { ProjectHandle } from './ui/ProjectHandle';
 import { ProjectTabs } from './ui/ProjectTabs';
 import { CommandPalette, type CommandPaletteItem } from './ui/CommandPalette';
-import { panels } from './ui/design-system';
-import { useDocument } from './hooks/useDocument';
+import { PrototypePanel } from './ui/PrototypePanel';
+import { PrototypeLinksOverlay } from './ui/PrototypeLinksOverlay';
+import { PrototypePlayer } from './ui/PrototypePlayer';
+import { AIPanel } from './ui/AIPanel';
+import { RightPanelTabs } from './ui/RightPanelTabs';
+import { panels, colors } from './ui/design-system';
+import { useCollaborativeDocument } from './hooks/useCollaborativeDocument';
+import { buildAIEditContext } from './ai/context-builder';
+import { AIClientError, requestAIEdit, requestAIImageGenerate } from './ai/client';
+import { hydrateAICommandDrafts } from './ai/command-drafts';
+import { applyAICommandPreview } from './ai/preview';
+import type { AIAssistantStatus, AICommandDraft, AIImageSize } from './ai/contracts';
+import {
+	DEFAULT_IMAGE_MODEL_ID,
+	DEFAULT_IMAGE_SIZE,
+	DEFAULT_TEXT_MODEL_ID,
+	IMAGE_MODEL_OPTIONS,
+	TEXT_MODEL_OPTIONS,
+} from './ai/model-catalog';
 import {
 	createRectangleTool,
+	createEllipseTool,
+	createLineTool,
+	createArrowTool,
+	createPolygonTool,
+	createStarTool,
 	createFrameTool,
 	createTextTool,
 	createPenTool,
@@ -28,7 +50,12 @@ import {
 	type HitKind,
 } from './interaction/tools';
 import {
+	ENABLE_AI_ASSISTANT_V1,
+	ENABLE_AI_MODEL_PICKER_V1,
 	ENABLE_BOOLEAN_V1,
+	ENABLE_COLLAB_TEXT_LOCKS_V1,
+	ENABLE_COLLAB_V1,
+	ENABLE_FIGMA_INTEROP_V1,
 	ENABLE_TEXT_PARITY_V1,
 	ENABLE_VECTOR_EDIT_V1,
 	buildParentMap,
@@ -63,18 +90,21 @@ import type {
 	ComponentVariantMap,
 	Constraints,
 	Document,
+	DocumentAppearance,
 	ImageMeta,
 	ImageMetaUnsplash,
 	ImageOutline,
 	Node,
+	Effect,
 	EffectStyle,
 	GridStyle,
 	PaintStyle,
 	Page,
-	ShadowEffect,
 	StyleVariableCollection,
 	StyleVariableToken,
 	TextStyle,
+	PrototypeInteraction,
+	PrototypeTrigger,
 	VectorPoint,
 } from './core/doc/types';
 import type { Command, SharedStyleKind } from './core/commands/types';
@@ -134,6 +164,30 @@ import {
 import type { DevicePreset } from './core/framePresets';
 import { iconifyClient } from './integrations/iconify/client';
 import { IconifyClientError } from './integrations/iconify/types';
+import {
+	GALILEO_CLIPBOARD_PREFIX_V2,
+	type ClipboardPayload,
+	type ClipboardPayloadV1,
+} from './interop/clipboard/types';
+import { parseClipboardByPriority } from './interop/clipboard/parse';
+import {
+	buildAssetIdRemapForPaste,
+	buildClipboardPayloadV2,
+	remapNodeAssetIdsForPaste,
+	remapNodeReferencesForPaste,
+	toClipboardPayloadV2,
+} from './interop/clipboard/paste';
+import { mapSvgToClipboardPayload, rasterizeSvgToDataUrl } from './interop/svg/map-svg-to-galileo';
+import { analyzeSvgComplexity } from './interop/svg/analyze-svg';
+import { mapFigmaPayloadToClipboardPayload } from './interop/figma/map-figma-to-galileo';
+import { importFromFigma, parseFigmaFileKey, parseNodeIds } from './interop/figma/import-figma';
+import { buildDataUrl, parseDataUrl } from './interop/utils/data-url';
+import type { InteropImportReport } from './interop/types';
+import { FigmaImportModal, type FigmaImportFormValues } from './ui/FigmaImportModal';
+import { ShareModal } from './ui/ShareModal';
+import { JoinModal } from './ui/JoinModal';
+import { CollaboratorAvatars } from './ui/CollaboratorAvatars';
+import { SharePanel } from './ui/SharePanel';
 
 const clamp = (value: number, min: number, max: number): number => {
 	return Math.min(max, Math.max(min, value));
@@ -151,7 +205,8 @@ const LEGACY_AUTOSAVE_KEY = 'galileo.autosave.v1';
 const UNTITLED_DRAFT_KEY = 'untitled';
 const AUTOSAVE_DELAY_MS = 1500;
 const ZOOM_SENSITIVITY = 0.0035;
-const CLIPBOARD_PREFIX = 'GALILEO_CLIPBOARD_V1:';
+const ZOOM_MIN = 0.01;
+const ZOOM_MAX = 64;
 const DEFAULT_CANVAS_SIZE = { width: 1280, height: 800 } as const;
 const DEFAULT_IMAGE_OUTLINE = {
 	color: '#ffffff',
@@ -365,15 +420,6 @@ type TransformSession = {
 	modifiers: { shiftKey: boolean; altKey: boolean };
 };
 
-type ClipboardPayload = {
-	version: 1;
-	rootIds: string[];
-	nodes: Record<string, Node>;
-	bounds: Bounds;
-	rootWorldPositions: Record<string, { x: number; y: number }>;
-	parentId: string | null;
-};
-
 type PanelResizeState = {
 	panel: 'left' | 'right';
 	pointerId: number;
@@ -386,6 +432,23 @@ type PageEditorState = {
 	panOffset: { x: number; y: number };
 	zoom: number;
 	containerFocusId: string | null;
+};
+
+type RightPanelTab = 'properties' | 'ai';
+type AIAssistantMode = 'edit' | 'image';
+
+type AIEditPreviewState = {
+	requestId: string;
+	drafts: AICommandDraft[];
+	commands: Command[];
+	selectionKey: string;
+};
+
+type AIImagePreviewState = {
+	requestId: string;
+	modelId: string;
+	size: AIImageSize;
+	images: Array<{ mimeType: string; base64: string; width: number; height: number }>;
 };
 
 const DEFAULT_PAGE_EDITOR_STATE: PageEditorState = {
@@ -433,7 +496,7 @@ const buildDraftKey = (path: string | null): string => {
 	return `path:${path}`;
 };
 
-const cloneShadowEffects = (effects: ShadowEffect[] | undefined): ShadowEffect[] | null => {
+const cloneEffects = (effects: Effect[] | undefined): Effect[] | null => {
 	if (!effects || effects.length === 0) return null;
 	return effects.map((effect) => ({ ...effect }));
 };
@@ -703,21 +766,6 @@ const computeFrameConstraintUpdates = (
 	return updates;
 };
 
-const parseClipboardPayload = (text: string | null): ClipboardPayload | null => {
-	if (!text) return null;
-	if (!text.startsWith(CLIPBOARD_PREFIX)) return null;
-	const raw = text.slice(CLIPBOARD_PREFIX.length);
-	try {
-		const parsed = JSON.parse(raw) as ClipboardPayload;
-		if (!parsed || parsed.version !== 1) return null;
-		if (!Array.isArray(parsed.rootIds) || typeof parsed.nodes !== 'object') return null;
-		return parsed;
-	} catch (error) {
-		console.warn('Failed to parse clipboard payload', error);
-		return null;
-	}
-};
-
 const mergeSnapTargets = (a: SnapTargets, b: SnapTargets): SnapTargets => ({
 	x: [...a.x, ...b.x],
 	y: [...a.y, ...b.y],
@@ -846,18 +894,6 @@ const getMimeType = (path: string): string => {
 		default:
 			return 'application/octet-stream';
 	}
-};
-
-const buildDataUrl = (mime: string, dataBase64: string): string => {
-	return `data:${mime};base64,${dataBase64}`;
-};
-
-const parseDataUrl = (dataUrl: string): { mime: string; dataBase64: string } | null => {
-	const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-	if (!match) {
-		return null;
-	}
-	return { mime: match[1], dataBase64: match[2] };
 };
 
 const getImageSize = (src: string): Promise<{ width: number; height: number }> => {
@@ -1331,7 +1367,18 @@ export const App: React.FC = () => {
 		markSaved,
 		markDirty,
 		isDirty,
-	} = useDocument();
+		collabStatus,
+		collabError,
+		collaborators,
+		roomId: collabRoomId,
+		actorId,
+		shareLink: collabShareLink,
+		createSharedRoom,
+		joinSharedRoomByInvite,
+		updatePresence,
+		acquireTextEditLock,
+		releaseTextEditLock,
+	} = useCollaborativeDocument();
 	const [activePageId, setActivePageId] = useState<string>(() => document.activePageId);
 	const pageEditorStateRef = useRef<Record<string, PageEditorState>>({});
 
@@ -1341,15 +1388,15 @@ export const App: React.FC = () => {
 	const [activeProjectId, setActiveProjectId] = useState<string | null>(() => getLastOpenProjectId());
 	const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 	const [missingPaths, setMissingPaths] = useState<Record<string, boolean>>({});
+	const [editorMode, setEditorMode] = useState<'design' | 'prototype'>('design');
+	const [prototypePlayerStartFrameId, setPrototypePlayerStartFrameId] = useState<string | null>(null);
 
-	const [activeTool, setActiveTool] = useState<'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen'>('select');
+	const [activeTool, setActiveTool] = useState<Tool>('select');
 	const [penSession, setPenSession] = useState<PenSession | null>(null);
 	const [vectorEditSession, setVectorEditSession] = useState<VectorEditSession | null>(null);
 	const [vectorHover, setVectorHover] = useState<VectorHover>(null);
 	const [spaceKeyHeld, setSpaceKeyHeld] = useState(false);
-	const [toolBeforeSpace, setToolBeforeSpace] = useState<
-		'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen' | null
-	>(null);
+	const [toolBeforeSpace, setToolBeforeSpace] = useState<Tool | null>(null);
 	const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
 	const [zoom, setZoom] = useState(1);
 	const [previewDocument, setPreviewDocument] = useState<Document | null>(null);
@@ -1382,7 +1429,22 @@ export const App: React.FC = () => {
 	const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
 	const [activePlugin, setActivePlugin] = useState<PluginRegistration | null>(null);
 	const [toastMessage, setToastMessage] = useState<string | null>(null);
+	const [toastLoading, setToastLoading] = useState(false);
 	const toastTimerRef = useRef<number | null>(null);
+	const [figmaImportOpen, setFigmaImportOpen] = useState(false);
+	const [figmaImportBusy, setFigmaImportBusy] = useState(false);
+	const [figmaImportError, setFigmaImportError] = useState<string | null>(null);
+	const [figmaImportForm, setFigmaImportForm] = useState<FigmaImportFormValues>({
+		fileOrUrl: '',
+		nodeIds: '',
+		token: '',
+		importToNewPage: true,
+	});
+	const [shareModalOpen, setShareModalOpen] = useState(false);
+	const [joinModalOpen, setJoinModalOpen] = useState(false);
+	const [joinModalError, setJoinModalError] = useState<string | null>(null);
+	const [isCreatingRoom, setIsCreatingRoom] = useState(false);
+	const [isJoiningRoom, setIsJoiningRoom] = useState(false);
 	const [isRemovingBackground, setIsRemovingBackground] = useState(false);
 	const [leftPanelCollapsed, setLeftPanelCollapsed] = useState<boolean>(() => {
 		const stored = localStorage.getItem('galileo.ui.leftPanelCollapsed');
@@ -1419,6 +1481,29 @@ export const App: React.FC = () => {
 		}
 		return panels.right.width;
 	});
+	const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('properties');
+	const [aiMode, setAIMode] = useState<AIAssistantMode>('edit');
+	const [aiStatus, setAIStatus] = useState<AIAssistantStatus>('idle');
+	const [aiSummary, setAISummary] = useState('');
+	const [aiWarnings, setAIWarnings] = useState<string[]>([]);
+	const [aiErrorMessage, setAIErrorMessage] = useState<string | null>(null);
+	const [aiEditPreviewState, setAIEditPreviewState] = useState<AIEditPreviewState | null>(null);
+	const [aiImagePreviewState, setAIImagePreviewState] = useState<AIImagePreviewState | null>(null);
+	const [aiTextModelId, setAITextModelId] = useState<string>(() => {
+		const stored = localStorage.getItem('galileo.ai.textModelId');
+		if (stored && TEXT_MODEL_OPTIONS.some((option) => option.id === stored)) return stored;
+		return DEFAULT_TEXT_MODEL_ID;
+	});
+	const [aiImageModelId, setAIImageModelId] = useState<string>(() => {
+		const stored = localStorage.getItem('galileo.ai.imageModelId');
+		if (stored && IMAGE_MODEL_OPTIONS.some((option) => option.id === stored)) return stored;
+		return DEFAULT_IMAGE_MODEL_ID;
+	});
+	const [aiImageSize, setAIImageSize] = useState<AIImageSize>(() => {
+		const stored = localStorage.getItem('galileo.ai.imageSize');
+		if (stored === '1024x1024' || stored === '1536x1024' || stored === '1024x1536') return stored;
+		return DEFAULT_IMAGE_SIZE;
+	});
 	const [panelResizeState, setPanelResizeState] = useState<PanelResizeState | null>(null);
 	const panelResizeRafRef = useRef<number | null>(null);
 	const panelResizePendingWidthRef = useRef<number | null>(null);
@@ -1426,29 +1511,118 @@ export const App: React.FC = () => {
 	const [canvasViewportOffset, setCanvasViewportOffset] = useState({ x: 0, y: 0 });
 	const pluginIframeRef = useRef<HTMLIFrameElement | null>(null);
 	const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
-	const textEditorRef = useRef<HTMLInputElement | null>(null);
+	const textEditorRef = useRef<HTMLTextAreaElement | null>(null);
 	const textEditorIsComposingRef = useRef(false);
 	const suppressTextEditorBlurCommitRef = useRef(false);
+	const editingTextLockNodeIdRef = useRef<string | null>(null);
 	const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
 	const clipboardRef = useRef<ClipboardPayload | null>(null);
 	const clipboardPasteCountRef = useRef(0);
-	const effectsClipboardRef = useRef<ShadowEffect[] | null>(null);
+	const effectsClipboardRef = useRef<Effect[] | null>(null);
 	const canvasSize = DEFAULT_CANVAS_SIZE;
 
-	const showToast = useCallback((message: string) => {
+	const showToast = useCallback((message: string, loading?: boolean) => {
 		setToastMessage(message);
+		setToastLoading(loading ?? false);
 		if (toastTimerRef.current) {
 			window.clearTimeout(toastTimerRef.current);
+			toastTimerRef.current = null;
 		}
-		toastTimerRef.current = window.setTimeout(() => {
-			setToastMessage(null);
-		}, 2400);
+		if (!loading) {
+			toastTimerRef.current = window.setTimeout(() => {
+				setToastMessage(null);
+				setToastLoading(false);
+			}, 2400);
+		}
 	}, []);
+
+	const handleShareCollab = useCallback(() => {
+		if (!ENABLE_COLLAB_V1) return;
+		setShareModalOpen(true);
+	}, []);
+
+	const handleCreateRoom = useCallback(
+		async (name: string) => {
+			if (!ENABLE_COLLAB_V1) return;
+			setIsCreatingRoom(true);
+			const link = await createSharedRoom(name);
+			setIsCreatingRoom(false);
+			if (!link) {
+				showToast('Failed to create collaboration room.');
+				return;
+			}
+			showToast('Share link copied to clipboard.');
+		},
+		[createSharedRoom, showToast],
+	);
+
+	const handleJoinCollab = useCallback(() => {
+		if (!ENABLE_COLLAB_V1) return;
+		setJoinModalError(null);
+		setJoinModalOpen(true);
+	}, []);
+
+	const handleJoinRoom = useCallback(
+		async (inviteToken: string) => {
+			if (!ENABLE_COLLAB_V1) return;
+			setIsJoiningRoom(true);
+			setJoinModalError(null);
+			const ok = await joinSharedRoomByInvite(inviteToken);
+			setIsJoiningRoom(false);
+			if (!ok) {
+				setJoinModalError('Failed to join collaboration room. Please check the invite token.');
+				return;
+			}
+			setJoinModalOpen(false);
+			showToast('Joined collaboration room.');
+		},
+		[joinSharedRoomByInvite, showToast],
+	);
+
+	useEffect(() => {
+		if (!collabError) return;
+		showToast(collabError);
+	}, [collabError, showToast]);
+
+	useEffect(() => {
+		if (!ENABLE_COLLAB_V1 || collabStatus !== 'connected') return;
+		updatePresence({
+			selectionIds: selectedIds,
+			viewport: { panX: panOffset.x, panY: panOffset.y, zoom },
+			activeTool,
+			editingTextNodeId: textEditSession?.nodeId,
+		});
+	}, [activeTool, collabStatus, panOffset.x, panOffset.y, selectedIds, textEditSession?.nodeId, updatePresence, zoom]);
 	const isDev = import.meta.env?.DEV ?? false;
+	const emitInteropImportReport = useCallback(
+		(report: InteropImportReport) => {
+			if (report.source === 'figma-svg' && report.mode === 'raster-fallback') {
+				showToast('Pasted as image (complex Figma SVG). Use Figma Bridge for editable import.');
+			} else {
+				showToast(`Imported ${report.importedLayerCount} layers, ${report.warningCount} warnings.`);
+			}
+			if (isDev) {
+				console.debug('Interop import report', report);
+			}
+		},
+		[isDev, showToast],
+	);
 
 	useEffect(() => {
 		localStorage.setItem(RECENT_COMPONENTS_STORAGE_KEY, JSON.stringify(recentComponentIds.slice(0, 12)));
 	}, [recentComponentIds]);
+
+	useEffect(() => {
+		localStorage.setItem('galileo.ai.textModelId', aiTextModelId);
+	}, [aiTextModelId]);
+
+	useEffect(() => {
+		localStorage.setItem('galileo.ai.imageModelId', aiImageModelId);
+	}, [aiImageModelId]);
+
+	useEffect(() => {
+		localStorage.setItem('galileo.ai.imageSize', aiImageSize);
+	}, [aiImageSize]);
 
 	useEffect(() => {
 		if (panelResizeState) return;
@@ -1728,6 +1902,14 @@ export const App: React.FC = () => {
 			setZoom(savedState.zoom > 0 ? savedState.zoom : DEFAULT_PAGE_EDITOR_STATE.zoom);
 			setContainerFocusId(sanitizeContainerFocusForPage(document, savedState.containerFocusId, targetPage.rootId));
 			setPreviewDocument(null);
+			setAIEditPreviewState(null);
+			setAIImagePreviewState(null);
+			setAIStatus('idle');
+			setAISummary('');
+			setAIWarnings([]);
+			setAIErrorMessage(null);
+			setAIMode('edit');
+			setRightPanelTab('properties');
 			setDragState(null);
 			setTransformSession(null);
 			setTextCreationDragState(null);
@@ -1766,10 +1948,369 @@ export const App: React.FC = () => {
 		() => selectedIds.filter((id) => id !== displayDocument.rootId),
 		[selectedIds, displayDocument.rootId],
 	);
+	const aiSelectionKey = useMemo(() => selectionIds.slice().sort().join(','), [selectionIds]);
 	const selectionBounds = useMemo(
 		() => getSelectionBounds(displayDocument, selectionIds, boundsMap),
 		[displayDocument, selectionIds, boundsMap],
 	);
+	const openAIAssistant = useCallback(() => {
+		if (!ENABLE_AI_ASSISTANT_V1) return;
+		setRightPanelCollapsed(false);
+		localStorage.setItem('galileo.ui.rightPanelCollapsed', 'false');
+		setRightPanelTab('ai');
+	}, []);
+	const openPropertiesTab = useCallback(() => {
+		setRightPanelTab('properties');
+	}, []);
+	const handleRunAIEdit = useCallback(
+		async (prompt: string, signal: AbortSignal, modelId?: string) => {
+			if (!ENABLE_AI_ASSISTANT_V1) return;
+			setAIStatus('generating');
+			setAIErrorMessage(null);
+			setAIWarnings([]);
+			setAIEditPreviewState(null);
+			setAIImagePreviewState(null);
+			setPreviewDocument(null);
+			const requestId = generateId();
+			try {
+				const aiContext = buildAIEditContext(document, selectionIds, activePageId, canvasSize);
+				const aiResponse = await requestAIEdit({
+					requestId,
+					prompt,
+					modelId,
+					context: aiContext,
+					signal,
+				});
+
+				const viewportCenter = {
+					x: (canvasSize.width / 2 - panOffset.x) / zoom,
+					y: (canvasSize.height / 2 - panOffset.y) / zoom,
+				};
+				const hydrated = hydrateAICommandDrafts({
+					document,
+					drafts: aiResponse.commandDrafts,
+					selectedIds: selectionIds,
+					activePageRootId,
+					activePageNodeIds,
+					fallbackPosition: viewportCenter,
+				});
+				const combinedWarnings = [...aiResponse.warnings, ...hydrated.warnings];
+				setAISummary(aiResponse.summary);
+				setAIWarnings(combinedWarnings);
+				setAITextModelId(aiResponse.modelId);
+
+				if (hydrated.commands.length === 0) {
+					setAIStatus('error');
+					setAIErrorMessage(
+						combinedWarnings[0] ?? 'No safe edits were generated for the current selection. Refine your prompt.',
+					);
+					return;
+				}
+
+				const previewDoc = applyAICommandPreview(document, hydrated.commands);
+				setPreviewDocument(previewDoc);
+				setAIEditPreviewState({
+					requestId: aiResponse.requestId,
+					drafts: aiResponse.commandDrafts,
+					commands: hydrated.commands,
+					selectionKey: aiSelectionKey,
+				});
+				setAIStatus('preview-ready');
+				setAIErrorMessage(null);
+			} catch (error) {
+				if (signal.aborted) {
+					setAIStatus('idle');
+					setAIErrorMessage(null);
+					return;
+				}
+				if (error instanceof AIClientError) {
+					const code = error.message;
+					if (
+						(code === 'model_not_allowed' || code === 'unsupported_model' || code === 'modality_mismatch') &&
+						aiTextModelId !== DEFAULT_TEXT_MODEL_ID
+					) {
+						setAITextModelId(DEFAULT_TEXT_MODEL_ID);
+						setAIWarnings(['Selected model is unavailable for this deployment. Switched to default model.']);
+					}
+				}
+				const message =
+					error instanceof AIClientError
+						? error.message
+						: error instanceof Error
+							? error.message
+							: 'Failed to generate AI edit preview.';
+				setAIStatus('error');
+				setAIErrorMessage(message);
+			}
+		},
+		[
+			activePageId,
+			activePageNodeIds,
+			activePageRootId,
+			aiSelectionKey,
+			aiTextModelId,
+			canvasSize,
+			document,
+			panOffset.x,
+			panOffset.y,
+			selectionIds,
+			zoom,
+		],
+	);
+	const handleRunAIImage = useCallback(
+		async (prompt: string, signal: AbortSignal, modelId?: string, size?: AIImageSize) => {
+			if (!ENABLE_AI_ASSISTANT_V1) return;
+			setAIStatus('generating');
+			setAIErrorMessage(null);
+			setAIWarnings([]);
+			setAIEditPreviewState(null);
+			setAIImagePreviewState(null);
+			setPreviewDocument(null);
+			const requestId = generateId();
+			const imageSize = size ?? aiImageSize;
+			try {
+				const response = await requestAIImageGenerate({
+					requestId,
+					prompt,
+					modelId,
+					context: {
+						activePageId,
+						selectionSummary: selectionIds.length > 0 ? `Selected: ${selectionIds.length} nodes` : 'No selection',
+						canvas: canvasSize,
+					},
+					image: {
+						size: imageSize,
+						count: 1,
+					},
+					signal,
+				});
+				const enrichedImages = await Promise.all(
+					response.images.map(async (image) => {
+						const dataUrl = buildDataUrl(image.mimeType, image.base64);
+						try {
+							const dimensions = await getImageSize(dataUrl);
+							return { ...image, width: dimensions.width, height: dimensions.height };
+						} catch {
+							return { ...image, width: 1024, height: 1024 };
+						}
+					}),
+				);
+				setAISummary(response.summary);
+				setAIWarnings(response.warnings);
+				setAIImageModelId(response.modelId);
+				setAIImagePreviewState({
+					requestId: response.requestId,
+					modelId: response.modelId,
+					size: imageSize,
+					images: enrichedImages,
+				});
+				setAIStatus('preview-ready');
+				setAIErrorMessage(null);
+			} catch (error) {
+				if (signal.aborted) {
+					setAIStatus('idle');
+					setAIErrorMessage(null);
+					return;
+				}
+				if (error instanceof AIClientError) {
+					const code = error.message;
+					if (
+						(code === 'model_not_allowed' || code === 'unsupported_model' || code === 'modality_mismatch') &&
+						aiImageModelId !== DEFAULT_IMAGE_MODEL_ID
+					) {
+						setAIImageModelId(DEFAULT_IMAGE_MODEL_ID);
+						setAIWarnings(['Selected image model is unavailable for this deployment. Switched to default model.']);
+					}
+				}
+				const message =
+					error instanceof AIClientError
+						? error.message
+						: error instanceof Error
+							? error.message
+							: 'Failed to generate AI image preview.';
+				setAIStatus('error');
+				setAIErrorMessage(message);
+			}
+		},
+		[activePageId, aiImageModelId, aiImageSize, canvasSize, selectionIds.length],
+	);
+	const handleApplyAIPreview = useCallback(() => {
+		if (aiMode === 'edit') {
+			if (!aiEditPreviewState) return;
+			if (aiEditPreviewState.commands.length === 1) {
+				executeCommand(aiEditPreviewState.commands[0]);
+			} else {
+				executeCommand({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'ai',
+					description: 'Apply AI edits',
+					type: 'batch',
+					payload: {
+						commands: aiEditPreviewState.commands,
+					},
+				} as Command);
+			}
+			setAIEditPreviewState(null);
+			setPreviewDocument(null);
+			setAIStatus('applied');
+			setAIErrorMessage(null);
+			return;
+		}
+		if (!aiImagePreviewState) return;
+		const centerWorld = {
+			x: (canvasSize.width / 2 - panOffset.x) / Math.max(zoom, 0.0001),
+			y: (canvasSize.height / 2 - panOffset.y) / Math.max(zoom, 0.0001),
+		};
+		const commands: Command[] = [];
+		for (let index = 0; index < aiImagePreviewState.images.length; index += 1) {
+			const image = aiImagePreviewState.images[index];
+			const assetId = generateId();
+			const nodeId = generateId();
+			const maxDimension = 900;
+			const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+			const width = Math.max(1, Math.round(image.width * scale));
+			const height = Math.max(1, Math.round(image.height * scale));
+			const offset = index * 24;
+			commands.push({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'ai',
+				description: 'Create AI image asset',
+				type: 'createAsset',
+				payload: {
+					id: assetId,
+					asset: {
+						type: 'image',
+						mime: image.mimeType,
+						dataBase64: image.base64,
+						width: image.width,
+						height: image.height,
+					},
+				},
+			} as Command);
+			commands.push({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'ai',
+				description: 'Insert AI image',
+				type: 'createNode',
+				payload: {
+					id: nodeId,
+					parentId: activePageRootId,
+					node: {
+						type: 'image',
+						name: 'AI Image',
+						position: {
+							x: centerWorld.x - width / 2 + offset,
+							y: centerWorld.y - height / 2 + offset,
+						},
+						size: { width, height },
+						image: {
+							mime: image.mimeType,
+							assetId,
+						},
+						visible: true,
+						aspectRatioLocked: true,
+					},
+				},
+			} as Command);
+		}
+		if (commands.length === 1) {
+			executeCommand(commands[0]);
+		} else {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'ai',
+				description: 'Apply AI images',
+				type: 'batch',
+				payload: { commands },
+			} as Command);
+		}
+		setAIImagePreviewState(null);
+		setAIStatus('applied');
+		setAIErrorMessage(null);
+	}, [
+		activePageRootId,
+		aiEditPreviewState,
+		aiImagePreviewState,
+		aiMode,
+		canvasSize.height,
+		canvasSize.width,
+		executeCommand,
+		panOffset.x,
+		panOffset.y,
+		zoom,
+	]);
+	const handleRejectAIPreview = useCallback(() => {
+		setAIEditPreviewState(null);
+		setAIImagePreviewState(null);
+		setPreviewDocument(null);
+		setAIStatus('idle');
+		setAIErrorMessage(null);
+	}, []);
+	const handleRefreshAIPreview = useCallback(() => {
+		if (aiMode !== 'edit' || !aiEditPreviewState) return;
+		const previewDoc = applyAICommandPreview(document, aiEditPreviewState.commands);
+		setPreviewDocument(previewDoc);
+		setAIStatus('preview-ready');
+		setAIErrorMessage(null);
+	}, [aiEditPreviewState, aiMode, document]);
+	useEffect(() => {
+		if (!aiEditPreviewState) return;
+		if (aiEditPreviewState.selectionKey === aiSelectionKey) return;
+		setAIEditPreviewState(null);
+		setPreviewDocument(null);
+		setAIStatus('error');
+		setAIErrorMessage('Selection changed. Re-run AI to generate a fresh preview.');
+	}, [aiEditPreviewState, aiSelectionKey]);
+	useEffect(() => {
+		if (aiMode === 'edit') return;
+		if (!previewDocument) return;
+		setPreviewDocument(null);
+	}, [aiMode, previewDocument]);
+	useEffect(() => {
+		if (aiMode !== 'edit') return;
+		if (!aiEditPreviewState || aiStatus !== 'preview-ready') return;
+		if (previewDocument) return;
+		setAIEditPreviewState(null);
+		setAIStatus('error');
+		setAIErrorMessage('AI preview was cleared by another action. Re-run AI to continue.');
+	}, [aiEditPreviewState, aiMode, aiStatus, previewDocument]);
+	const activePagePrototype = useMemo(
+		() => document.prototype.pages[activePageId] ?? { interactionsBySource: {} },
+		[document.prototype.pages, activePageId],
+	);
+	const prototypeFrameOptions = useMemo(() => {
+		const pageRoot = document.nodes[activePageRootId];
+		if (!pageRoot?.children || pageRoot.children.length === 0) return [] as Array<{ id: string; name: string }>;
+		return pageRoot.children
+			.map((childId) => document.nodes[childId])
+			.filter((node): node is Node => Boolean(node && node.type === 'frame'))
+			.map((node, index) => ({
+				id: node.id,
+				name: node.name?.trim() ? node.name : `Frame ${index + 1}`,
+			}));
+	}, [document.nodes, activePageRootId]);
+	const prototypeFrameIdSet = useMemo(() => new Set(prototypeFrameOptions.map((frame) => frame.id)), [prototypeFrameOptions]);
+	const selectedPrototypeFrameId = useMemo(() => {
+		if (selectionIds.length !== 1) return null;
+		const id = selectionIds[0];
+		return prototypeFrameIdSet.has(id) ? id : null;
+	}, [selectionIds, prototypeFrameIdSet]);
+	useEffect(() => {
+		if (!prototypePlayerStartFrameId) return;
+		const node = document.nodes[prototypePlayerStartFrameId];
+		if (!node || node.type !== 'frame' || !prototypeFrameIdSet.has(prototypePlayerStartFrameId)) {
+			setPrototypePlayerStartFrameId(null);
+		}
+	}, [document.nodes, prototypeFrameIdSet, prototypePlayerStartFrameId]);
+	useEffect(() => {
+		if (appView !== 'editor' && prototypePlayerStartFrameId) {
+			setPrototypePlayerStartFrameId(null);
+		}
+	}, [appView, prototypePlayerStartFrameId]);
 	const selectionComponentInstanceRootId = useMemo(() => {
 		if (selectionIds.length !== 1) return null;
 		const selectedId = selectionIds[0];
@@ -1910,8 +2451,9 @@ export const App: React.FC = () => {
 		return null;
 	}, [activeProjectId, projects, currentPath]);
 	const projectName = currentProject?.name ?? (currentPath ? deriveProjectNameFromPath(currentPath) : 'Untitled');
-	const projectWorkspace = currentProject?.workspaceName ?? 'Local';
-	const projectEnv = currentProject?.env ?? 'local';
+	const isCollabConnected = ENABLE_COLLAB_V1 && collabStatus === 'connected' && Boolean(collabRoomId);
+	const projectWorkspace = isCollabConnected ? 'Collab' : (currentProject?.workspaceName ?? 'Local');
+	const projectEnv = isCollabConnected ? 'cloud' : (currentProject?.env ?? 'local');
 	const projectVersion: ProjectVersion = isDirty ? 'draft' : 'live';
 	const projectBreadcrumb = `${projectWorkspace} / ${projectName} / ${fileName}`;
 	const hoverBounds = useMemo(() => {
@@ -2131,7 +2673,17 @@ export const App: React.FC = () => {
 		if (hoverHit?.locked) return 'not-allowed';
 		if (hoverHit?.kind === 'edge') return hoverHit.edgeCursor || 'move';
 		if (hoverHit?.kind === 'fill') return 'default';
-		if (activeTool === 'frame' || activeTool === 'rectangle' || activeTool === 'text' || activeTool === 'pen')
+		if (
+			activeTool === 'frame' ||
+			activeTool === 'rectangle' ||
+			activeTool === 'ellipse' ||
+			activeTool === 'line' ||
+			activeTool === 'arrow' ||
+			activeTool === 'polygon' ||
+			activeTool === 'star' ||
+			activeTool === 'text' ||
+			activeTool === 'pen'
+		)
 			return 'crosshair';
 		return undefined; // Let CSS custom cursor apply
 	}, [dragState, transformSession, hoverHandle, hoverHit, activeTool, isInPanMode, vectorHover]);
@@ -2337,6 +2889,83 @@ export const App: React.FC = () => {
 		],
 	);
 
+	const pickImageAssetForPaint = useCallback(async (): Promise<string | null> => {
+		if (typeof window === 'undefined' || typeof window.document === 'undefined') {
+			return null;
+		}
+		return await new Promise((resolve) => {
+			const input = window.document.createElement('input');
+			input.type = 'file';
+			input.accept = 'image/*';
+			input.onchange = async () => {
+				const file = input.files?.[0];
+				if (!file) {
+					resolve(null);
+					return;
+				}
+				const reader = new FileReader();
+				reader.onerror = () => resolve(null);
+				reader.onload = async () => {
+					const dataUrl = typeof reader.result === 'string' ? reader.result : null;
+					if (!dataUrl) {
+						resolve(null);
+						return;
+					}
+					const parsed = parseDataUrl(dataUrl);
+					if (!parsed) {
+						resolve(null);
+						return;
+					}
+					let size: { width: number; height: number } | null = null;
+					try {
+						size = await getImageSize(dataUrl);
+					} catch {
+						size = null;
+					}
+					if (!size) {
+						resolve(null);
+						return;
+					}
+					const assetId = generateId();
+					executeCommand({
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'user',
+						description: 'Create paint image asset',
+						type: 'createAsset',
+						payload: {
+							id: assetId,
+							asset: {
+								type: 'image',
+								mime: parsed.mime,
+								dataBase64: parsed.dataBase64,
+								width: size.width,
+								height: size.height,
+							},
+						},
+					} as Command);
+					resolve(assetId);
+				};
+				reader.readAsDataURL(file);
+			};
+			input.click();
+		});
+	}, [executeCommand]);
+
+	const updateDocumentAppearance = useCallback(
+		(appearance: DocumentAppearance) => {
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: 'Update paint swatches',
+				type: 'setDocumentAppearance',
+				payload: { appearance },
+			} as Command);
+		},
+		[executeCommand],
+	);
+
 	const clearBackgroundRemoval = useCallback(
 		(nodeId: string) => {
 			const node = document.nodes[nodeId];
@@ -2380,6 +3009,8 @@ export const App: React.FC = () => {
 			}
 			flushSync(() => {
 				setIsRemovingBackground(true);
+				setToastMessage('Removing background...');
+				setToastLoading(true);
 			});
 			await new Promise<void>((resolve) =>
 				requestAnimationFrame(() => {
@@ -2446,6 +3077,7 @@ export const App: React.FC = () => {
 						type: 'batch',
 						payload: { commands },
 					});
+				showToast('Background removed');
 				return true;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -2564,7 +3196,7 @@ export const App: React.FC = () => {
 			collect(id);
 		}
 
-		const payload: ClipboardPayload = {
+		const payloadV1: ClipboardPayloadV1 = {
 			version: 1,
 			rootIds: topLevelIds,
 			nodes,
@@ -2572,26 +3204,31 @@ export const App: React.FC = () => {
 			rootWorldPositions,
 			parentId,
 		};
+		const payload = buildClipboardPayloadV2(payloadV1, document.assets, 'galileo');
 
 		clipboardRef.current = payload;
 		clipboardPasteCountRef.current = 0;
 
-		const textPayload = `${CLIPBOARD_PREFIX}${JSON.stringify(payload)}`;
+		const textPayload = `${GALILEO_CLIPBOARD_PREFIX_V2}${JSON.stringify(payload)}`;
 		if (navigator.clipboard?.writeText) {
 			void navigator.clipboard.writeText(textPayload).catch(() => {
 				// Ignore clipboard permission errors; internal clipboard still works.
 			});
 		}
-	}, [selectionIds, documentParentMap, document]);
+		}, [selectionIds, documentParentMap, document]);
 
 	const pasteClipboardPayload = useCallback(
-		(payload: ClipboardPayload) => {
-			if (!payload.rootIds.length) return;
+		(payload: ClipboardPayload, options?: { targetParentId?: string }) => {
+			const normalizedPayload = toClipboardPayloadV2(payload);
+			if (!normalizedPayload.rootIds.length) return;
 
-			const targetParentId =
-				payload.parentId && document.nodes[payload.parentId] && activePageNodeIds.has(payload.parentId)
-					? payload.parentId
-					: activePageRootId;
+				const targetParentId = options?.targetParentId
+					? options.targetParentId
+					: normalizedPayload.parentId &&
+						document.nodes[normalizedPayload.parentId] &&
+						activePageNodeIds.has(normalizedPayload.parentId)
+						? normalizedPayload.parentId
+						: activePageRootId;
 			const docBoundsMap = buildWorldBoundsMap(document);
 			const parentBounds = docBoundsMap[targetParentId];
 			const parentWorld = {
@@ -2602,11 +3239,11 @@ export const App: React.FC = () => {
 			const pasteOffset = (clipboardPasteCountRef.current + 1) * 24;
 			const anchor = getDefaultInsertPosition();
 			const deltaWorld =
-				payload.parentId && payload.parentId === targetParentId
+				normalizedPayload.parentId && normalizedPayload.parentId === targetParentId
 					? { x: pasteOffset, y: pasteOffset }
 					: {
-							x: anchor.x - payload.bounds.x + pasteOffset,
-							y: anchor.y - payload.bounds.y + pasteOffset,
+							x: anchor.x - normalizedPayload.bounds.x + pasteOffset,
+							y: anchor.y - normalizedPayload.bounds.y + pasteOffset,
 						};
 
 			const idMap = new Map<string, string>();
@@ -2614,6 +3251,21 @@ export const App: React.FC = () => {
 			const newRootIds: string[] = [];
 			const parent = document.nodes[targetParentId];
 			const baseIndex = parent?.children?.length ?? 0;
+			const { assetIdMap, assetsToCreate } = buildAssetIdRemapForPaste(normalizedPayload, document.assets, generateId);
+
+			for (const assetEntry of assetsToCreate) {
+				commands.push({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Paste image asset',
+					type: 'createAsset',
+					payload: {
+						id: assetEntry.id,
+						asset: assetEntry.asset,
+					},
+				} as Command);
+			}
 
 			const ensureId = (oldId: string) => {
 				const existing = idMap.get(oldId);
@@ -2624,20 +3276,25 @@ export const App: React.FC = () => {
 			};
 
 				const cloneNode = (oldId: string, parentId: string, isRoot: boolean, index?: number) => {
-					const node = payload.nodes[oldId];
+					const node = normalizedPayload.nodes[oldId];
 					if (!node) return;
+					const remappedAssetNode = remapNodeAssetIdsForPaste(node, assetIdMap);
+					const remappedNode = remapNodeReferencesForPaste(remappedAssetNode, (candidateId) => {
+						if (!normalizedPayload.nodes[candidateId]) return undefined;
+						return ensureId(candidateId);
+					});
 					const newId = ensureId(oldId);
-					const { children } = node;
-					const rest = Object.fromEntries(
-						Object.entries(node).filter(([key]) => key !== 'id' && key !== 'children'),
-					) as Omit<Node, 'id' | 'children'>;
-					const baseWorld = payload.rootWorldPositions[oldId] || { x: node.position.x, y: node.position.y };
+				const { children } = remappedNode;
+				const rest = Object.fromEntries(
+					Object.entries(remappedNode).filter(([key]) => key !== 'id' && key !== 'children'),
+				) as Omit<Node, 'id' | 'children'>;
+				const baseWorld = normalizedPayload.rootWorldPositions[oldId] || { x: node.position.x, y: node.position.y };
 				const position = isRoot
 					? {
 							x: baseWorld.x + deltaWorld.x - parentWorld.x,
 							y: baseWorld.y + deltaWorld.y - parentWorld.y,
 						}
-					: { ...node.position };
+					: { ...remappedNode.position };
 				commands.push({
 					id: generateId(),
 					timestamp: Date.now(),
@@ -2651,7 +3308,7 @@ export const App: React.FC = () => {
 						node: {
 							...(rest as Omit<Node, 'id' | 'children'>),
 							position,
-							size: { ...node.size },
+							size: { ...remappedNode.size },
 						},
 					},
 				} as Command);
@@ -2665,7 +3322,7 @@ export const App: React.FC = () => {
 				}
 			};
 
-			payload.rootIds.forEach((rootId, index) => cloneNode(rootId, targetParentId, true, baseIndex + index));
+			normalizedPayload.rootIds.forEach((rootId, index) => cloneNode(rootId, targetParentId, true, baseIndex + index));
 
 			if (commands.length === 0) return;
 			if (commands.length === 1) {
@@ -2792,7 +3449,7 @@ export const App: React.FC = () => {
 			const source = candidates
 				.map((id) => document.nodes[id])
 				.find((node): node is Node => Boolean(node && node.effects && node.effects.length > 0));
-			const cloned = cloneShadowEffects(source?.effects);
+			const cloned = cloneEffects(source?.effects);
 			if (!cloned) {
 				showToast('No effects to copy.');
 				return;
@@ -2805,7 +3462,7 @@ export const App: React.FC = () => {
 
 	const pasteEffects = useCallback(
 		(preferredTargetIds?: string[]) => {
-			const effects = cloneShadowEffects(effectsClipboardRef.current ?? undefined);
+			const effects = cloneEffects(effectsClipboardRef.current ?? undefined);
 			if (!effects) {
 				showToast('No copied effects to paste.');
 				return;
@@ -3997,7 +4654,7 @@ export const App: React.FC = () => {
 						const params = (request.params || {}) as {
 							nodeId?: string;
 							scale?: number;
-							format?: 'png';
+							format?: 'png' | 'webp' | 'svg' | 'pdf' | 'asset';
 							background?: 'transparent' | 'solid';
 							includeFrameFill?: boolean;
 							clipToBounds?: boolean;
@@ -4151,29 +4808,45 @@ export const App: React.FC = () => {
 						if (!params.dataBase64) {
 							return fail('invalid_params', 'dataBase64 is required');
 						}
-						const normalizePngName = (name?: string) => {
-							if (!name) return 'export.png';
-							const trimmed = name.trim();
-							if (!trimmed) return 'export.png';
-							const lower = trimmed.toLowerCase();
-							if (lower.endsWith('.png')) return trimmed;
-							if (/\.[a-z0-9]+$/i.test(trimmed)) {
-								return trimmed.replace(/\.[a-z0-9]+$/i, '.png');
+						const extFromMime = (mime?: string) => {
+							switch ((mime ?? '').toLowerCase()) {
+								case 'image/webp':
+									return 'webp';
+								case 'image/svg+xml':
+									return 'svg';
+								case 'application/pdf':
+									return 'pdf';
+								case 'image/jpeg':
+									return 'jpg';
+								default:
+									return 'png';
 							}
-							return `${trimmed}.png`;
 						};
+						const normalizeName = (name: string | undefined, extension: string) => {
+							const fallback = `export.${extension}`;
+							if (!name) return fallback;
+							const trimmed = name.trim();
+							if (!trimmed) return fallback;
+							const lower = trimmed.toLowerCase();
+							if (lower.endsWith(`.${extension}`)) return trimmed;
+							if (/\.[a-z0-9]+$/i.test(trimmed)) {
+								return trimmed.replace(/\.[a-z0-9]+$/i, `.${extension}`);
+							}
+							return `${trimmed}.${extension}`;
+						};
+						const extension = extFromMime(params.mime);
 						const savedPath = await invoke<string>('show_save_image_dialog', {
-							args: { suggestedName: normalizePngName(params.suggestedName) },
+							args: { suggestedName: normalizeName(params.suggestedName, extension), extensions: [extension] },
 						});
 						if (!savedPath) {
 							return fail('cancelled', 'Save cancelled');
 						}
 						let finalPath = savedPath;
-						if (!finalPath.toLowerCase().endsWith('.png')) {
+						if (!finalPath.toLowerCase().endsWith(`.${extension}`)) {
 							if (/\.[a-z0-9]+$/i.test(finalPath)) {
-								finalPath = finalPath.replace(/\.[a-z0-9]+$/i, '.png');
+								finalPath = finalPath.replace(/\.[a-z0-9]+$/i, `.${extension}`);
 							} else {
-								finalPath = `${finalPath}.png`;
+								finalPath = `${finalPath}.${extension}`;
 							}
 						}
 						await invoke('save_binary', {
@@ -4343,6 +5016,8 @@ export const App: React.FC = () => {
 			lineHeightPx?: number;
 			letterSpacingPx?: number;
 			textResizeMode?: Node['textResizeMode'];
+			textListType?: Node['textListType'];
+			paragraphSpacingPx?: Node['paragraphSpacingPx'];
 			width?: number;
 			height?: number;
 		}) => {
@@ -4371,6 +5046,8 @@ export const App: React.FC = () => {
 					lineHeightPx: options.lineHeightPx,
 					letterSpacingPx,
 					textResizeMode,
+					listType: options.textListType ?? 'none',
+					paragraphSpacingPx: options.paragraphSpacingPx ?? 0,
 				},
 				(line) => {
 					if (!line) return 0;
@@ -4411,6 +5088,8 @@ export const App: React.FC = () => {
 				lineHeightPx: resolved.lineHeightPx ?? node.lineHeightPx,
 				letterSpacingPx: resolved.letterSpacingPx ?? node.letterSpacingPx ?? 0,
 				textResizeMode: resizeMode,
+				textListType: node.textListType,
+				paragraphSpacingPx: node.paragraphSpacingPx,
 				width: node.size.width,
 				height: node.size.height,
 			});
@@ -4458,7 +5137,7 @@ export const App: React.FC = () => {
 	]);
 
 	const startTextEditing = useCallback(
-		(
+		async (
 			nodeId: string,
 			options?: {
 				isNewNode?: boolean;
@@ -4472,10 +5151,21 @@ export const App: React.FC = () => {
 			if (node && (node.type !== 'text' || node.locked === true)) {
 				return;
 			}
+			if (ENABLE_COLLAB_TEXT_LOCKS_V1 && ENABLE_COLLAB_V1 && collabStatus === 'connected') {
+				const lock = await acquireTextEditLock(nodeId, 8000);
+				if (!lock.ok) {
+					showToast('This text layer is being edited by another collaborator.');
+					return;
+				}
+				if (editingTextLockNodeIdRef.current && editingTextLockNodeIdRef.current !== nodeId) {
+					void releaseTextEditLock(editingTextLockNodeIdRef.current);
+				}
+				editingTextLockNodeIdRef.current = nodeId;
+			}
 
 			const baseInitialText = typeof options?.initialText === 'string' ? options.initialText : node?.text ?? '';
 			const rawDraftText = typeof options?.draftText === 'string' ? options.draftText : baseInitialText;
-			const baseDraftText = rawDraftText.replace(/[\r\n]+/g, ' ');
+			const baseDraftText = rawDraftText;
 			textEditorIsComposingRef.current = false;
 			suppressTextEditorBlurCommitRef.current = false;
 			setTextEditSession({
@@ -4488,7 +5178,7 @@ export const App: React.FC = () => {
 			setSelection([nodeId]);
 			setActiveTool('select');
 		},
-		[document, setSelection],
+		[acquireTextEditLock, collabStatus, document, releaseTextEditLock, setSelection, showToast],
 	);
 
 	const createTextNodeAndStartEditing = useCallback(
@@ -4536,6 +5226,8 @@ export const App: React.FC = () => {
 					lineHeightPx: newNode.lineHeightPx,
 					letterSpacingPx: newNode.letterSpacingPx ?? 0,
 					textResizeMode,
+					textListType: newNode.textListType,
+					paragraphSpacingPx: newNode.paragraphSpacingPx,
 					width: newNode.size?.width,
 					height: newNode.size?.height,
 				});
@@ -4615,6 +5307,8 @@ export const App: React.FC = () => {
 			lineHeightPx: editingTextStyle?.lineHeightPx ?? editingTextNode.lineHeightPx,
 			letterSpacingPx: editingTextStyle?.letterSpacingPx ?? editingTextNode.letterSpacingPx ?? 0,
 			textResizeMode: editingTextStyle?.textResizeMode ?? editingTextNode.textResizeMode ?? 'auto-width',
+			textListType: editingTextNode.textListType,
+			paragraphSpacingPx: editingTextNode.paragraphSpacingPx,
 			width: editingTextNode.size.width,
 			height: editingTextNode.size.height,
 		});
@@ -4645,19 +5339,13 @@ export const App: React.FC = () => {
 	const activeTextEditSelectionBounds = useMemo(() => {
 		if (!ENABLE_TEXT_PARITY_V1 || !textEditSession) return null;
 		if (!editingTextBounds || !editingTextNode || editingTextNode.type !== 'text') return null;
-		const effectiveLineHeight = Math.max(
-			1,
-			editingTextStyle?.lineHeightPx ??
-				editingTextNode.lineHeightPx ??
-				(editingTextStyle?.fontSize ?? editingTextNode.fontSize ?? 16) * 1.2,
-		);
 		return {
 			x: editingTextBounds.x,
 			y: editingTextBounds.y,
 			width: Math.max(1, editingTextSize?.width ?? editingTextNode.size.width),
-			height: Math.max(1, effectiveLineHeight + 8),
+			height: Math.max(1, editingTextSize?.height ?? editingTextNode.size.height),
 		};
-	}, [editingTextBounds, editingTextNode, editingTextSize, editingTextStyle, textEditSession]);
+	}, [editingTextBounds, editingTextNode, editingTextSize, textEditSession]);
 	const canvasSelectionBounds = activeTextEditSelectionBounds ?? selectionBounds;
 	const editingTextColor = useMemo(() => {
 		if (editingTextNode?.type !== 'text') return '#f5f5f5';
@@ -4667,6 +5355,9 @@ export const App: React.FC = () => {
 	const selectedTextOverflow = useMemo(() => {
 		if (!ENABLE_TEXT_PARITY_V1 || !selectedNode || selectedNode.type !== 'text') return null;
 		const resolved = resolveNodeStyleProps(displayDocument, selectedNode);
+		if ((selectedNode.textOverflowMode ?? 'clip') === 'visible') {
+			return { isOverflowing: false };
+		}
 		if ((resolved.textResizeMode ?? 'auto-width') !== 'fixed') {
 			return { isOverflowing: false };
 		}
@@ -4679,6 +5370,8 @@ export const App: React.FC = () => {
 			lineHeightPx: resolved.lineHeightPx,
 			letterSpacingPx: resolved.letterSpacingPx ?? 0,
 			textResizeMode: 'auto-height',
+			textListType: selectedNode.textListType,
+			paragraphSpacingPx: selectedNode.paragraphSpacingPx,
 			width: selectedNode.size.width,
 			height: selectedNode.size.height,
 		});
@@ -4688,6 +5381,7 @@ export const App: React.FC = () => {
 	}, [measureTextSize, selectedNode, displayDocument]);
 	const selectedTextOverflowIndicatorNodeIds = useMemo(() => {
 		if (!selectedNode || selectedNode.type !== 'text') return [];
+		if ((selectedNode.textOverflowMode ?? 'clip') === 'ellipsis') return [];
 		if (!selectedTextOverflow?.isOverflowing) return [];
 		return [selectedNode.id];
 	}, [selectedNode, selectedTextOverflow]);
@@ -5064,7 +5758,15 @@ export const App: React.FC = () => {
 				return;
 			}
 
-			if (activeTool === 'rectangle') {
+			if (
+				activeTool === 'rectangle' ||
+				activeTool === 'ellipse' ||
+				activeTool === 'line' ||
+				activeTool === 'arrow' ||
+				activeTool === 'polygon' ||
+				activeTool === 'star' ||
+				activeTool === 'frame'
+			) {
 				if (selectionBounds && selectionIds.length === 1) {
 					const handle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
 					if (handle) {
@@ -5076,7 +5778,20 @@ export const App: React.FC = () => {
 
 				const parentId = getInsertionParentId(worldX, worldY);
 				const localPoint = getLocalPointForParent(parentId, worldX, worldY);
-				const tool = createRectangleTool(parentId);
+				const tool =
+					activeTool === 'rectangle'
+						? createRectangleTool(parentId)
+						: activeTool === 'ellipse'
+							? createEllipseTool(parentId)
+							: activeTool === 'line'
+								? createLineTool(parentId)
+								: activeTool === 'arrow'
+									? createArrowTool(parentId)
+									: activeTool === 'polygon'
+										? createPolygonTool(parentId)
+										: activeTool === 'star'
+											? createStarTool(parentId)
+											: createFrameTool(parentId);
 				const result = tool.handleMouseDown(document, localPoint.x, localPoint.y, []);
 				if (result) {
 					const newIds = Object.keys(result.nodes).filter((id) => !(id in document.nodes));
@@ -5090,47 +5805,20 @@ export const App: React.FC = () => {
 						id: generateId(),
 						timestamp: Date.now(),
 						source: 'user',
-						description: 'Create rectangle',
-						type: 'createNode',
-						payload: {
-							id: newId,
-							parentId,
-							node: newNode,
-						},
-					} as Command);
-					selectNode(newId);
-					setActiveTool('select');
-				}
-				return;
-			}
-
-			if (activeTool === 'frame') {
-				if (selectionBounds && selectionIds.length === 1) {
-					const handle = hitTestHandle(screenX, screenY, selectionBounds, view, HANDLE_HIT_SIZE);
-					if (handle) {
-						setActiveTool('select');
-						handleSelectionPointerDown(info);
-						return;
-					}
-				}
-
-				const parentId = getInsertionParentId(worldX, worldY);
-				const localPoint = getLocalPointForParent(parentId, worldX, worldY);
-				const tool = createFrameTool(parentId);
-				const result = tool.handleMouseDown(document, localPoint.x, localPoint.y, []);
-				if (result) {
-					const newIds = Object.keys(result.nodes).filter((id) => !(id in document.nodes));
-					const newId = newIds[0];
-					const newNode = newId ? result.nodes[newId] : null;
-					if (!newId || !newNode) {
-						return;
-					}
-
-					executeCommand({
-						id: generateId(),
-						timestamp: Date.now(),
-						source: 'user',
-						description: 'Create frame',
+						description:
+							activeTool === 'frame'
+								? 'Create frame'
+								: activeTool === 'rectangle'
+									? 'Create rectangle'
+									: activeTool === 'ellipse'
+										? 'Create ellipse'
+										: activeTool === 'line'
+											? 'Create line'
+											: activeTool === 'arrow'
+												? 'Create arrow'
+												: activeTool === 'polygon'
+													? 'Create polygon'
+													: 'Create star',
 						type: 'createNode',
 						payload: {
 							id: newId,
@@ -5347,6 +6035,12 @@ export const App: React.FC = () => {
 	const handleCanvasMouseMove = useCallback(
 		(info: CanvasPointerInfo) => {
 			const { worldX, worldY, screenX, screenY } = info;
+			if (ENABLE_COLLAB_V1 && collabStatus === 'connected') {
+				updatePresence({
+					cursor: { x: worldX, y: worldY },
+					selectionIds,
+				});
+			}
 
 			if (textCreationDragState?.active) {
 				setTextCreationDragState((current) =>
@@ -5671,6 +6365,7 @@ export const App: React.FC = () => {
 		[
 			activeTool,
 			boundsMap,
+			collabStatus,
 			document,
 			documentParentMap,
 			dragState,
@@ -5688,6 +6383,7 @@ export const App: React.FC = () => {
 			setSelection,
 			snapDisabled,
 			transformSession,
+			updatePresence,
 			vectorAnchors,
 			vectorBezierHandles,
 			vectorHover,
@@ -6125,7 +6821,7 @@ export const App: React.FC = () => {
 		if (info.ctrlKey || info.metaKey) {
 			const zoomFactor = Math.exp(-info.deltaY * ZOOM_SENSITIVITY);
 			setZoom((prevZoom) => {
-				const nextZoom = clamp(prevZoom * zoomFactor, 0.2, 6);
+				const nextZoom = clamp(prevZoom * zoomFactor, ZOOM_MIN, ZOOM_MAX);
 				setPanOffset({
 					x: info.screenX - info.worldX * nextZoom,
 					y: info.screenY - info.worldY * nextZoom,
@@ -6140,6 +6836,134 @@ export const App: React.FC = () => {
 			y: prev.y - info.deltaY,
 		}));
 	}, []);
+
+	const zoomAtPoint = useCallback((factor: number, screenX?: number, screenY?: number) => {
+		const centerX = screenX ?? canvasSize.width / 2;
+		const centerY = screenY ?? canvasSize.height / 2;
+		const worldX = (centerX - panOffset.x) / (zoom || 1);
+		const worldY = (centerY - panOffset.y) / (zoom || 1);
+
+		setZoom((prevZoom) => {
+			const nextZoom = clamp(prevZoom * factor, ZOOM_MIN, ZOOM_MAX);
+			setPanOffset({
+				x: centerX - worldX * nextZoom,
+				y: centerY - worldY * nextZoom,
+			});
+			return nextZoom;
+		});
+	}, [canvasSize.width, canvasSize.height, panOffset.x, panOffset.y, zoom]);
+
+	const handleZoomIn = useCallback(() => {
+		zoomAtPoint(1.25);
+	}, [zoomAtPoint]);
+
+	const handleZoomOut = useCallback(() => {
+		zoomAtPoint(0.8);
+	}, [zoomAtPoint]);
+
+	const handleZoomTo = useCallback((targetZoom: number) => {
+		const centerX = canvasSize.width / 2;
+		const centerY = canvasSize.height / 2;
+		const worldX = (centerX - panOffset.x) / (zoom || 1);
+		const worldY = (centerY - panOffset.y) / (zoom || 1);
+
+		const nextZoom = clamp(targetZoom, ZOOM_MIN, ZOOM_MAX);
+		setPanOffset({
+			x: centerX - worldX * nextZoom,
+			y: centerY - worldY * nextZoom,
+		});
+		setZoom(nextZoom);
+	}, [canvasSize.width, canvasSize.height, panOffset.x, panOffset.y, zoom]);
+
+	const handleZoomToFit = useCallback(() => {
+		const nodes = Object.values(document.nodes);
+		if (nodes.length === 0) {
+			handleZoomTo(1);
+			return;
+		}
+
+		let minX = Infinity;
+		let minY = Infinity;
+		let maxX = -Infinity;
+		let maxY = -Infinity;
+
+		for (const node of nodes) {
+			if (!node.position || !node.size) continue;
+			const x = node.position.x;
+			const y = node.position.y;
+			minX = Math.min(minX, x);
+			minY = Math.min(minY, y);
+			maxX = Math.max(maxX, x + node.size.width);
+			maxY = Math.max(maxY, y + node.size.height);
+		}
+
+		if (!isFinite(minX)) {
+			handleZoomTo(1);
+			return;
+		}
+
+		const contentWidth = maxX - minX;
+		const contentHeight = maxY - minY;
+		const padding = 60;
+
+		const scaleX = (canvasSize.width - padding * 2) / (contentWidth || 1);
+		const scaleY = (canvasSize.height - padding * 2) / (contentHeight || 1);
+		const targetZoom = clamp(Math.min(scaleX, scaleY), ZOOM_MIN, ZOOM_MAX);
+
+		const centerX = minX + contentWidth / 2;
+		const centerY = minY + contentHeight / 2;
+
+		setZoom(targetZoom);
+		setPanOffset({
+			x: canvasSize.width / 2 - centerX * targetZoom,
+			y: canvasSize.height / 2 - centerY * targetZoom,
+		});
+	}, [document.nodes, canvasSize.width, canvasSize.height, handleZoomTo]);
+
+	const handleZoomToSelection = useCallback(() => {
+		if (selectionIds.length === 0) {
+			handleZoomToFit();
+			return;
+		}
+
+		let minX = Infinity;
+		let minY = Infinity;
+		let maxX = -Infinity;
+		let maxY = -Infinity;
+
+		for (const id of selectionIds) {
+			const node = document.nodes[id];
+			if (!node) continue;
+			const x = node.position.x;
+			const y = node.position.y;
+			minX = Math.min(minX, x);
+			minY = Math.min(minY, y);
+			maxX = Math.max(maxX, x + node.size.width);
+			maxY = Math.max(maxY, y + node.size.height);
+		}
+
+		if (!isFinite(minX)) {
+			handleZoomToFit();
+			return;
+		}
+
+		const contentWidth = maxX - minX;
+		const contentHeight = maxY - minY;
+		const padding = 80;
+
+		const scaleX = (canvasSize.width - padding * 2) / (contentWidth || 1);
+		const scaleY = (canvasSize.height - padding * 2) / (contentHeight || 1);
+		const targetZoom = clamp(Math.min(scaleX, scaleY), ZOOM_MIN, ZOOM_MAX);
+
+		const centerX = minX + contentWidth / 2;
+		const centerY = minY + contentHeight / 2;
+
+		setZoom(targetZoom);
+		setPanOffset({
+			x: canvasSize.width / 2 - centerX * targetZoom,
+			y: canvasSize.height / 2 - centerY * targetZoom,
+		});
+	}, [selectionIds, document.nodes, canvasSize.width, canvasSize.height, handleZoomToFit]);
 
 	const handleUpdateNode = useCallback(
 		(id: string, updates: Record<string, unknown>) => {
@@ -6185,8 +7009,13 @@ export const App: React.FC = () => {
 				const overridePatch: Partial<ComponentOverridePatch> = {};
 				if (Object.prototype.hasOwnProperty.call(updates, 'text')) overridePatch.text = updates.text as string | undefined;
 				if (Object.prototype.hasOwnProperty.call(updates, 'fill')) overridePatch.fill = updates.fill as Node['fill'];
+				if (Object.prototype.hasOwnProperty.call(updates, 'fills')) overridePatch.fills = updates.fills as Node['fills'];
 				if (Object.prototype.hasOwnProperty.call(updates, 'fillStyleId')) overridePatch.fillStyleId = updates.fillStyleId as string | undefined;
 				if (Object.prototype.hasOwnProperty.call(updates, 'stroke')) overridePatch.stroke = updates.stroke as Node['stroke'];
+				if (Object.prototype.hasOwnProperty.call(updates, 'strokes')) overridePatch.strokes = updates.strokes as Node['strokes'];
+				if (Object.prototype.hasOwnProperty.call(updates, 'blendMode'))
+					overridePatch.blendMode = updates.blendMode as Node['blendMode'];
+				if (Object.prototype.hasOwnProperty.call(updates, 'mask')) overridePatch.mask = updates.mask as Node['mask'];
 				if (Object.prototype.hasOwnProperty.call(updates, 'image')) overridePatch.image = updates.image as Node['image'];
 				if (Object.prototype.hasOwnProperty.call(updates, 'opacity')) overridePatch.opacity = updates.opacity as number | undefined;
 				if (Object.prototype.hasOwnProperty.call(updates, 'visible')) overridePatch.visible = updates.visible as boolean | undefined;
@@ -6228,7 +7057,11 @@ export const App: React.FC = () => {
 				const hasEffectStyleUpdate = Object.prototype.hasOwnProperty.call(updates, 'effectStyleId');
 				const hasGridStyleUpdate = Object.prototype.hasOwnProperty.call(updates, 'gridStyleId');
 
-				if (Object.prototype.hasOwnProperty.call(updates, 'fill') && !hasFillStyleUpdate) {
+				if (
+					(Object.prototype.hasOwnProperty.call(updates, 'fill') ||
+						Object.prototype.hasOwnProperty.call(updates, 'fills')) &&
+					!hasFillStyleUpdate
+				) {
 					mutableUpdates.fillStyleId = undefined;
 				}
 				if (
@@ -6267,6 +7100,8 @@ export const App: React.FC = () => {
 				const hasLetterSpacingUpdate = Object.prototype.hasOwnProperty.call(updates, 'letterSpacingPx');
 				const hasTextAlignUpdate = Object.prototype.hasOwnProperty.call(updates, 'textAlign');
 				const hasResizeModeUpdate = Object.prototype.hasOwnProperty.call(updates, 'textResizeMode');
+				const hasListTypeUpdate = Object.prototype.hasOwnProperty.call(updates, 'textListType');
+				const hasParagraphSpacingUpdate = Object.prototype.hasOwnProperty.call(updates, 'paragraphSpacingPx');
 				const hasSizeUpdate = Object.prototype.hasOwnProperty.call(updates, 'size');
 
 				const nextLineHeightPx = hasLineHeightUpdate
@@ -6303,6 +7138,8 @@ export const App: React.FC = () => {
 					hasLineHeightUpdate ||
 					hasLetterSpacingUpdate ||
 					hasResizeModeUpdate ||
+					hasListTypeUpdate ||
+					hasParagraphSpacingUpdate ||
 					hasSizeUpdate
 				) {
 					const measured = measureTextSize({
@@ -6314,6 +7151,12 @@ export const App: React.FC = () => {
 						lineHeightPx: nextLineHeightPx,
 						letterSpacingPx: nextLetterSpacingPx,
 						textResizeMode: nextResizeMode,
+						textListType:
+							typeof updates.textListType === 'string'
+								? (updates.textListType as Node['textListType'])
+								: current.textListType,
+						paragraphSpacingPx:
+							typeof updates.paragraphSpacingPx === 'number' ? updates.paragraphSpacingPx : current.paragraphSpacingPx,
 						width: baseWidth,
 						height: baseHeight,
 					});
@@ -6419,6 +7262,10 @@ export const App: React.FC = () => {
 		const node = document.nodes[session.nodeId];
 		textEditorIsComposingRef.current = false;
 		setTextEditSession(null);
+		if (editingTextLockNodeIdRef.current) {
+			void releaseTextEditLock(editingTextLockNodeIdRef.current);
+			editingTextLockNodeIdRef.current = null;
+		}
 		if (!node || node.type !== 'text') {
 			return;
 		}
@@ -6441,7 +7288,7 @@ export const App: React.FC = () => {
 		if (nextText !== (node.text ?? '')) {
 			handleUpdateNode(node.id, { text: nextText });
 		}
-	}, [document, executeCommand, handleUpdateNode, setSelection, textEditSession]);
+	}, [document, executeCommand, handleUpdateNode, releaseTextEditLock, setSelection, textEditSession]);
 
 	const cancelTextEditing = useCallback(() => {
 		if (!ENABLE_TEXT_PARITY_V1 || !textEditSession) return;
@@ -6449,6 +7296,10 @@ export const App: React.FC = () => {
 		const node = document.nodes[session.nodeId];
 		textEditorIsComposingRef.current = false;
 		setTextEditSession(null);
+		if (editingTextLockNodeIdRef.current) {
+			void releaseTextEditLock(editingTextLockNodeIdRef.current);
+			editingTextLockNodeIdRef.current = null;
+		}
 		if (session.isNewNode && node) {
 			executeCommand({
 				id: generateId(),
@@ -6460,7 +7311,7 @@ export const App: React.FC = () => {
 			} as Command);
 			setSelection([]);
 		}
-	}, [document, executeCommand, setSelection, textEditSession]);
+	}, [document, executeCommand, releaseTextEditLock, setSelection, textEditSession]);
 
 	const handleRenameNode = useCallback(
 		(id: string, name?: string) => {
@@ -6626,6 +7477,84 @@ export const App: React.FC = () => {
 		},
 		[activePageId, document.pages, executeCommand, switchToPage],
 	);
+
+	const setPrototypeStartFrame = useCallback(
+		(pageId: string, frameId?: string) => {
+			if (frameId && !prototypeFrameIdSet.has(frameId)) {
+				showToast('Start frame must be a top-level frame on the current page.');
+				return;
+			}
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: frameId ? 'Set prototype start frame' : 'Clear prototype start frame',
+				type: 'setPrototypeStartFrame',
+				payload: { pageId, frameId },
+			} as Command);
+		},
+		[executeCommand, prototypeFrameIdSet, showToast],
+	);
+
+	const setPrototypeInteraction = useCallback(
+		(
+			pageId: string,
+			sourceFrameId: string,
+			trigger: PrototypeTrigger,
+			interaction?: PrototypeInteraction,
+		) => {
+			if (!prototypeFrameIdSet.has(sourceFrameId)) {
+				showToast('Interaction source must be a top-level frame on the current page.');
+				return;
+			}
+			if (interaction) {
+				const action = interaction.action ?? 'navigate';
+				if ((action === 'navigate' || action === 'overlay') && !interaction.targetFrameId) {
+					showToast('This action requires a destination frame.');
+					return;
+				}
+				if (
+					interaction.targetFrameId &&
+					(action === 'navigate' || action === 'overlay') &&
+					!prototypeFrameIdSet.has(interaction.targetFrameId)
+				) {
+					showToast('Interaction destination must be a top-level frame on the current page.');
+					return;
+				}
+				if (action === 'open-link' && (!interaction.url || interaction.url.trim().length === 0)) {
+					showToast('Open link action requires a URL.');
+					return;
+				}
+			}
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'user',
+				description: interaction ? 'Set prototype interaction' : 'Remove prototype interaction',
+				type: 'setPrototypeInteraction',
+				payload: {
+					pageId,
+					sourceFrameId,
+					trigger,
+					interaction,
+				},
+			} as Command);
+		},
+		[executeCommand, prototypeFrameIdSet, showToast],
+	);
+
+	const launchPrototypePreview = useCallback(() => {
+		const selectedStart =
+			selectedPrototypeFrameId && prototypeFrameIdSet.has(selectedPrototypeFrameId) ? selectedPrototypeFrameId : null;
+		const firstVisibleFrameId =
+			prototypeFrameOptions.find((frame) => document.nodes[frame.id]?.visible !== false)?.id ?? null;
+		const startFrameId = selectedStart ?? firstVisibleFrameId;
+		if (!startFrameId) {
+			showToast('Create at least one visible top-level frame to preview.');
+			return;
+		}
+		setPrototypePlayerStartFrameId(startFrameId);
+	}, [document.nodes, prototypeFrameIdSet, prototypeFrameOptions, selectedPrototypeFrameId, showToast]);
 
 	const recordRecentComponentId = useCallback((componentId: string) => {
 		setRecentComponentIds((prev) => [componentId, ...prev.filter((id) => id !== componentId)].slice(0, 12));
@@ -7670,6 +8599,7 @@ export const App: React.FC = () => {
 				path = ensureGalileoExtension(pickedPath);
 			}
 
+			showToast('Saving...', true);
 			await invoke('save_document', {
 				args: { path, content: serializeDocument(document, { activePageId }) },
 			});
@@ -7680,12 +8610,12 @@ export const App: React.FC = () => {
 			markSaved();
 			const keysToClear = new Set([buildDraftKey(previousPath), buildDraftKey(path)]);
 			await Promise.all(Array.from(keysToClear).map((key) => deleteDraftByKey(key)));
-			alert('Document saved successfully!');
+			showToast('Document saved');
 		} catch (error) {
 			console.error('Save error:', error);
-			alert('Failed to save document');
+			showToast('Failed to save document');
 		}
-	}, [activePageId, currentPath, deleteDraftByKey, document, ensureGalileoExtension, markSaved, registerProjectOpened]);
+	}, [activePageId, currentPath, deleteDraftByKey, document, ensureGalileoExtension, markSaved, registerProjectOpened, showToast]);
 
 	const handleImportImage = useCallback(async () => {
 		try {
@@ -7708,6 +8638,87 @@ export const App: React.FC = () => {
 			alert('Failed to import image');
 		}
 	}, [insertImageNode]);
+
+	const handleOpenFigmaImport = useCallback(() => {
+		setFigmaImportError(null);
+		setFigmaImportOpen(true);
+	}, []);
+
+	const handleSubmitFigmaImport = useCallback(async () => {
+		if (!ENABLE_FIGMA_INTEROP_V1) return;
+		const fileKey = parseFigmaFileKey(figmaImportForm.fileOrUrl);
+		if (!fileKey) {
+			setFigmaImportError('Provide a valid Figma file URL or file key.');
+			return;
+		}
+		if (!figmaImportForm.token.trim()) {
+			setFigmaImportError('Provide a Figma personal access token.');
+			return;
+		}
+
+		setFigmaImportBusy(true);
+		setFigmaImportError(null);
+		try {
+			const mapped = await importFromFigma({
+				fileKey,
+				token: figmaImportForm.token.trim(),
+				nodeIds: parseNodeIds(figmaImportForm.nodeIds),
+				generateId,
+			});
+
+			if (!mapped.payload) {
+				const message = mapped.result.warnings[0]?.message ?? 'No importable layers were found.';
+				setFigmaImportError(message);
+				return;
+			}
+
+			if (figmaImportForm.importToNewPage) {
+				const pageId = generateId();
+				const rootId = generateId();
+				const nextPageName = mapped.result.pageName?.trim() || `Figma ${document.pages.length + 1}`;
+				executeCommand({
+					id: generateId(),
+					timestamp: Date.now(),
+					source: 'user',
+					description: 'Import from Figma',
+					type: 'createPage',
+					payload: {
+						pageId,
+						name: nextPageName,
+						rootId,
+						index: document.pages.length,
+						activate: true,
+						rootNode: {
+							type: 'frame',
+							name: 'Canvas',
+							position: { x: 0, y: 0 },
+							size: { width: 1280, height: 800 },
+							children: [],
+							visible: true,
+						},
+					},
+				} as Command);
+				pasteClipboardPayload(mapped.payload, { targetParentId: rootId });
+				setActivePageId(pageId);
+			} else {
+				pasteClipboardPayload(mapped.payload);
+			}
+
+			emitInteropImportReport({
+				source: 'figma-pat',
+				mode: 'editable',
+				reasons: mapped.result.warnings.map((warning) => warning.message),
+				warningCount: mapped.result.warnings.length,
+				importedLayerCount: mapped.result.importedLayerCount,
+			});
+			setFigmaImportOpen(false);
+		} catch (error) {
+			console.error('Figma import failed', error);
+			setFigmaImportError(error instanceof Error ? error.message : 'Failed to import from Figma.');
+		} finally {
+			setFigmaImportBusy(false);
+		}
+	}, [document.pages.length, emitInteropImportReport, executeCommand, figmaImportForm, pasteClipboardPayload]);
 
 	const handleCreateDeviceFrame = useCallback(
 		(preset: DevicePreset) => {
@@ -7752,6 +8763,67 @@ export const App: React.FC = () => {
 	const handleLoad = useCallback(async () => {
 		await handleOpenFile();
 	}, [handleOpenFile]);
+
+	const handleSnapshotExport = useCallback(async () => {
+		try {
+			const targetId = selectedIds[0] ?? activePageRootId;
+			const targetNode = document.nodes[targetId];
+			if (!targetNode) {
+				showToast('Nothing selected to export.');
+				return;
+			}
+
+			const formatInput = window.prompt('Export format (png, webp, svg, pdf, asset)', 'png');
+			if (!formatInput) return;
+			const format = formatInput.trim().toLowerCase();
+			if (!['png', 'webp', 'svg', 'pdf', 'asset'].includes(format)) {
+				showToast('Unsupported format.');
+				return;
+			}
+
+			showToast('Exporting...', true);
+
+			const snapshot = await exportNodeSnapshot(document, targetId, {
+				format: format as 'png' | 'webp' | 'svg' | 'pdf' | 'asset',
+				background: 'transparent',
+				includeFrameFill: true,
+				clipToBounds: true,
+			});
+
+			const extFromMime = (mime: string) => {
+				switch (mime) {
+					case 'image/webp':
+						return 'webp';
+					case 'image/svg+xml':
+						return 'svg';
+					case 'application/pdf':
+						return 'pdf';
+					case 'image/jpeg':
+						return 'jpg';
+					default:
+						return 'png';
+				}
+			};
+			const extension = extFromMime(snapshot.mime);
+			const safeBaseName =
+				(targetNode.name ?? targetNode.type ?? 'export')
+					.replace(/[^\w.-]+/g, '-')
+					.replace(/^-+|-+$/g, '')
+					.toLowerCase() || 'export';
+			const savedPath = await invoke<string>('show_save_image_dialog', {
+				args: { suggestedName: `${safeBaseName}.${extension}`, extensions: [extension] },
+			});
+			if (!savedPath) return;
+			const finalPath = savedPath.toLowerCase().endsWith(`.${extension}`) ? savedPath : `${savedPath}.${extension}`;
+			await invoke('save_binary', {
+				args: { path: finalPath, dataBase64: snapshot.dataBase64 },
+			});
+			showToast(`Exported ${extension.toUpperCase()}`);
+		} catch (error) {
+			console.error('Export snapshot failed', error);
+			showToast('Export failed');
+		}
+	}, [activePageRootId, document, selectedIds, showToast]);
 
 	useEffect(() => {
 		const updateSnapState = (e: KeyboardEvent) => {
@@ -7813,12 +8885,97 @@ export const App: React.FC = () => {
 			if (!clipboardData) return;
 			if (isEditableTarget(event.target)) return;
 
-			const customText =
-				clipboardData.getData('application/x-galileo') || clipboardData.getData('text/plain');
-			const payload = parseClipboardPayload(customText);
-			if (payload) {
+			const parsedClipboard = parseClipboardByPriority(clipboardData);
+			if (parsedClipboard?.kind === 'galileo') {
 				event.preventDefault();
-				pasteClipboardPayload(payload);
+				pasteClipboardPayload(parsedClipboard.payload);
+				return;
+			}
+			if (ENABLE_FIGMA_INTEROP_V1 && parsedClipboard?.kind === 'figma') {
+				event.preventDefault();
+				void (async () => {
+					try {
+						const figmaPayload =
+							parsedClipboard.payload.version === 2
+								? {
+										selection: parsedClipboard.payload.selection,
+										metadata: parsedClipboard.payload.metadata,
+										exportVersion: parsedClipboard.payload.exportVersion,
+									}
+								: parsedClipboard.payload.payload;
+						const mapped = mapFigmaPayloadToClipboardPayload(figmaPayload, {
+							generateId,
+							name: 'Figma Paste',
+						});
+						if (mapped.payload) {
+							pasteClipboardPayload(mapped.payload);
+						}
+						if (mapped.result.warnings.length > 0 || mapped.result.importedLayerCount > 0) {
+							emitInteropImportReport({
+								source: 'figma-plugin',
+								mode: 'editable',
+								reasons: mapped.result.warnings.map((warning) => warning.message),
+								warningCount: mapped.result.warnings.length,
+								importedLayerCount: mapped.result.importedLayerCount,
+							});
+						}
+					} catch (error) {
+						console.error('Figma clipboard paste error:', error);
+						showToast('Failed to paste Figma payload.');
+					}
+				})();
+				return;
+			}
+			if (ENABLE_FIGMA_INTEROP_V1 && parsedClipboard?.kind === 'svg') {
+				event.preventDefault();
+				void (async () => {
+					try {
+						const complexity = analyzeSvgComplexity(parsedClipboard.svgText);
+						if (complexity.isComplex) {
+							const rasterized = await rasterizeSvgToDataUrl(parsedClipboard.svgText);
+							await insertImageNode({
+								src: rasterized,
+								mime: 'image/png',
+								name: 'Figma SVG',
+							});
+							emitInteropImportReport({
+								source: 'figma-svg',
+								mode: 'raster-fallback',
+								reasons: complexity.reasons,
+								warningCount: 0,
+								importedLayerCount: 0,
+							});
+							return;
+						}
+
+						const mapped = mapSvgToClipboardPayload(parsedClipboard.svgText, {
+							generateId,
+							name: 'SVG Paste',
+						});
+						if (mapped.payload) {
+							pasteClipboardPayload(mapped.payload);
+						} else if (mapped.fallbackRasterize) {
+							const rasterized = await rasterizeSvgToDataUrl(parsedClipboard.svgText);
+							await insertImageNode({
+								src: rasterized,
+								mime: 'image/png',
+								name: 'Figma SVG',
+							});
+						}
+						if (mapped.warnings.length > 0 || mapped.importedLayerCount > 0) {
+							emitInteropImportReport({
+								source: 'figma-svg',
+								mode: mapped.fallbackRasterize ? 'raster-fallback' : 'editable',
+								reasons: mapped.warnings.map((warning) => warning.message),
+								warningCount: mapped.warnings.length,
+								importedLayerCount: mapped.importedLayerCount,
+							});
+						}
+					} catch (error) {
+						console.error('SVG clipboard paste error:', error);
+						showToast('Failed to paste SVG payload.');
+					}
+				})();
 				return;
 			}
 
@@ -7906,7 +9063,7 @@ export const App: React.FC = () => {
 
 		window.addEventListener('paste', handlePaste);
 		return () => window.removeEventListener('paste', handlePaste);
-	}, [appView, insertImageNode, pasteClipboardPayload]);
+	}, [appView, emitInteropImportReport, insertImageNode, pasteClipboardPayload, showToast]);
 
 	useEffect(() => {
 		if (appView !== 'editor') return;
@@ -8100,12 +9257,6 @@ export const App: React.FC = () => {
 					cancelTextEditing();
 					return;
 				}
-				if (!isComposing && e.key === 'Enter') {
-					e.preventDefault();
-					suppressTextEditorBlurCommitRef.current = true;
-					commitTextEditing();
-					return;
-				}
 				if (!isComposing && isCmd && e.key === 'Enter') {
 					e.preventDefault();
 					suppressTextEditorBlurCommitRef.current = true;
@@ -8123,6 +9274,11 @@ export const App: React.FC = () => {
 			if (isCmd && key === 'k') {
 				e.preventDefault();
 				setCommandPaletteOpen((prev) => !prev);
+				return;
+			}
+			if (isCmd && key === 'j' && isEditorView && ENABLE_AI_ASSISTANT_V1) {
+				e.preventDefault();
+				openAIAssistant();
 				return;
 			}
 
@@ -8375,12 +9531,19 @@ export const App: React.FC = () => {
 					setAssetsFocusNonce((prev) => prev + 1);
 					return;
 				}
-				if (key === 'v') setActiveTool('select');
-				if (key === 'h') setActiveTool('hand');
-				if (key === 'f') setActiveTool('frame');
-				if (key === 'r') setActiveTool('rectangle');
-				if (key === 't') setActiveTool('text');
-				if (ENABLE_VECTOR_EDIT_V1 && key === 'p') setActiveTool('pen');
+				if (!isCmd) {
+					if (key === 'v') setActiveTool('select');
+					if (key === 'h') setActiveTool('hand');
+					if (key === 'f') setActiveTool('frame');
+					if (key === 'r') setActiveTool('rectangle');
+					if (key === 'e') setActiveTool('ellipse');
+					if (key === 'l') setActiveTool('line');
+					if (key === 'a') setActiveTool('arrow');
+					if (key === 'g') setActiveTool('polygon');
+					if (key === 's') setActiveTool('star');
+					if (key === 't') setActiveTool('text');
+					if (ENABLE_VECTOR_EDIT_V1 && key === 'p') setActiveTool('pen');
+				}
 
 				// Space key for temporary pan mode (Figma-style)
 				if (e.code === 'Space' && !spaceKeyHeld && !dragState) {
@@ -8399,6 +9562,12 @@ export const App: React.FC = () => {
 				if (isCmd && key === 'o') {
 					e.preventDefault();
 					handleLoad();
+				}
+
+				if (ENABLE_FIGMA_INTEROP_V1 && isCmd && e.shiftKey && key === 'i') {
+					e.preventDefault();
+					handleOpenFigmaImport();
+					return;
 				}
 
 				if (isCmd && key === 'i') {
@@ -8428,9 +9597,44 @@ export const App: React.FC = () => {
 				handleLoad();
 			}
 
+			if (ENABLE_FIGMA_INTEROP_V1 && isCmd && e.shiftKey && key === 'i') {
+				e.preventDefault();
+				handleOpenFigmaImport();
+				return;
+			}
+
 			if (isCmd && key === 'i') {
 				e.preventDefault();
 				handleImportImage();
+			}
+
+			// Zoom shortcuts
+			if (!editable) {
+				if (isCmd && (key === '=' || key === '+' || e.code === 'Equal')) {
+					e.preventDefault();
+					handleZoomIn();
+					return;
+				}
+				if (isCmd && (key === '-' || e.code === 'Minus')) {
+					e.preventDefault();
+					handleZoomOut();
+					return;
+				}
+				if (isCmd && key === '0') {
+					e.preventDefault();
+					handleZoomTo(1);
+					return;
+				}
+				if (isCmd && key === '1') {
+					e.preventDefault();
+					handleZoomToFit();
+					return;
+				}
+				if (isCmd && key === '2') {
+					e.preventDefault();
+					handleZoomToSelection();
+					return;
+				}
 			}
 		};
 
@@ -8472,7 +9676,9 @@ export const App: React.FC = () => {
 		handleOpenFile,
 		handleSave,
 		handleLoad,
+		handleOpenFigmaImport,
 		handleImportImage,
+		openAIAssistant,
 		executeCommand,
 		copySelectionToClipboard,
 		copyEffects,
@@ -8499,6 +9705,11 @@ export const App: React.FC = () => {
 		penSession,
 		vectorEditSession,
 		setTextCreationDragState,
+		handleZoomIn,
+		handleZoomOut,
+		handleZoomTo,
+		handleZoomToFit,
+		handleZoomToSelection,
 	]);
 
 	// Persist panel collapse state
@@ -8530,7 +9741,7 @@ export const App: React.FC = () => {
 			setTextCreationDragState(null);
 		}
 		setVectorHover(null);
-		setActiveTool(tool as 'select' | 'hand' | 'frame' | 'rectangle' | 'text' | 'pen');
+		setActiveTool(tool);
 	}, []);
 
 	const commandItems = useMemo<CommandPaletteItem[]>(() => {
@@ -8562,6 +9773,90 @@ export const App: React.FC = () => {
 				shortcut: 'Cmd+W',
 				action: handleBackToProjects,
 			});
+			if (ENABLE_AI_ASSISTANT_V1) {
+				items.push({
+					id: 'command-open-ai-assistant',
+					label: 'Open AI Assistant',
+					section: 'Commands',
+					shortcut: 'Cmd+J',
+					action: openAIAssistant,
+				});
+				items.push({
+					id: 'command-open-ai-edit-mode',
+					label: 'AI Edit Mode',
+					section: 'Commands',
+					action: () => {
+						setAIMode('edit');
+						openAIAssistant();
+					},
+				});
+				items.push({
+					id: 'command-open-ai-image-mode',
+					label: 'AI Image Mode',
+					section: 'Commands',
+					action: () => {
+						setAIMode('image');
+						openAIAssistant();
+					},
+				});
+			}
+			items.push({
+				id: 'command-zoom-in',
+				label: 'Zoom In',
+				section: 'View',
+				shortcut: 'Cmd++',
+				action: handleZoomIn,
+			});
+			items.push({
+				id: 'command-zoom-out',
+				label: 'Zoom Out',
+				section: 'View',
+				shortcut: 'Cmd+-',
+				action: handleZoomOut,
+			});
+			items.push({
+				id: 'command-zoom-100',
+				label: 'Zoom to 100%',
+				section: 'View',
+				shortcut: 'Cmd+0',
+				action: () => handleZoomTo(1),
+			});
+			items.push({
+				id: 'command-zoom-fit',
+				label: 'Zoom to Fit',
+				section: 'View',
+				shortcut: 'Cmd+1',
+				action: handleZoomToFit,
+			});
+			items.push({
+				id: 'command-zoom-selection',
+				label: 'Zoom to Selection',
+				section: 'View',
+				shortcut: 'Cmd+2',
+				action: handleZoomToSelection,
+			});
+			items.push({
+				id: 'command-zoom-200',
+				label: 'Zoom to 200%',
+				section: 'View',
+				action: () => handleZoomTo(2),
+			});
+			items.push({
+				id: 'command-zoom-50',
+				label: 'Zoom to 50%',
+				section: 'View',
+				action: () => handleZoomTo(0.5),
+			});
+			if (ENABLE_FIGMA_INTEROP_V1) {
+				items.push({
+					id: 'command-import-figma',
+					label: 'Import From Figma (PAT)',
+					description: 'For editable fidelity via paste, use Figma Bridge plugin first.',
+					section: 'Commands',
+					shortcut: 'Cmd+Shift+I',
+					action: handleOpenFigmaImport,
+				});
+			}
 		}
 
 		if (appView === 'editor' && currentPath) {
@@ -8596,11 +9891,18 @@ export const App: React.FC = () => {
 		currentPath,
 		fileName,
 		handleBackToProjects,
+		openAIAssistant,
 		handleCreateProject,
+		handleOpenFigmaImport,
 		handleOpenFile,
 		handleOpenProject,
 		missingPaths,
 		projects,
+		handleZoomIn,
+		handleZoomOut,
+		handleZoomTo,
+		handleZoomToFit,
+		handleZoomToSelection,
 	]);
 
 	return (
@@ -8676,9 +9978,15 @@ export const App: React.FC = () => {
 								breadcrumb={projectBreadcrumb}
 								onRename={handleRenameCurrentProject}
 								onDuplicate={handleDuplicateCurrentProject}
+								onSnapshot={handleSnapshotExport}
 							/>
 						</div>
-						<ProjectTabs fileName={fileName} isDirty={isDirty} />
+						<ProjectTabs
+							fileName={fileName}
+							isDirty={isDirty}
+							editorMode={editorMode}
+							onEditorModeChange={setEditorMode}
+						/>
 					</div>
 					<div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 						<LeftSidebar
@@ -8771,6 +10079,7 @@ export const App: React.FC = () => {
 								width={canvasSize.width}
 								height={canvasSize.height}
 								document={displayDocument}
+								collaborators={collaborators.filter((entry) => entry.actorId !== actorId)}
 								boundsMap={boundsMap}
 								view={view}
 								selectionBounds={canvasSelectionBounds}
@@ -8792,6 +10101,9 @@ export const App: React.FC = () => {
 									setHoverHandle(null);
 									setHoverHit(null);
 									setVectorHover(null);
+									if (ENABLE_COLLAB_V1 && collabStatus === 'connected') {
+										updatePresence({ cursor: undefined, selectionIds });
+									}
 								}}
 								onMouseDown={handleCanvasMouseDown}
 								onMouseMove={handleCanvasMouseMove}
@@ -8800,19 +10112,29 @@ export const App: React.FC = () => {
 								onContextMenu={handleCanvasContextMenu}
 							/>
 
+							{editorMode === 'prototype' && (
+								<PrototypeLinksOverlay
+									width={canvasSize.width}
+									height={canvasSize.height}
+									view={view}
+									pagePrototype={activePagePrototype}
+									boundsMap={boundsMap}
+									frames={prototypeFrameOptions}
+								/>
+							)}
+
 							{ENABLE_TEXT_PARITY_V1 &&
 								textEditSession &&
 								editingTextNode?.type === 'text' &&
 								editingTextScreenRect && (
-									<input
+									<textarea
 										ref={textEditorRef}
-										type="text"
 										value={textEditSession.draftText}
 										spellCheck={false}
 										autoCorrect="off"
 										autoCapitalize="off"
 										onChange={(event) => {
-											const value = event.target.value.replace(/[\r\n]+/g, ' ');
+											const value = event.target.value;
 											setTextEditSession((current) =>
 												current
 													? {
@@ -8847,12 +10169,6 @@ export const App: React.FC = () => {
 												cancelTextEditing();
 												return;
 											}
-											if (!isComposing && event.key === 'Enter') {
-												event.preventDefault();
-												suppressTextEditorBlurCommitRef.current = true;
-												commitTextEditing();
-												return;
-											}
 											if (!isComposing && (event.ctrlKey || event.metaKey) && event.key === 'Enter') {
 												event.preventDefault();
 												suppressTextEditorBlurCommitRef.current = true;
@@ -8864,14 +10180,7 @@ export const App: React.FC = () => {
 											left: `${editingTextScreenRect.left}px`,
 											top: `${editingTextScreenRect.top}px`,
 											width: `${Math.max(1, editingTextScreenRect.width)}px`,
-											height: `${Math.max(
-												1,
-												(editingTextStyle?.lineHeightPx ??
-													editingTextNode.lineHeightPx ??
-													(editingTextStyle?.fontSize ?? editingTextNode.fontSize ?? 16) * 1.2) *
-													zoom +
-													Math.max(2, 4 * zoom) * 2,
-											)}px`,
+											height: `${Math.max(1, editingTextScreenRect.height)}px`,
 											padding: `${Math.max(2, 4 * zoom)}px`,
 											border: 'none',
 											borderRadius: 0,
@@ -8893,6 +10202,8 @@ export const App: React.FC = () => {
 											)}px`,
 											letterSpacing: `${(editingTextStyle?.letterSpacingPx ?? editingTextNode.letterSpacingPx ?? 0) * zoom}px`,
 											textAlign: editingTextStyle?.textAlign ?? editingTextNode.textAlign ?? 'left',
+											whiteSpace: 'pre-wrap',
+											resize: 'none',
 											overflow: 'hidden',
 											boxShadow: 'none',
 											margin: 0,
@@ -8907,6 +10218,7 @@ export const App: React.FC = () => {
 								onSave={handleSave}
 								onLoad={handleLoad}
 								onImport={handleImportImage}
+								onImportFigma={ENABLE_FIGMA_INTEROP_V1 ? handleOpenFigmaImport : undefined}
 								onCreateDeviceFrame={handleCreateDeviceFrame}
 							/>
 						</div>
@@ -8953,45 +10265,124 @@ export const App: React.FC = () => {
 							</div>
 						)}
 
-						<PropertiesPanel
-							selectedNode={selectedNode}
-							document={document}
-							styles={document.styles}
-							width={rightPanelWidth}
-							collapsed={rightPanelCollapsed}
-							isResizing={panelResizeState !== null}
-							onToggleCollapsed={toggleRightPanel}
-							onUpdateNode={handleUpdateNode}
-							onOpenPlugin={handleOpenPlugin}
-							onRemoveBackground={removeBackgroundForImage}
-							onClearBackground={clearBackgroundRemoval}
-							onUpdateImageOutline={updateImageOutline}
-							isRemovingBackground={isRemovingBackground}
-							zoom={zoom}
-							onCopyEffects={(nodeId) => copyEffects(nodeId)}
-							onPasteEffects={(nodeId) => pasteEffects([nodeId])}
-							canPasteEffects={Boolean(effectsClipboardRef.current?.length)}
-							textOverflow={selectedTextOverflow}
-							componentContext={componentPanelContext}
-							onSetComponentVariant={setComponentInstanceVariant}
-							onDetachComponentInstance={detachComponentInstance}
-							onResetComponentOverride={(instanceId, sourceNodeId) =>
-								setComponentInstanceOverride(instanceId, sourceNodeId, undefined, true)
-							}
-							onResetAllComponentOverrides={resetAllComponentOverrides}
-							onCreateSharedStyleFromNode={createSharedStyleFromNode}
-							vectorTarget={
-								editablePathNode?.type === 'path'
-									? {
-											pathId: editablePathNode.id,
-											closed: editablePathNode.vector?.closed ?? false,
-											pointCount: editablePathPointCount,
-											selectedPointId: vectorEditSession?.selectedPointId ?? null,
+						<div
+							style={{
+								display: 'flex',
+								flexDirection: 'column',
+								width: rightPanelWidth,
+								height: '100%',
+								flexShrink: 0,
+								backgroundColor: colors.bg.secondary,
+							}}
+						>
+							{ENABLE_COLLAB_V1 && (
+								<SharePanel
+									collabStatus={collabStatus}
+									collaborators={collaborators}
+									currentActorId={actorId}
+									roomName={deriveProjectNameFromPath(currentPath ?? 'Untitled')}
+									onOpenShareModal={handleShareCollab}
+									onOpenJoinModal={handleJoinCollab}
+								/>
+							)}
+							{editorMode === 'design' && ENABLE_AI_ASSISTANT_V1 && (
+								<RightPanelTabs activeTab={rightPanelTab} onChange={setRightPanelTab} />
+							)}
+							<div style={{ flex: 1, overflow: 'hidden' }}>
+								{editorMode === 'prototype' ? (
+									<PrototypePanel
+										pageId={activePageId}
+										width={rightPanelWidth}
+										collapsed={rightPanelCollapsed}
+										isResizing={panelResizeState !== null}
+										onToggleCollapsed={toggleRightPanel}
+										frames={prototypeFrameOptions}
+										selectedFrameId={selectedPrototypeFrameId}
+										pagePrototype={activePagePrototype}
+										onSetStartFrame={setPrototypeStartFrame}
+										onSetInteraction={setPrototypeInteraction}
+										onLaunchPreview={launchPrototypePreview}
+									/>
+								) : ENABLE_AI_ASSISTANT_V1 && rightPanelTab === 'ai' ? (
+									<AIPanel
+										mode={aiMode}
+										onModeChange={setAIMode}
+										status={aiStatus}
+										selectionCount={selectionIds.length}
+										summary={aiSummary}
+										warnings={aiWarnings}
+										errorMessage={aiErrorMessage}
+										proposedChanges={
+											aiMode === 'edit'
+												? aiEditPreviewState?.commands.map((command) => command.description ?? command.type) ?? []
+												: aiImagePreviewState?.images.map(
+														(image, index) => `Image ${index + 1}: ${image.mimeType} (${image.width}x${image.height})`,
+													) ?? []
 										}
-									: null
-							}
-							onToggleVectorClosed={toggleVectorClosed}
-						/>
+										textModels={TEXT_MODEL_OPTIONS}
+										imageModels={IMAGE_MODEL_OPTIONS}
+										selectedTextModelId={aiTextModelId}
+										selectedImageModelId={aiImageModelId}
+										selectedImageSize={aiImageSize}
+										enableModelPicker={ENABLE_AI_MODEL_PICKER_V1}
+										onSelectTextModel={setAITextModelId}
+										onSelectImageModel={setAIImageModelId}
+										onSelectImageSize={setAIImageSize}
+										onRunEdit={handleRunAIEdit}
+										onRunImage={handleRunAIImage}
+										onPreview={handleRefreshAIPreview}
+										onApply={handleApplyAIPreview}
+										onReject={handleRejectAIPreview}
+										onOpenProperties={openPropertiesTab}
+									/>
+								) : (
+									<PropertiesPanel
+										selectedNode={selectedNode}
+										document={document}
+										styles={document.styles}
+										width={rightPanelWidth}
+										collapsed={rightPanelCollapsed}
+										isResizing={panelResizeState !== null}
+										onToggleCollapsed={toggleRightPanel}
+										onUpdateNode={handleUpdateNode}
+										onOpenPlugin={handleOpenPlugin}
+										onRemoveBackground={removeBackgroundForImage}
+										onClearBackground={clearBackgroundRemoval}
+										onUpdateImageOutline={updateImageOutline}
+										isRemovingBackground={isRemovingBackground}
+										zoom={zoom}
+										onZoomTo={handleZoomTo}
+										onZoomToFit={handleZoomToFit}
+										onZoomToSelection={handleZoomToSelection}
+										onCopyEffects={(nodeId) => copyEffects(nodeId)}
+										onPasteEffects={(nodeId) => pasteEffects([nodeId])}
+										canPasteEffects={Boolean(effectsClipboardRef.current?.length)}
+										textOverflow={selectedTextOverflow}
+										componentContext={componentPanelContext}
+										onSetComponentVariant={setComponentInstanceVariant}
+										onDetachComponentInstance={detachComponentInstance}
+										onResetComponentOverride={(instanceId, sourceNodeId) =>
+											setComponentInstanceOverride(instanceId, sourceNodeId, undefined, true)
+										}
+										onResetAllComponentOverrides={resetAllComponentOverrides}
+										onCreateSharedStyleFromNode={createSharedStyleFromNode}
+										onUpdateDocumentAppearance={updateDocumentAppearance}
+										onPickImageAssetForPaint={pickImageAssetForPaint}
+										vectorTarget={
+											editablePathNode?.type === 'path'
+												? {
+														pathId: editablePathNode.id,
+														closed: editablePathNode.vector?.closed ?? false,
+														pointCount: editablePathPointCount,
+														selectedPointId: vectorEditSession?.selectedPointId ?? null,
+													}
+												: null
+										}
+										onToggleVectorClosed={toggleVectorClosed}
+									/>
+								)}
+							</div>
+						</div>
 					</div>
 				</>
 			)}
@@ -9019,11 +10410,60 @@ export const App: React.FC = () => {
 				/>
 			)}
 
+			{ENABLE_FIGMA_INTEROP_V1 && (
+				<FigmaImportModal
+					open={figmaImportOpen}
+					values={figmaImportForm}
+					onChange={setFigmaImportForm}
+					onClose={() => setFigmaImportOpen(false)}
+					onSubmit={handleSubmitFigmaImport}
+					isImporting={figmaImportBusy}
+					errorMessage={figmaImportError}
+				/>
+			)}
+
+			{ENABLE_COLLAB_V1 && (
+				<>
+					<ShareModal
+						open={shareModalOpen}
+						onClose={() => setShareModalOpen(false)}
+						roomName={deriveProjectNameFromPath(currentPath ?? 'Untitled')}
+						shareLink={collabShareLink}
+						collaborators={collaborators}
+						currentActorId={actorId}
+						isCreating={isCreatingRoom}
+						onCreateRoom={handleCreateRoom}
+					/>
+					<JoinModal
+						open={joinModalOpen}
+						onClose={() => {
+							setJoinModalOpen(false);
+							setJoinModalError(null);
+						}}
+						onJoin={handleJoinRoom}
+						isJoining={isJoiningRoom}
+						error={joinModalError}
+					/>
+					{collabStatus === 'connected' && (
+						<CollaboratorAvatars collaborators={collaborators} currentActorId={actorId} />
+					)}
+				</>
+			)}
+
 			<CommandPalette
 				open={commandPaletteOpen}
 				items={commandItems}
 				onClose={() => setCommandPaletteOpen(false)}
 			/>
+
+			{prototypePlayerStartFrameId && (
+				<PrototypePlayer
+					document={document}
+					pagePrototype={activePagePrototype}
+					initialFrameId={prototypePlayerStartFrameId}
+					onClose={() => setPrototypePlayerStartFrameId(null)}
+				/>
+			)}
 
 			{toastMessage && (
 				<div
@@ -9045,21 +10485,41 @@ export const App: React.FC = () => {
 						fontSize: 14,
 					}}
 				>
-					<div
-						style={{
-							width: 28,
-							height: 28,
-							borderRadius: 8,
-							backgroundColor: '#ffffff',
-							display: 'grid',
-							placeItems: 'center',
-						}}
-					>
-						<img src="/logo.png" alt="Galileo" style={{ width: 18, height: 18 }} />
-					</div>
+					{toastLoading ? (
+						<div
+							style={{
+								width: 20,
+								height: 20,
+								border: '2px solid rgba(255,255,255,0.3)',
+								borderTopColor: '#ffffff',
+								borderRadius: '50%',
+								animation: 'spin 0.8s linear infinite',
+							}}
+						/>
+					) : (
+						<div
+							style={{
+								width: 28,
+								height: 28,
+								borderRadius: 8,
+								backgroundColor: '#ffffff',
+								display: 'grid',
+								placeItems: 'center',
+							}}
+						>
+							<img src="/logo.png" alt="Galileo" style={{ width: 18, height: 18 }} />
+						</div>
+					)}
 					<div>{toastMessage}</div>
 				</div>
 			)}
+
+			<style>{`
+				@keyframes spin {
+					from { transform: rotate(0deg); }
+					to { transform: rotate(360deg); }
+				}
+			`}</style>
 
 			{isRemovingBackground && (
 				<div

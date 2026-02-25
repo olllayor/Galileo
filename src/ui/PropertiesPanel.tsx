@@ -17,6 +17,7 @@ import type {
 	Constraints,
 	ComponentOverridePatch,
 	Document,
+	Effect,
 	Layout,
 	LayoutGuideType,
 	LayoutSizing,
@@ -24,6 +25,7 @@ import type {
 	ImageOutline,
 	ShadowBlendMode,
 	ShadowEffect,
+	DocumentAppearance,
 } from '../core/doc/types';
 import {
 	ENABLE_AUTO_SHADOWS_V2,
@@ -36,6 +38,7 @@ import {
 import { colors, spacing, typography, radii, transitions, panels } from './design-system';
 import { ScrubbableNumberInput } from './ScrubbableNumberInput';
 import { FontPickerModal } from './FontPickerModal';
+import { AppearanceSection } from './appearance/AppearanceSection';
 
 interface PropertiesPanelProps {
 	selectedNode: Node | null;
@@ -52,6 +55,9 @@ interface PropertiesPanelProps {
 	onUpdateImageOutline?: (id: string, updates: Partial<ImageOutline>) => void | Promise<void>;
 	isRemovingBackground?: boolean;
 	zoom?: number;
+	onZoomTo?: (zoom: number) => void;
+	onZoomToFit?: () => void;
+	onZoomToSelection?: () => void;
 	onCopyEffects?: (nodeId: string) => void;
 	onPasteEffects?: (nodeId: string) => void;
 	canPasteEffects?: boolean;
@@ -80,11 +86,14 @@ interface PropertiesPanelProps {
 	onResetComponentOverride?: (instanceId: string, sourceNodeId: string) => void;
 	onResetAllComponentOverrides?: (instanceId: string) => void;
 	onCreateSharedStyleFromNode?: (nodeId: string, kind: 'paint' | 'text' | 'effect' | 'grid') => void;
+	onUpdateDocumentAppearance?: (appearance: DocumentAppearance) => void;
+	onPickImageAssetForPaint?: () => Promise<string | null>;
 }
 
 const defaultLayout: Layout = {
 	type: 'auto',
 	direction: 'row',
+	wrap: 'nowrap',
 	gap: 8,
 	padding: { top: 8, right: 8, bottom: 8, left: 8 },
 	alignment: 'start',
@@ -173,6 +182,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	onUpdateImageOutline,
 	isRemovingBackground = false,
 	zoom = 1,
+	onZoomTo,
+	onZoomToFit,
+	onZoomToSelection,
 	onCopyEffects,
 	onPasteEffects,
 	canPasteEffects = false,
@@ -185,11 +197,30 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	onResetComponentOverride,
 	onResetAllComponentOverrides,
 	onCreateSharedStyleFromNode,
+	onUpdateDocumentAppearance,
+	onPickImageAssetForPaint,
 }) => {
-	const [draggedEffectIndex, setDraggedEffectIndex] = React.useState<number | null>(null);
+		const [draggedEffectIndex, setDraggedEffectIndex] = React.useState<number | null>(null);
 	const [fontPickerOpen, setFontPickerOpen] = React.useState(false);
 	const [fontPickerAnchorRect, setFontPickerAnchorRect] = React.useState<DOMRect | null>(null);
 	const fontPickerTriggerRef = React.useRef<HTMLButtonElement | null>(null);
+	const [zoomDropdownOpen, setZoomDropdownOpen] = React.useState(false);
+	const zoomDropdownRef = React.useRef<HTMLDivElement | null>(null);
+
+	const zoomPresets = [
+		{ label: '6400%', value: 64 },
+		{ label: '3200%', value: 32 },
+		{ label: '1600%', value: 16 },
+		{ label: '800%', value: 8 },
+		{ label: '400%', value: 4 },
+		{ label: '200%', value: 2 },
+		{ label: '100%', value: 1 },
+		{ label: '50%', value: 0.5 },
+		{ label: '25%', value: 0.25 },
+		{ label: '10%', value: 0.1 },
+		{ label: 'Fit', value: 'fit' as const },
+		{ label: 'Selection', value: 'selection' as const },
+	];
 
 	React.useEffect(() => {
 		if (selectedNode?.type !== 'text' && fontPickerOpen) {
@@ -210,6 +241,17 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 			window.removeEventListener('scroll', updateAnchor, true);
 		};
 	}, [fontPickerOpen]);
+
+	React.useEffect(() => {
+		if (!zoomDropdownOpen) return;
+		const handleClickOutside = (e: MouseEvent) => {
+			if (zoomDropdownRef.current && !zoomDropdownRef.current.contains(e.target as globalThis.Node)) {
+				setZoomDropdownOpen(false);
+			}
+		};
+		globalThis.document.addEventListener('mousedown', handleClickOutside);
+		return () => globalThis.document.removeEventListener('mousedown', handleClickOutside);
+	}, [zoomDropdownOpen]);
 
 	// Collapsed rail mode
 	if (collapsed) {
@@ -297,6 +339,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 			<div
 				style={{
 					width: `${width}px`,
+					height: '100%',
 					padding: spacing.md,
 					backgroundColor: colors.bg.secondary,
 					borderLeft: `1px solid ${colors.border.subtle}`,
@@ -490,20 +533,26 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 	const effectStyles = Object.values(styles.effect).sort((a, b) => a.name.localeCompare(b.name));
 	const gridStyles = Object.values(styles.grid).sort((a, b) => a.name.localeCompare(b.name));
 
-	const updateEffects = (nextEffects: ShadowEffect[]) => {
+	const updateEffects = (nextEffects: Effect[]) => {
 		handleInputChange('effects', nextEffects);
 	};
 
-	const addEffect = (type: 'drop' | 'inner' | 'auto') => {
-		updateEffects([...effects, createDefaultShadowEffect(type)]);
+	const addEffect = (type: 'drop' | 'inner' | 'auto' | 'layerBlur' | 'backgroundBlur') => {
+		if (type === 'layerBlur') {
+			updateEffects([...effects, { type: 'layerBlur', blur: 10, enabled: true }]);
+		} else if (type === 'backgroundBlur') {
+			updateEffects([...effects, { type: 'backgroundBlur', blur: 10, enabled: true }]);
+		} else {
+			updateEffects([...effects, createDefaultShadowEffect(type)]);
+		}
 	};
 
-	const updateEffect = (index: number, updater: (effect: ShadowEffect) => ShadowEffect) => {
+	const updateEffect = (index: number, updater: (effect: Effect) => Effect) => {
 		updateEffects(effects.map((effect, i) => (i === index ? updater(effect) : effect)));
 	};
 
-	const updateEffectPatch = (index: number, updates: Partial<ShadowEffect>) => {
-		updateEffect(index, (effect) => ({ ...effect, ...updates } as ShadowEffect));
+	const updateEffectPatch = (index: number, updates: Partial<Effect>) => {
+		updateEffect(index, (effect) => ({ ...effect, ...updates } as Effect));
 	};
 
 	const updateAutoBinding = (index: number, field: AutoShadowBindingField, bindingKey: string) => {
@@ -568,6 +617,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 		<div
 			style={{
 				width: `${width}px`,
+				height: '100%',
 				padding: spacing.md,
 				backgroundColor: colors.bg.secondary,
 				borderLeft: `1px solid ${colors.border.subtle}`,
@@ -595,15 +645,84 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					>
 						Design
 					</span>
-					<span
-						style={{
-							fontSize: typography.fontSize.xs,
-							color: colors.text.tertiary,
-							fontFamily: typography.fontFamily.mono,
-						}}
-					>
-						{Math.round(zoom * 100)}%
-					</span>
+					<div ref={zoomDropdownRef} style={{ position: 'relative' }}>
+						<button
+							type="button"
+							onClick={() => setZoomDropdownOpen(!zoomDropdownOpen)}
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: '2px',
+								background: 'transparent',
+								border: 'none',
+								padding: 0,
+								cursor: 'pointer',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								fontFamily: typography.fontFamily.mono,
+							}}
+						>
+							{Math.round(zoom * 100)}%
+							<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+								<path d="M6 9l6 6 6-6" />
+							</svg>
+						</button>
+						{zoomDropdownOpen && (
+							<div
+								style={{
+									position: 'absolute',
+									top: '100%',
+									left: 0,
+									marginTop: '4px',
+									minWidth: '100px',
+									backgroundColor: colors.bg.tertiary,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.md,
+									boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+									zIndex: 100,
+									overflow: 'hidden',
+								}}
+							>
+								{zoomPresets.map((preset) => (
+									<button
+										key={preset.label}
+										type="button"
+										onClick={() => {
+											if (preset.value === 'fit') {
+												onZoomToFit?.();
+											} else if (preset.value === 'selection') {
+												onZoomToSelection?.();
+											} else {
+												onZoomTo?.(preset.value);
+											}
+											setZoomDropdownOpen(false);
+										}}
+										style={{
+											display: 'flex',
+											alignItems: 'center',
+											justifyContent: 'space-between',
+											width: '100%',
+											padding: `${spacing.xs} ${spacing.sm}`,
+											background: 'transparent',
+											border: 'none',
+											color: colors.text.primary,
+											fontSize: typography.fontSize.xs,
+											cursor: 'pointer',
+											fontFamily: typography.fontFamily.mono,
+										}}
+										onMouseEnter={(e) => {
+											e.currentTarget.style.backgroundColor = colors.bg.hover;
+										}}
+										onMouseLeave={(e) => {
+											e.currentTarget.style.backgroundColor = 'transparent';
+										}}
+									>
+										{preset.label}
+									</button>
+								))}
+							</div>
+						)}
+					</div>
 				</div>
 				<button
 					type="button"
@@ -642,8 +761,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 				</h4>
 				<div style={{ display: 'grid', gap: spacing.xs }}>
 					<div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.xs }}>
-						<select
-							value={selectedNode.fillStyleId ?? ''}
+						<select className="gal-select-field" value={selectedNode.fillStyleId ?? ''}
 							onChange={(event) => handleInputChange('fillStyleId', event.target.value || undefined)}
 							style={{
 								padding: `${spacing.xs} ${spacing.sm}`,
@@ -694,8 +812,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					</div>
 					{selectedNode.type === 'text' && (
 						<div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.xs }}>
-							<select
-								value={selectedNode.textStyleId ?? ''}
+							<select className="gal-select-field" value={selectedNode.textStyleId ?? ''}
 								onChange={(event) => handleInputChange('textStyleId', event.target.value || undefined)}
 								style={{
 									padding: `${spacing.xs} ${spacing.sm}`,
@@ -746,8 +863,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						</div>
 					)}
 					<div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.xs }}>
-						<select
-							value={selectedNode.effectStyleId ?? ''}
+						<select className="gal-select-field" value={selectedNode.effectStyleId ?? ''}
 							onChange={(event) => handleInputChange('effectStyleId', event.target.value || undefined)}
 							style={{
 								padding: `${spacing.xs} ${spacing.sm}`,
@@ -798,8 +914,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 					</div>
 					{selectedNode.type === 'frame' && (
 						<div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: spacing.xs }}>
-							<select
-								value={selectedNode.gridStyleId ?? ''}
+							<select className="gal-select-field" value={selectedNode.gridStyleId ?? ''}
 								onChange={(event) => handleInputChange('gridStyleId', event.target.value || undefined)}
 								style={{
 									padding: `${spacing.xs} ${spacing.sm}`,
@@ -1035,8 +1150,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 							>
 								Operation
 							</label>
-							<select
-								value={booleanData.op}
+							<select className="gal-select-field" value={booleanData.op}
 								onChange={(event) =>
 									onUpdateNode(selectedNode.id, {
 										booleanData: {
@@ -1158,8 +1272,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								>
 									{property}
 								</label>
-								<select
-									value={componentContext.currentVariant[property] ?? ''}
+								<select className="gal-select-field" value={componentContext.currentVariant[property] ?? ''}
 									onChange={(event) =>
 										onSetComponentVariant?.(componentContext.instanceId, {
 											...componentContext.currentVariant,
@@ -1480,7 +1593,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						>
 							Constraints
 						</h4>
-						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm }}>
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: spacing.sm }}>
 							<div>
 								<label
 									style={{
@@ -1492,8 +1605,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								>
 									Horizontal
 								</label>
-								<select
-									value={currentConstraints.horizontal}
+								<select className="gal-select-field" value={currentConstraints.horizontal}
 									onChange={(e) =>
 										handleInputChange('constraints', {
 											...currentConstraints,
@@ -1514,6 +1626,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									<option value="right">Right</option>
 									<option value="left-right">Left &amp; Right</option>
 									<option value="center">Center</option>
+									<option value="scale">Scale</option>
 								</select>
 							</div>
 							<div>
@@ -1527,8 +1640,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								>
 									Vertical
 								</label>
-								<select
-									value={currentConstraints.vertical}
+								<select className="gal-select-field" value={currentConstraints.vertical}
 									onChange={(e) =>
 										handleInputChange('constraints', {
 											...currentConstraints,
@@ -1549,6 +1661,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									<option value="bottom">Bottom</option>
 									<option value="top-bottom">Top &amp; Bottom</option>
 									<option value="center">Center</option>
+									<option value="scale">Scale</option>
 								</select>
 							</div>
 						</div>
@@ -1717,8 +1830,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 						>
 							Shadow overflow
 						</label>
-						<select
-							value={shadowOverflow}
+						<select className="gal-select-field" value={shadowOverflow}
 							onChange={(e) =>
 								handleShadowOverflowChange(e.target.value as 'visible' | 'clipped' | 'clip-content-only')
 							}
@@ -1774,8 +1886,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								>
 									Direction
 								</label>
-								<select
-									value={layout.direction}
+								<select className="gal-select-field" value={layout.direction}
 									onChange={(e) => handleLayoutChange({ direction: e.target.value as Layout['direction'] })}
 									style={{
 										width: '100%',
@@ -1791,6 +1902,36 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									<option value="column">Column</option>
 								</select>
 							</div>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Wrap
+								</label>
+								<select className="gal-select-field" value={layout.wrap ?? 'nowrap'}
+									onChange={(e) => handleLayoutChange({ wrap: e.target.value as Layout['wrap'] })}
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								>
+									<option value="nowrap">No Wrap</option>
+									<option value="wrap">Wrap</option>
+								</select>
+							</div>
+						</div>
+
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm }}>
 							<div>
 								<label
 									style={{
@@ -1834,8 +1975,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 							>
 								Main axis align
 							</label>
-							<select
-								value={layout.alignment}
+							<select className="gal-select-field" value={layout.alignment}
 								onChange={(e) => handleLayoutChange({ alignment: e.target.value as Layout['alignment'] })}
 								style={{
 									width: '100%',
@@ -1850,6 +1990,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								<option value="start">Start</option>
 								<option value="center">Center</option>
 								<option value="end">End</option>
+								<option value="space-between">Space Between</option>
 							</select>
 						</div>
 						<div>
@@ -1863,8 +2004,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 							>
 								Cross axis align
 							</label>
-							<select
-								value={layout.crossAlignment ?? 'center'}
+							<select className="gal-select-field" value={layout.crossAlignment ?? 'center'}
 								onChange={(e) =>
 									handleLayoutChange({ crossAlignment: e.target.value as Layout['crossAlignment'] })
 								}
@@ -1959,6 +2099,187 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								/>
 							</div>
 						</div>
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginTop: spacing.sm }}>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Min W
+								</label>
+								<input
+									type="number"
+									value={layoutSizing.minWidth ?? ''}
+									onChange={(e) =>
+										handleInputChange('layoutSizing', {
+											...layoutSizing,
+											minWidth: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0),
+										})
+									}
+									placeholder="None"
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Max W
+								</label>
+								<input
+									type="number"
+									value={layoutSizing.maxWidth ?? ''}
+									onChange={(e) =>
+										handleInputChange('layoutSizing', {
+											...layoutSizing,
+											maxWidth: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0),
+										})
+									}
+									placeholder="None"
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Min H
+								</label>
+								<input
+									type="number"
+									value={layoutSizing.minHeight ?? ''}
+									onChange={(e) =>
+										handleInputChange('layoutSizing', {
+											...layoutSizing,
+											minHeight: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0),
+										})
+									}
+									placeholder="None"
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Max H
+								</label>
+								<input
+									type="number"
+									value={layoutSizing.maxHeight ?? ''}
+									onChange={(e) =>
+										handleInputChange('layoutSizing', {
+											...layoutSizing,
+											maxHeight: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0),
+										})
+									}
+									placeholder="None"
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								/>
+							</div>
+						</div>
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginTop: spacing.sm }}>
+							<div>
+								<label
+									style={{
+										display: 'block',
+										fontSize: typography.fontSize.xs,
+										color: colors.text.tertiary,
+										marginBottom: '4px',
+									}}
+								>
+									Align In Parent
+								</label>
+								<select className="gal-select-field" value={selectedNode.layoutAlign ?? 'auto'}
+									onChange={(e) => handleInputChange('layoutAlign', e.target.value)}
+									style={{
+										width: '100%',
+										padding: spacing.xs,
+										border: `1px solid ${colors.border.default}`,
+										borderRadius: radii.sm,
+										fontSize: typography.fontSize.md,
+										backgroundColor: colors.bg.tertiary,
+										color: colors.text.primary,
+									}}
+								>
+									<option value="auto">Auto</option>
+									<option value="start">Start</option>
+									<option value="center">Center</option>
+									<option value="end">End</option>
+									<option value="stretch">Stretch</option>
+								</select>
+							</div>
+							<div style={{ display: 'flex', alignItems: 'flex-end' }}>
+								<label
+									style={{
+										display: 'flex',
+										alignItems: 'center',
+										gap: spacing.xs,
+										fontSize: typography.fontSize.xs,
+										color: colors.text.secondary,
+										paddingBottom: spacing.xs,
+									}}
+								>
+									<input
+										type="checkbox"
+										checked={selectedNode.layoutAbsolute === true}
+										onChange={(e) => handleInputChange('layoutAbsolute', e.target.checked)}
+									/>
+									Absolute Position
+								</label>
+							</div>
+						</div>
 					</div>
 				)}
 
@@ -1986,8 +2307,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								>
 									Horizontal
 								</label>
-								<select
-									value={layoutSizing.horizontal}
+								<select className="gal-select-field" value={layoutSizing.horizontal}
 									onChange={(e) =>
 										handleInputChange('layoutSizing', {
 											...layoutSizing,
@@ -2020,8 +2340,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								>
 									Vertical
 								</label>
-								<select
-									value={layoutSizing.vertical}
+								<select className="gal-select-field" value={layoutSizing.vertical}
 									onChange={(e) =>
 										handleInputChange('layoutSizing', {
 											...layoutSizing,
@@ -2081,8 +2400,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								/>
 								Show guides
 							</label>
-							<select
-								value={layoutGuideType}
+							<select className="gal-select-field" value={layoutGuideType}
 								disabled={!hasLayoutGuides}
 								onChange={(e) =>
 									handleInputChange(
@@ -2530,6 +2848,40 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 				<div style={{ display: 'flex', gap: spacing.sm, marginBottom: spacing.sm }}>
 					<button
 						type="button"
+						onClick={() => addEffect('layerBlur')}
+						style={{
+							padding: `${spacing.xs} ${spacing.sm}`,
+							borderRadius: radii.sm,
+							border: `1px solid ${colors.border.default}`,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.secondary,
+							fontSize: typography.fontSize.md,
+							cursor: 'pointer',
+							flex: 1,
+						}}
+					>
+						+ Layer Blur
+					</button>
+					<button
+						type="button"
+						onClick={() => addEffect('backgroundBlur')}
+						style={{
+							padding: `${spacing.xs} ${spacing.sm}`,
+							borderRadius: radii.sm,
+							border: `1px solid ${colors.border.default}`,
+							backgroundColor: colors.bg.tertiary,
+							color: colors.text.secondary,
+							fontSize: typography.fontSize.md,
+							cursor: 'pointer',
+							flex: 1,
+						}}
+					>
+						+ BG Blur
+					</button>
+				</div>
+				<div style={{ display: 'flex', gap: spacing.sm, marginBottom: spacing.sm }}>
+					<button
+						type="button"
 						onClick={() => onCopyEffects?.(selectedNode.id)}
 						disabled={effects.length === 0}
 						style={{
@@ -2622,7 +2974,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								:::
 							</div>
 							<div style={{ flex: 1, fontSize: typography.fontSize.sm, color: colors.text.secondary }}>
-								{effect.type === 'drop' ? 'Drop shadow' : effect.type === 'inner' ? 'Inner shadow' : 'Auto shadow'}
+								{effect.type === 'drop' ? 'Drop shadow' : effect.type === 'inner' ? 'Inner shadow' : effect.type === 'auto' ? 'Auto shadow' : effect.type === 'layerBlur' ? 'Layer blur' : 'Background blur'}
 							</div>
 							<button
 								type="button"
@@ -2838,8 +3190,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									>
 										Blend mode
 									</label>
-									<select
-										value={effect.blendMode ?? 'normal'}
+									<select className="gal-select-field" value={effect.blendMode ?? 'normal'}
 										onChange={(e) => updateEffectPatch(index, { blendMode: e.target.value as ShadowBlendMode })}
 										style={{
 											width: '100%',
@@ -2998,8 +3349,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									<label style={{ display: 'block', fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: '4px' }}>
 										Blend mode
 									</label>
-									<select
-										value={effect.blendMode ?? 'normal'}
+									<select className="gal-select-field" value={effect.blendMode ?? 'normal'}
 										onChange={(e) => updateEffectPatch(index, { blendMode: e.target.value as ShadowBlendMode })}
 										style={{
 											width: '100%',
@@ -3048,6 +3398,39 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 									</div>
 								</div>
 							</>
+						)}
+
+						{(effect.type === 'layerBlur' || effect.type === 'backgroundBlur') && (
+							<div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: spacing.sm }}>
+								<div>
+									<label
+										style={{
+											display: 'block',
+											fontSize: typography.fontSize.xs,
+											color: colors.text.tertiary,
+											marginBottom: '4px',
+										}}
+									>
+										Blur radius
+									</label>
+									<ScrubbableNumberInput
+										value={safeNumber(effect.blur)}
+										onChange={(value) => updateEffectPatch(index, { blur: Math.max(0, value) })}
+										min={0}
+										step={1}
+										scrubStep={0.25}
+										inputStyle={{
+											width: '100%',
+											padding: spacing.xs,
+											border: `1px solid ${colors.border.default}`,
+											borderRadius: radii.sm,
+											fontSize: typography.fontSize.md,
+											backgroundColor: colors.bg.secondary,
+											color: colors.text.primary,
+										}}
+									/>
+								</div>
+							</div>
 						)}
 					</div>
 				))}
@@ -3333,84 +3716,14 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 				)}
 
 			<div style={{ marginBottom: spacing.lg }}>
-				<h4
-					style={{
-						margin: `0 0 ${spacing.sm} 0`,
-						fontSize: typography.fontSize.sm,
-						color: colors.text.secondary,
-						fontWeight: typography.fontWeight.medium,
-					}}
-				>
-					Fill
-				</h4>
-				<label
-					style={{
-						display: 'flex',
-						alignItems: 'center',
-						gap: spacing.sm,
-						fontSize: typography.fontSize.md,
-						color: colors.text.secondary,
-						marginBottom: spacing.sm,
-					}}
-				>
-					<input
-						type="checkbox"
-						checked={selectedNode.visible !== false}
-						onChange={(e) => handleInputChange('visible', e.target.checked)}
-						style={{ accentColor: colors.accent.primary }}
-					/>
-					Visible
-				</label>
-
-				{selectedNode.fill ? (
-					<div style={{ display: 'grid', gap: spacing.sm }}>
-						<input
-							type="color"
-							value={selectedNode.fill.type === 'solid' ? selectedNode.fill.value : defaultFill}
-							onChange={(e) => handleInputChange('fill', { type: 'solid', value: e.target.value })}
-							style={{
-								width: '100%',
-								height: '28px',
-								border: `1px solid ${colors.border.default}`,
-								borderRadius: radii.sm,
-								cursor: 'pointer',
-								backgroundColor: colors.bg.tertiary,
-							}}
-						/>
-						<button
-							type="button"
-							onClick={() => handleInputChange('fill', undefined)}
-							style={{
-								padding: spacing.xs,
-								borderRadius: radii.sm,
-								border: `1px solid ${colors.border.default}`,
-								backgroundColor: colors.bg.tertiary,
-								color: colors.text.secondary,
-								fontSize: typography.fontSize.md,
-								cursor: 'pointer',
-							}}
-						>
-							Remove Fill
-						</button>
-					</div>
-				) : (
-					<button
-						type="button"
-						onClick={() => handleInputChange('fill', { type: 'solid', value: defaultFill })}
-						style={{
-							padding: spacing.xs,
-							borderRadius: radii.sm,
-							border: `1px solid ${colors.border.default}`,
-							backgroundColor: colors.bg.tertiary,
-							color: colors.text.secondary,
-							fontSize: typography.fontSize.md,
-							cursor: 'pointer',
-							width: '100%',
-						}}
-					>
-						Add Fill
-					</button>
-				)}
+				<AppearanceSection
+					node={selectedNode}
+					document={document}
+					onUpdateNode={onUpdateNode}
+					defaultFill={defaultFill}
+					onUpdateDocumentAppearance={onUpdateDocumentAppearance}
+					onPickImageAsset={onPickImageAssetForPaint}
+				/>
 			</div>
 
 			{selectedNode.type === 'text' && (
@@ -3583,8 +3896,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 							>
 								Weight
 							</label>
-							<select
-								value={selectedNode.fontWeight ?? 'normal'}
+							<select className="gal-select-field" value={selectedNode.fontWeight ?? 'normal'}
 								onChange={(e) => handleInputChange('fontWeight', e.target.value)}
 								style={{
 									width: '100%',
@@ -3718,6 +4030,93 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
 								}}
 							/>
 						</div>
+					</div>
+
+					<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
+						<div>
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								List
+							</label>
+							<select className="gal-select-field" value={selectedNode.textListType ?? 'none'}
+								onChange={(e) => handleInputChange('textListType', e.target.value)}
+								style={{
+									width: '100%',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
+								}}
+							>
+								<option value="none">None</option>
+								<option value="bullet">Bulleted</option>
+								<option value="numbered">Numbered</option>
+							</select>
+						</div>
+						<div>
+							<label
+								style={{
+									display: 'block',
+									fontSize: typography.fontSize.xs,
+									color: colors.text.tertiary,
+									marginBottom: '4px',
+								}}
+							>
+								Paragraph Gap
+							</label>
+							<input
+								type="number"
+								min={0}
+								value={safeNumber(selectedNode.paragraphSpacingPx, 0)}
+								onChange={(e) => handleInputChange('paragraphSpacingPx', Math.max(0, Number(e.target.value) || 0))}
+								style={{
+									width: '100%',
+									padding: spacing.xs,
+									border: `1px solid ${colors.border.default}`,
+									borderRadius: radii.sm,
+									fontSize: typography.fontSize.md,
+									backgroundColor: colors.bg.tertiary,
+									color: colors.text.primary,
+								}}
+							/>
+						</div>
+					</div>
+
+					<div style={{ marginBottom: spacing.sm }}>
+						<label
+							style={{
+								display: 'block',
+								fontSize: typography.fontSize.xs,
+								color: colors.text.tertiary,
+								marginBottom: '4px',
+							}}
+						>
+							Overflow
+						</label>
+						<select className="gal-select-field" value={selectedNode.textOverflowMode ?? 'clip'}
+							onChange={(e) => handleInputChange('textOverflowMode', e.target.value)}
+							style={{
+								width: '100%',
+								padding: spacing.xs,
+								border: `1px solid ${colors.border.default}`,
+								borderRadius: radii.sm,
+								fontSize: typography.fontSize.md,
+								backgroundColor: colors.bg.tertiary,
+								color: colors.text.primary,
+							}}
+						>
+							<option value="clip">Clip</option>
+							<option value="ellipsis">Ellipsis</option>
+							<option value="visible">Visible</option>
+						</select>
 					</div>
 
 					<div style={{ marginBottom: spacing.sm }}>

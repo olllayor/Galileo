@@ -29,7 +29,7 @@ const makeNode = (id: string, overrides: Partial<Node>): Node => ({
 });
 
 const makeDoc = (): Document => ({
-	version: 9,
+	version: 10,
 	rootId: 'root',
 	pages: [{ id: 'page_1', name: 'Page 1', rootId: 'root' }],
 	activePageId: 'page_1',
@@ -40,6 +40,7 @@ const makeDoc = (): Document => ({
 	components: { definitions: {}, sets: {} },
 	styles: { paint: {}, text: {}, effect: {}, grid: {} },
 	variables: { collections: {}, tokens: {}, activeModeByCollection: {} },
+	prototype: { pages: { page_1: { interactionsBySource: {} } } },
 });
 
 const makeDefinition = (id: string, setId: string, text: string, variant: Record<string, string>): ComponentDefinition => ({

@@ -114,6 +114,29 @@ bun run lint         # Run linting
 bun run tauri dev    # Start Tauri dev
 ```
 
+### AI Assistant (V1) Setup
+
+Frontend env variables:
+
+```bash
+VITE_GALILEO_AI_API_BASE_URL=https://your-ai-api.vercel.app
+VITE_GALILEO_AI_CLIENT_KEY=optional_shared_client_key
+```
+
+Backend API env variables (for `apps/ai-api` deploy):
+
+```bash
+AI_GATEWAY_API_KEY=...
+ALLOWED_ORIGINS=http://localhost:1420,https://your-galileo-app.example.com
+ALLOWED_TEXT_MODELS=openai/gpt-5,openai/gpt-5-chat-latest,openai/gpt-4.1,openai/gpt-4.1-mini,anthropic/claude-4.5-sonnet,anthropic/claude-sonnet-4,google/gemini-2.5-pro,google/gemini-2.5-flash
+ALLOWED_IMAGE_MODELS=google/imagen-4.0-generate-001,google/imagen-4.0-fast-generate-001,google/gemini-2.5-flash-image-preview,black-forest-labs/flux-kontext-max
+DEFAULT_TEXT_MODEL=openai/gpt-5
+DEFAULT_IMAGE_MODEL=google/imagen-4.0-fast-generate-001
+GALILEO_CLIENT_KEY=optional_shared_client_key
+```
+
+The AI API service lives at `/apps/ai-api` and should be deployed as a separate Vercel project root.
+
 ## File Structure
 
 ```
