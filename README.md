@@ -68,7 +68,7 @@ Galileo is "Cursor for Designers" - a Figma-like design tool built with AI at it
 
 ### Prerequisites
 
-- [Bun](https://bun.sh) - `curl -fsSL https://bun.sh/install | bash`
+- [Bun 1.3.4](https://bun.sh) - `curl -fsSL https://bun.sh/install | bash`
 - [Rust](https://rustup.rs) - `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 - [Node.js](https://nodejs.org) 18+ (for Vite)
 
