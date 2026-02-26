@@ -1,5 +1,10 @@
 import { commandDraftSchema, countDraftCommands } from './contracts';
-import { validateDraftGuardrails } from './guardrails';
+import {
+	getProductionSecurityIssue,
+	parseAllowedOrigins,
+	pickCorsOrigin,
+	validateDraftGuardrails,
+} from './guardrails';
 
 type UnitTestResult = {
 	passed: boolean;
@@ -54,6 +59,39 @@ export const runAIGuardrailUnitTests = (): UnitTestResult => {
 		const issues = validateDraftGuardrails([outOfScopeParsed.data], ['n1']);
 		assert(failures, 'out-of-scope node blocked', issues.some((issue) => issue.includes('must be selected')));
 	}
+
+	const allowlist = parseAllowedOrigins('https://app.example.com/, https://galileo.dev:3010, javascript:alert(1)');
+	assert(failures, 'normalizes allowed origins', allowlist.has('https://app.example.com'));
+	assert(failures, 'drops invalid origins', !allowlist.has('javascript:alert(1)'));
+	assert(
+		failures,
+		'picks matching normalized origin',
+		pickCorsOrigin('https://app.example.com/', allowlist) === 'https://app.example.com',
+	);
+	assert(
+		failures,
+		'blocks unknown origin',
+		pickCorsOrigin('https://evil.example.com', allowlist) === null,
+	);
+
+	assert(
+		failures,
+		'requires allowlist in production',
+		getProductionSecurityIssue(new Set(), 'secret', 'production', 'production')
+			=== 'allowed_origins_required_in_production',
+	);
+	assert(
+		failures,
+		'blocks wildcard in production',
+		getProductionSecurityIssue(new Set(['*']), 'secret', 'production', 'production')
+			=== 'wildcard_origin_not_allowed_in_production',
+	);
+	assert(
+		failures,
+		'requires client key in production',
+		getProductionSecurityIssue(new Set(['https://app.example.com']), '', 'production', 'production')
+			=== 'client_key_required_in_production',
+	);
 
 	return {
 		passed: failures.length === 0,

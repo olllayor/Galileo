@@ -8,6 +8,7 @@ import {
 import {
 	MAX_REQUEST_BYTES,
 	ensureClientKey,
+	getProductionSecurityIssue,
 	parseAllowedOrigins,
 	pickCorsOrigin,
 	readJsonBodyWithLimit,
@@ -17,6 +18,13 @@ import { ModelResolverError, loadModelConfig, resolveImageModel } from '../../..
 export const runtime = 'nodejs';
 
 const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
+const securityConfigIssue = getProductionSecurityIssue(allowedOrigins, process.env.GALILEO_CLIENT_KEY);
+if (securityConfigIssue) {
+	console.error('ai_api_security_config_issue', {
+		endpoint: '/api/image/generate',
+		issue: securityConfigIssue,
+	});
+}
 
 const getModelConfig = () => {
 	try {
@@ -45,8 +53,21 @@ const json = (body: unknown, status: number, origin: string | null): NextRespons
 	});
 };
 
+const isOriginBlocked = (origin: string | null): boolean => {
+	return allowedOrigins.size > 0 && !origin && !allowedOrigins.has('*');
+};
+
 export const OPTIONS = async (request: NextRequest): Promise<NextResponse> => {
 	const origin = pickCorsOrigin(request.headers.get('origin'), allowedOrigins);
+	if (securityConfigIssue) {
+		return json({ error: 'server_not_configured' }, 500, origin);
+	}
+	if (isOriginBlocked(origin)) {
+		return new NextResponse(null, {
+			status: 403,
+			headers: buildCorsHeaders(null),
+		});
+	}
 	return new NextResponse(null, {
 		status: 204,
 		headers: buildCorsHeaders(origin),
@@ -55,7 +76,10 @@ export const OPTIONS = async (request: NextRequest): Promise<NextResponse> => {
 
 export const POST = async (request: NextRequest): Promise<NextResponse> => {
 	const origin = pickCorsOrigin(request.headers.get('origin'), allowedOrigins);
-	if (allowedOrigins.size > 0 && !origin && !allowedOrigins.has('*')) {
+	if (securityConfigIssue) {
+		return json({ error: 'server_not_configured' }, 500, origin);
+	}
+	if (isOriginBlocked(origin)) {
 		return json({ error: 'origin_not_allowed' }, 403, null);
 	}
 
@@ -154,4 +178,3 @@ export const POST = async (request: NextRequest): Promise<NextResponse> => {
 		return json({ error: 'ai_generation_failed', message }, 502, origin);
 	}
 };
-

@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@floating-ui/react": "^0.27.18",
     "@tauri-apps/api": "2.5.0",
     "@tauri-apps/plugin-shell": "2.0.1",
     "akar-icons": "^1.9.31",

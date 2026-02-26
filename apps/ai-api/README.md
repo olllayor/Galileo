@@ -54,5 +54,9 @@ Deploy `apps/ai-api` as a separate Vercel project root.
 - Uses Vercel AI SDK `generateText` + structured `Output.object` for edit planning.
 - Uses Vercel AI SDK `experimental_generateImage` for image generation.
 - Enforces command guardrails and payload limits.
-- CORS behavior is controlled by `ALLOWED_ORIGINS`.
+- CORS behavior is controlled by `ALLOWED_ORIGINS` (origins are normalized to `scheme://host[:port]`).
 - Model choice is hard-allowlisted server-side by modality.
+- In production:
+  - `ALLOWED_ORIGINS` must be non-empty and must not include `*`.
+  - `GALILEO_CLIENT_KEY` is required.
+  - `ALLOWED_TEXT_MODELS` / `ALLOWED_IMAGE_MODELS` must stay within curated model IDs.

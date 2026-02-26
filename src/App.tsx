@@ -4102,7 +4102,15 @@ export const App: React.FC = () => {
 												submenu: [
 													{
 														label: 'Off',
-														onSelect: () => primaryId && setBooleanIsolation(primaryId),
+														checked:
+															primaryNode?.type === 'boolean' &&
+															!primaryNode.booleanData?.isolationOperandId,
+														checkType: 'radio' as const,
+														onSelect: () => {
+															if (primaryId) {
+																setBooleanIsolation(primaryId);
+															}
+														},
 													},
 													...((primaryNode?.children ?? []).map((operandId) => {
 														const operand = document.nodes[operandId];
@@ -4110,8 +4118,14 @@ export const App: React.FC = () => {
 															primaryNode?.type === 'boolean' &&
 															primaryNode.booleanData?.isolationOperandId === operandId;
 														return {
-															label: `${isActive ? '• ' : ''}${operand?.name ?? operand?.type ?? 'Operand'}`,
-															onSelect: () => primaryId && setBooleanIsolation(primaryId, operandId),
+															label: operand?.name ?? operand?.type ?? 'Operand',
+															checked: isActive,
+															checkType: 'radio' as const,
+															onSelect: () => {
+																if (primaryId) {
+																	setBooleanIsolation(primaryId, operandId);
+																}
+															},
 														};
 													}) as ContextMenuItem[]),
 												],
@@ -9378,6 +9392,10 @@ export const App: React.FC = () => {
 					setSelection([containerFocusId]);
 					return;
 				}
+			}
+
+			if (contextMenu) {
+				return;
 			}
 
 			if (!editable) {
