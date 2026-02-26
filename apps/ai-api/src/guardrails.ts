@@ -19,20 +19,59 @@ const FORBIDDEN_SET_PROPS_KEYS = new Set([
 	'prototype',
 ]);
 
+const ORIGIN_PROTOCOL_ALLOWLIST = new Set(['http:', 'https:']);
+
+const normalizeOrigin = (value: string): string | null => {
+	const trimmed = value.trim();
+	if (trimmed.length === 0) return null;
+	try {
+		const url = new URL(trimmed);
+		if (!ORIGIN_PROTOCOL_ALLOWLIST.has(url.protocol)) return null;
+		return `${url.protocol}//${url.host}`;
+	} catch {
+		return null;
+	}
+};
+
 export const parseAllowedOrigins = (value: string | undefined): Set<string> => {
 	if (!value) return new Set();
 	return new Set(
 		value
 			.split(',')
 			.map((item) => item.trim())
-			.filter((item) => item.length > 0),
+			.map((item) => (item === '*' ? '*' : normalizeOrigin(item)))
+			.filter((item): item is string => Boolean(item)),
 	);
 };
 
 export const pickCorsOrigin = (origin: string | null, allowlist: Set<string>): string | null => {
 	if (allowlist.has('*')) return '*';
 	if (!origin) return null;
-	return allowlist.has(origin) ? origin : null;
+	const normalizedOrigin = normalizeOrigin(origin);
+	if (!normalizedOrigin) return null;
+	return allowlist.has(normalizedOrigin) ? normalizedOrigin : null;
+};
+
+export type ProductionSecurityIssue =
+	| 'allowed_origins_required_in_production'
+	| 'wildcard_origin_not_allowed_in_production'
+	| 'client_key_required_in_production';
+
+const isProductionRuntime = (nodeEnv: string | undefined, vercelEnv: string | undefined): boolean => {
+	return nodeEnv === 'production' || vercelEnv === 'production';
+};
+
+export const getProductionSecurityIssue = (
+	allowlist: Set<string>,
+	clientKey: string | undefined,
+	nodeEnv: string | undefined = process.env.NODE_ENV,
+	vercelEnv: string | undefined = process.env.VERCEL_ENV,
+): ProductionSecurityIssue | null => {
+	if (!isProductionRuntime(nodeEnv, vercelEnv)) return null;
+	if (allowlist.size === 0) return 'allowed_origins_required_in_production';
+	if (allowlist.has('*')) return 'wildcard_origin_not_allowed_in_production';
+	if (!clientKey || clientKey.trim().length === 0) return 'client_key_required_in_production';
+	return null;
 };
 
 export const ensureClientKey = (request: NextRequest, expectedKey: string | undefined): string | null => {

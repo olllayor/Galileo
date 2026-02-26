@@ -7,7 +7,7 @@ Thank you for your interest in contributing to Galileo! This document provides g
 ### Prerequisites
 - Node.js 18+
 - Rust 1.70+
-- Bun (package manager)
+- Bun 1.3.4 (package manager)
 
 ### Setup Development Environment
 

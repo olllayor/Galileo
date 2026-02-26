@@ -63,6 +63,22 @@ const assertConfigured = (condition: boolean, message: string): void => {
 	}
 };
 
+const isProductionRuntime = (): boolean => {
+	return process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
+};
+
+const assertAllowlistWithinCuratedSet = (
+	allowlist: Set<string>,
+	curatedSet: Set<string>,
+	variableName: string,
+): void => {
+	const disallowed = Array.from(allowlist).filter((modelId) => !curatedSet.has(modelId));
+	assertConfigured(
+		disallowed.length === 0,
+		`${variableName} contains unsupported model IDs: ${disallowed.join(', ')}`,
+	);
+};
+
 const resolveDefaultModel = (
 	defaultModel: string | undefined,
 	legacyAiModel: string | undefined,
@@ -86,6 +102,10 @@ export const loadModelConfig = (): ModelConfig => {
 
 	assertConfigured(allowedTextModels.size > 0, 'ALLOWED_TEXT_MODELS is required.');
 	assertConfigured(allowedImageModels.size > 0, 'ALLOWED_IMAGE_MODELS is required.');
+	if (isProductionRuntime()) {
+		assertAllowlistWithinCuratedSet(allowedTextModels, CURATED_TEXT_SET, 'ALLOWED_TEXT_MODELS');
+		assertAllowlistWithinCuratedSet(allowedImageModels, CURATED_IMAGE_SET, 'ALLOWED_IMAGE_MODELS');
+	}
 
 	const defaultTextModel = resolveDefaultModel(
 		process.env.DEFAULT_TEXT_MODEL,
