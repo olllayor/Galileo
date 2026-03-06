@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const AI_CONTRACT_VERSION = 1;
 export const AI_MAX_COMMAND_DRAFTS = 20;
+export const AI_THREAD_MAX_MESSAGES = 12;
 
 const pointSchema = z.object({
 	x: z.number().finite(),
@@ -12,6 +13,18 @@ const sizeSchema = z.object({
 	width: z.number().finite().positive(),
 	height: z.number().finite().positive(),
 });
+
+const aiThreadMessageSchema = z.object({
+	role: z.enum(['user', 'assistant']),
+	text: z.string().min(1).max(6000),
+});
+
+export const aiThreadContextSchema = z.object({
+	threadId: z.string().min(1).max(140).optional(),
+	messages: z.array(aiThreadMessageSchema).max(AI_THREAD_MAX_MESSAGES),
+});
+
+export type AIThreadContext = z.infer<typeof aiThreadContextSchema>;
 
 export const selectedNodeContextSchema = z.object({
 	id: z.string().min(1),
@@ -98,6 +111,7 @@ export const aiEditRequestSchema = z.object({
 		selectedNodes: z.array(selectedNodeContextSchema).max(200),
 		canvas: sizeSchema,
 	}),
+	thread: aiThreadContextSchema.optional(),
 });
 
 export type AIEditRequest = z.infer<typeof aiEditRequestSchema>;
@@ -130,6 +144,7 @@ export const aiImageGenerateRequestSchema = z.object({
 		size: aiImageSizeSchema,
 		count: z.number().int().min(1).max(2),
 	}),
+	thread: aiThreadContextSchema.optional(),
 });
 
 export type AIImageGenerateRequest = z.infer<typeof aiImageGenerateRequestSchema>;
@@ -152,5 +167,49 @@ export const aiImageGenerateResponseSchema = z.object({
 });
 
 export type AIImageGenerateResponse = z.infer<typeof aiImageGenerateResponseSchema>;
+
+export const aiImageEditRequestSchema = z.object({
+	contractVersion: z.literal(AI_CONTRACT_VERSION),
+	requestId: z.string().min(1),
+	prompt: z.string().min(1).max(6000),
+	modelId: z.string().min(1).optional(),
+	context: z.object({
+		activePageId: z.string().min(1),
+		selectionSummary: z.string().min(1).max(2000),
+		canvas: sizeSchema,
+	}),
+	thread: aiThreadContextSchema.optional(),
+	sourceImage: z.object({
+		nodeId: z.string().min(1),
+		mimeType: z.string().min(1).max(120),
+		base64: z.string().min(1),
+		width: z.number().int().positive(),
+		height: z.number().int().positive(),
+	}),
+	image: z.object({
+		size: aiImageSizeSchema,
+		count: z.literal(1),
+	}),
+});
+
+export type AIImageEditRequest = z.infer<typeof aiImageEditRequestSchema>;
+
+export const aiImageEditResponseSchema = z.object({
+	contractVersion: z.literal(AI_CONTRACT_VERSION),
+	requestId: z.string().min(1),
+	modelId: z.string().min(1),
+	summary: z.string().min(1).max(2000),
+	images: z
+		.array(
+			z.object({
+				mimeType: z.string().min(1).max(120),
+				base64: z.string().min(1),
+			}),
+		)
+		.length(1),
+	warnings: z.array(z.string().min(1).max(400)).max(20),
+});
+
+export type AIImageEditResponse = z.infer<typeof aiImageEditResponseSchema>;
 
 export type AIAssistantStatus = 'idle' | 'generating' | 'preview-ready' | 'applied' | 'error';

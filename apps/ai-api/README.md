@@ -6,22 +6,17 @@ Standalone Vercel API service for Galileo Native AI Assistant V1.
 
 - `POST /api/edit`
 - `POST /api/image/generate`
+- `POST /api/image/edit`
 
-## Request Contract
+## API Contracts
 
-```json
-{
-  "contractVersion": 1,
-  "requestId": "req_123",
-  "prompt": "Make this title bolder and move it up",
-  "context": {
-    "activePageId": "page_1",
-    "selectionSummary": "Selected: 1 text",
-    "selectedNodes": [],
-    "canvas": { "width": 1280, "height": 800 }
-  }
-}
-```
+Contracts are defined in `apps/ai-api/src/contracts.ts` and mirrored in `src/ai/contracts.ts`.
+
+- `AIEditRequest` / `AIEditResponse`
+- `AIImageGenerateRequest` / `AIImageGenerateResponse`
+- `AIImageEditRequest` / `AIImageEditResponse`
+
+Image edit requests accept a single selected source image payload and optional thread context for follow-up edits.
 
 ## Required Environment Variables
 
@@ -36,6 +31,7 @@ Standalone Vercel API service for Galileo Native AI Assistant V1.
 
 - `GALILEO_CLIENT_KEY`
 - `AI_MODEL` (deprecated text-model fallback only)
+- `AI_GATEWAY_RESPONSES_URL` (override Responses endpoint used by image edit route)
 
 ## Local Development
 
@@ -51,8 +47,11 @@ Deploy `apps/ai-api` as a separate Vercel project root.
 
 ## Notes
 
-- Uses Vercel AI SDK `generateText` + structured `Output.object` for edit planning.
-- Uses Vercel AI SDK `experimental_generateImage` for image generation.
+- OpenAI-first intelligence policy:
+  - planner/default text model: `openai/gpt-5`
+  - image edit execution: best available configured image-edit model (`resolveImageEditModel`)
+- Uses Vercel AI SDK `generateText` for edit planning and prompt normalization.
+- Uses AI Gateway Responses for image edit output parsing.
 - Enforces command guardrails and payload limits.
 - CORS behavior is controlled by `ALLOWED_ORIGINS` (origins are normalized to `scheme://host[:port]`).
 - Model choice is hard-allowlisted server-side by modality.

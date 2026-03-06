@@ -5,6 +5,7 @@ import {
 	imageGenerateRequestSchema,
 	imageGenerateResponseSchema,
 } from '../../../../src/contracts';
+import { buildImageGeneratePrompt } from '../../../../src/prompt';
 import {
 	MAX_REQUEST_BYTES,
 	ensureClientKey,
@@ -119,7 +120,7 @@ export const POST = async (request: NextRequest): Promise<NextResponse> => {
 		const resolvedModel = resolveImageModel(modelConfig, parsedRequest.data.modelId);
 		const result = await generateImage({
 			model: resolvedModel.modelId,
-			prompt: parsedRequest.data.prompt,
+			prompt: buildImageGeneratePrompt(parsedRequest.data),
 			n: parsedRequest.data.image.count,
 			size: parsedRequest.data.image.size,
 		});

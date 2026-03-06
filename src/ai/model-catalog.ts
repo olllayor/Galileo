@@ -10,6 +10,16 @@ export type ImageModelOption = {
 	label: string;
 };
 
+const LEGACY_IMAGE_MODEL_ALIASES: Record<string, string> = {
+	'google/gemini-2.5-flash-image-preview': 'google/gemini-3-pro-image',
+	'black-forest-labs/flux-kontext-max': 'bfl/flux-kontext-max',
+};
+
+export const normalizeImageModelId = (modelId: string): string => {
+	const normalized = modelId.trim();
+	return LEGACY_IMAGE_MODEL_ALIASES[normalized] ?? normalized;
+};
+
 export const TEXT_MODEL_OPTIONS: TextModelOption[] = [
 	{ id: 'openai/gpt-5', label: 'OpenAI GPT-5' },
 	{ id: 'openai/gpt-5-chat-latest', label: 'OpenAI GPT-5 Chat' },
@@ -22,13 +32,15 @@ export const TEXT_MODEL_OPTIONS: TextModelOption[] = [
 ];
 
 export const IMAGE_MODEL_OPTIONS: ImageModelOption[] = [
+	{ id: 'openai/gpt-image-1.5', label: 'OpenAI GPT Image 1.5' },
+	{ id: 'openai/gpt-image-1-mini', label: 'OpenAI GPT Image 1 Mini' },
 	{ id: 'google/imagen-4.0-generate-001', label: 'Imagen 4 (Quality)' },
 	{ id: 'google/imagen-4.0-fast-generate-001', label: 'Imagen 4 (Fast)' },
-	{ id: 'google/gemini-2.5-flash-image-preview', label: 'Gemini 2.5 Flash Image' },
-	{ id: 'black-forest-labs/flux-kontext-max', label: 'FLUX Kontext Max' },
+	{ id: 'google/imagen-4.0-ultra-generate-001', label: 'Imagen 4 (Ultra)' },
+	{ id: 'google/gemini-3-pro-image', label: 'Gemini 3 Pro Image' },
+	{ id: 'bfl/flux-kontext-max', label: 'FLUX Kontext Max' },
 ];
 
 export const DEFAULT_TEXT_MODEL_ID = 'openai/gpt-5';
 export const DEFAULT_IMAGE_MODEL_ID = 'google/imagen-4.0-fast-generate-001';
 export const DEFAULT_IMAGE_SIZE: AIImageSize = '1024x1024';
-

@@ -8,6 +8,8 @@
  * @module
  */
 
+import type * as aiHistory from "../aiHistory.js";
+import type * as crons from "../crons.js";
 import type * as invites from "../invites.js";
 import type * as lib_snapshots from "../lib/snapshots.js";
 import type * as presence from "../presence.js";
@@ -21,6 +23,8 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  aiHistory: typeof aiHistory;
+  crons: typeof crons;
   invites: typeof invites;
   "lib/snapshots": typeof lib_snapshots;
   presence: typeof presence;

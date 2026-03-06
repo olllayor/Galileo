@@ -129,13 +129,15 @@ Backend API env variables (for `apps/ai-api` deploy):
 AI_GATEWAY_API_KEY=...
 ALLOWED_ORIGINS=http://localhost:1420,https://your-galileo-app.example.com
 ALLOWED_TEXT_MODELS=openai/gpt-5,openai/gpt-5-chat-latest,openai/gpt-4.1,openai/gpt-4.1-mini,anthropic/claude-4.5-sonnet,anthropic/claude-sonnet-4,google/gemini-2.5-pro,google/gemini-2.5-flash
-ALLOWED_IMAGE_MODELS=google/imagen-4.0-generate-001,google/imagen-4.0-fast-generate-001,google/gemini-2.5-flash-image-preview,black-forest-labs/flux-kontext-max
+ALLOWED_IMAGE_MODELS=openai/gpt-image-1.5,openai/gpt-image-1-mini,google/imagen-4.0-generate-001,google/imagen-4.0-fast-generate-001,google/imagen-4.0-ultra-generate-001,google/gemini-3-pro-image,bfl/flux-kontext-max
 DEFAULT_TEXT_MODEL=openai/gpt-5
 DEFAULT_IMAGE_MODEL=google/imagen-4.0-fast-generate-001
 GALILEO_CLIENT_KEY=optional_shared_client_key
 ```
 
 The AI API service lives at `/apps/ai-api` and should be deployed as a separate Vercel project root.
+Current routes are `/api/edit`, `/api/image/generate`, and `/api/image/edit`.
+Policy for this beta is OpenAI-first planning (`openai/gpt-5`) with best available configured image model for edits.
 
 ## File Structure
 

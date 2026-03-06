@@ -1,4 +1,11 @@
-import { ModelResolverError, loadModelConfig, resolveImageModel, resolveTextModel } from './models';
+import {
+	ModelResolverError,
+	loadModelConfig,
+	normalizeModelId,
+	resolveImageEditModel,
+	resolveImageModel,
+	resolveTextModel,
+} from './models';
 
 type UnitTestResult = {
 	passed: boolean;
@@ -30,6 +37,29 @@ export const runModelResolverUnitTests = (): UnitTestResult => {
 		'default image model resolves',
 		imageResolved.modelId === 'google/imagen-4.0-fast-generate-001',
 	);
+
+	const normalizedLegacy = normalizeModelId('black-forest-labs/flux-kontext-max');
+	assert(failures, 'legacy image model alias normalizes', normalizedLegacy === 'bfl/flux-kontext-max');
+
+	const imageAliasConfig = {
+		...config,
+		allowedImageModels: new Set(['google/gemini-3-pro-image']),
+		defaultImageModel: 'google/gemini-3-pro-image',
+	};
+	const imageAliasResolved = resolveImageModel(imageAliasConfig, 'google/gemini-2.5-flash-image-preview');
+	assert(
+		failures,
+		'legacy gemini image alias resolves to normalized configured model',
+		imageAliasResolved.modelId === 'google/gemini-3-pro-image',
+	);
+
+	const editPreferenceConfig = {
+		...config,
+		allowedImageModels: new Set(['google/imagen-4.0-fast-generate-001', 'openai/gpt-image-1.5']),
+		defaultImageModel: 'google/imagen-4.0-fast-generate-001',
+	};
+	const editPreferred = resolveImageEditModel(editPreferenceConfig, undefined);
+	assert(failures, 'image edit resolver prefers dedicated edit model', editPreferred.modelId === 'openai/gpt-image-1.5');
 
 	let modalityMismatch = false;
 	try {

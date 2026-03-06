@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const AI_CONTRACT_VERSION = 1;
 export const MAX_COMMAND_DRAFTS = 20;
+export const MAX_THREAD_MESSAGES = 12;
 
 export const createNodeTypeSchema = z.enum(['rectangle', 'text', 'frame']);
 
@@ -14,6 +15,18 @@ const sizeSchema = z.object({
 	width: z.number().finite().positive(),
 	height: z.number().finite().positive(),
 });
+
+const threadMessageSchema = z.object({
+	role: z.enum(['user', 'assistant']),
+	text: z.string().min(1).max(6000),
+});
+
+export const threadContextSchema = z.object({
+	threadId: z.string().min(1).max(140).optional(),
+	messages: z.array(threadMessageSchema).max(MAX_THREAD_MESSAGES),
+});
+
+export type ThreadContext = z.infer<typeof threadContextSchema>;
 
 const selectedNodeContextSchema = z.object({
 	id: z.string().min(1),
@@ -41,6 +54,7 @@ export const editRequestSchema = z.object({
 		selectedNodes: z.array(selectedNodeContextSchema).max(200),
 		canvas: sizeSchema,
 	}),
+	thread: threadContextSchema.optional(),
 });
 
 export type EditRequest = z.infer<typeof editRequestSchema>;
@@ -139,6 +153,7 @@ export const imageGenerateRequestSchema = z.object({
 		size: imageSizeSchema,
 		count: z.number().int().min(1).max(2),
 	}),
+	thread: threadContextSchema.optional(),
 });
 
 export type ImageGenerateRequest = z.infer<typeof imageGenerateRequestSchema>;
@@ -161,6 +176,50 @@ export const imageGenerateResponseSchema = z.object({
 });
 
 export type ImageGenerateResponse = z.infer<typeof imageGenerateResponseSchema>;
+
+export const imageEditRequestSchema = z.object({
+	contractVersion: z.literal(AI_CONTRACT_VERSION),
+	requestId: z.string().min(1),
+	prompt: z.string().min(1).max(6000),
+	modelId: z.string().min(1).optional(),
+	context: z.object({
+		activePageId: z.string().min(1),
+		selectionSummary: z.string().min(1).max(2000),
+		canvas: sizeSchema,
+	}),
+	thread: threadContextSchema.optional(),
+	sourceImage: z.object({
+		nodeId: z.string().min(1),
+		mimeType: z.string().min(1).max(120),
+		base64: z.string().min(1),
+		width: z.number().int().positive(),
+		height: z.number().int().positive(),
+	}),
+	image: z.object({
+		size: imageSizeSchema,
+		count: z.literal(1),
+	}),
+});
+
+export type ImageEditRequest = z.infer<typeof imageEditRequestSchema>;
+
+export const imageEditResponseSchema = z.object({
+	contractVersion: z.literal(AI_CONTRACT_VERSION),
+	requestId: z.string().min(1),
+	modelId: z.string().min(1),
+	summary: z.string().min(1).max(2000),
+	images: z
+		.array(
+			z.object({
+				mimeType: z.string().min(1).max(120),
+				base64: z.string().min(1),
+			}),
+		)
+		.length(1),
+	warnings: z.array(z.string().min(1).max(400)).max(20),
+});
+
+export type ImageEditResponse = z.infer<typeof imageEditResponseSchema>;
 
 export const countDraftCommands = (drafts: CommandDraft[]): number => {
 	let count = 0;

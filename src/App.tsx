@@ -17,19 +17,30 @@ import { PrototypeLinksOverlay } from './ui/PrototypeLinksOverlay';
 import { PrototypePlayer } from './ui/PrototypePlayer';
 import { AIPanel } from './ui/AIPanel';
 import { RightPanelTabs } from './ui/RightPanelTabs';
+import { UpdateModal } from './ui/UpdateModal';
 import { panels, colors } from './ui/design-system';
 import { useCollaborativeDocument } from './hooks/useCollaborativeDocument';
+import { useDesktopUpdater } from './hooks/useDesktopUpdater';
 import { buildAIEditContext } from './ai/context-builder';
-import { AIClientError, requestAIEdit, requestAIImageGenerate } from './ai/client';
+import { AIClientError, requestAIEdit, requestAIImageEdit, requestAIImageGenerate } from './ai/client';
 import { hydrateAICommandDrafts } from './ai/command-drafts';
 import { applyAICommandPreview } from './ai/preview';
-import type { AIAssistantStatus, AICommandDraft, AIImageSize } from './ai/contracts';
+import type { AIAssistantStatus, AICommandDraft, AIImageSize, AIThreadContext } from './ai/contracts';
+import { createAIHistoryTransport } from './ai/history/transport';
+import type {
+	AIHistoryContext,
+	AIHistoryFailure,
+	AIHistoryInteraction,
+	AIHistoryMode,
+	AIHistoryScope,
+} from './ai/history/types';
 import {
 	DEFAULT_IMAGE_MODEL_ID,
 	DEFAULT_IMAGE_SIZE,
 	DEFAULT_TEXT_MODEL_ID,
 	IMAGE_MODEL_OPTIONS,
 	TEXT_MODEL_OPTIONS,
+	normalizeImageModelId,
 } from './ai/model-catalog';
 import {
 	createRectangleTool,
@@ -51,7 +62,10 @@ import {
 } from './interaction/tools';
 import {
 	ENABLE_AI_ASSISTANT_V1,
+	ENABLE_AI_IMAGE_EDIT_V1,
 	ENABLE_AI_MODEL_PICKER_V1,
+	ENABLE_AI_NATIVE_IMAGE_PREVIEW_V1,
+	ENABLE_AI_SERVER_HISTORY_V1,
 	ENABLE_BOOLEAN_V1,
 	ENABLE_COLLAB_TEXT_LOCKS_V1,
 	ENABLE_COLLAB_V1,
@@ -436,6 +450,7 @@ type PageEditorState = {
 
 type RightPanelTab = 'properties' | 'ai';
 type AIAssistantMode = 'edit' | 'image';
+type AIImageIntent = 'generate' | 'edit';
 
 type AIEditPreviewState = {
 	requestId: string;
@@ -448,6 +463,9 @@ type AIImagePreviewState = {
 	requestId: string;
 	modelId: string;
 	size: AIImageSize;
+	intent: AIImageIntent;
+	sourceNodeId?: string;
+	sourceImage?: { mimeType: string; base64: string; width: number; height: number };
 	images: Array<{ mimeType: string; base64: string; width: number; height: number }>;
 };
 
@@ -907,6 +925,61 @@ const getImageSize = (src: string): Promise<{ width: number; height: number }> =
 		};
 		img.src = src;
 	});
+};
+
+const loadImageElement = (src: string): Promise<HTMLImageElement> => {
+	return new Promise((resolve, reject) => {
+		const img = new Image();
+		img.onload = () => resolve(img);
+		img.onerror = () => reject(new Error('Failed to load image for edit'));
+		img.src = src;
+	});
+};
+
+const downscaleImageForAIEdit = async (source: {
+	mimeType: string;
+	base64: string;
+	maxDimension?: number;
+}): Promise<{ mimeType: string; base64: string; width: number; height: number }> => {
+	const maxDimension = Math.max(512, Math.floor(source.maxDimension ?? 1536));
+	const dataUrl = buildDataUrl(source.mimeType, source.base64);
+	const image = await loadImageElement(dataUrl);
+	const width = Math.max(1, image.naturalWidth);
+	const height = Math.max(1, image.naturalHeight);
+	const largest = Math.max(width, height);
+	if (largest <= maxDimension) {
+		return {
+			mimeType: source.mimeType,
+			base64: source.base64,
+			width,
+			height,
+		};
+	}
+
+	const scale = maxDimension / largest;
+	const targetWidth = Math.max(1, Math.round(width * scale));
+	const targetHeight = Math.max(1, Math.round(height * scale));
+	const canvas = document.createElement('canvas');
+	canvas.width = targetWidth;
+	canvas.height = targetHeight;
+	const context = canvas.getContext('2d');
+	if (!context) {
+		throw new Error('Canvas unavailable for image downscale');
+	}
+	context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+	const exportMime = source.mimeType === 'image/png' ? 'image/png' : 'image/jpeg';
+	const outputDataUrl = canvas.toDataURL(exportMime, exportMime === 'image/jpeg' ? 0.9 : undefined);
+	const parsed = parseDataUrl(outputDataUrl);
+	if (!parsed) {
+		throw new Error('Failed to encode downscaled image');
+	}
+	return {
+		mimeType: parsed.mime,
+		base64: parsed.dataBase64,
+		width: targetWidth,
+		height: targetHeight,
+	};
 };
 
 const resolveImageBytesForNode = async (
@@ -1483,6 +1556,7 @@ export const App: React.FC = () => {
 	});
 	const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('properties');
 	const [aiMode, setAIMode] = useState<AIAssistantMode>('edit');
+	const [aiImageIntent, setAIImageIntent] = useState<AIImageIntent>('generate');
 	const [aiStatus, setAIStatus] = useState<AIAssistantStatus>('idle');
 	const [aiSummary, setAISummary] = useState('');
 	const [aiWarnings, setAIWarnings] = useState<string[]>([]);
@@ -1496,7 +1570,10 @@ export const App: React.FC = () => {
 	});
 	const [aiImageModelId, setAIImageModelId] = useState<string>(() => {
 		const stored = localStorage.getItem('galileo.ai.imageModelId');
-		if (stored && IMAGE_MODEL_OPTIONS.some((option) => option.id === stored)) return stored;
+		if (stored) {
+			const normalized = normalizeImageModelId(stored);
+			if (IMAGE_MODEL_OPTIONS.some((option) => option.id === normalized)) return normalized;
+		}
 		return DEFAULT_IMAGE_MODEL_ID;
 	});
 	const [aiImageSize, setAIImageSize] = useState<AIImageSize>(() => {
@@ -1504,11 +1581,19 @@ export const App: React.FC = () => {
 		if (stored === '1024x1024' || stored === '1536x1024' || stored === '1024x1536') return stored;
 		return DEFAULT_IMAGE_SIZE;
 	});
+	const handleSelectAIImageModel = useCallback((modelId: string) => {
+		const normalized = normalizeImageModelId(modelId);
+		setAIImageModelId(
+			IMAGE_MODEL_OPTIONS.some((option) => option.id === normalized) ? normalized : DEFAULT_IMAGE_MODEL_ID,
+		);
+	}, []);
 	const [panelResizeState, setPanelResizeState] = useState<PanelResizeState | null>(null);
 	const panelResizeRafRef = useRef<number | null>(null);
 	const panelResizePendingWidthRef = useRef<number | null>(null);
 	const [hoveredPanelResizeHandle, setHoveredPanelResizeHandle] = useState<'left' | 'right' | null>(null);
 	const [canvasViewportOffset, setCanvasViewportOffset] = useState({ x: 0, y: 0 });
+	const aiHistoryTransportRef = useRef(createAIHistoryTransport());
+	const aiHistoryFallbackRef = useRef<Map<string, AIHistoryContext>>(new Map());
 	const pluginIframeRef = useRef<HTMLIFrameElement | null>(null);
 	const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const textEditorRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1535,6 +1620,18 @@ export const App: React.FC = () => {
 			}, 2400);
 		}
 	}, []);
+
+	const {
+		appVersion,
+		availableUpdate,
+		checkForUpdates,
+		clearUpdatePrompt,
+		installAvailableUpdate,
+		isCheckingForUpdate,
+		isInstallingUpdate,
+		isPackagedDesktopApp,
+		isUpdateModalOpen,
+	} = useDesktopUpdater({ onToast: showToast });
 
 	const handleShareCollab = useCallback(() => {
 		if (!ENABLE_COLLAB_V1) return;
@@ -1925,6 +2022,21 @@ export const App: React.FC = () => {
 	);
 
 	const selectedNode = selectedIds.length === 1 ? displayDocument.nodes[selectedIds[0]] : null;
+	const canEditSelectedImage = useMemo(() => {
+		if (!ENABLE_AI_IMAGE_EDIT_V1) return false;
+		const scopedSelectionIds = selectedIds.filter((id) => id !== displayDocument.rootId);
+		if (scopedSelectionIds.length !== 1) return false;
+		const node = document.nodes[scopedSelectionIds[0]];
+		return Boolean(node && node.type === 'image');
+	}, [displayDocument.rootId, document.nodes, selectedIds]);
+	const aiPanelImagePreview = useMemo(() => {
+		if (!ENABLE_AI_NATIVE_IMAGE_PREVIEW_V1 || !aiImagePreviewState) return null;
+		return {
+			intent: aiImagePreviewState.intent,
+			beforeImage: aiImagePreviewState.intent === 'edit' ? aiImagePreviewState.sourceImage : undefined,
+			afterImages: aiImagePreviewState.images,
+		};
+	}, [aiImagePreviewState]);
 	const view = useMemo(() => ({ pan: panOffset, zoom }), [panOffset, zoom]);
 	const baseBoundsMap = useMemo(() => buildWorldBoundsMap(displayDocument), [displayDocument]);
 	const boundsOverrides = useMemo(() => {
@@ -1949,6 +2061,11 @@ export const App: React.FC = () => {
 		[selectedIds, displayDocument.rootId],
 	);
 	const aiSelectionKey = useMemo(() => selectionIds.slice().sort().join(','), [selectionIds]);
+	const aiHistorySelectionKey = useMemo(() => {
+		const sorted = selectionIds.slice().sort();
+		return sorted.length > 0 ? sorted.join(',') : 'none';
+	}, [selectionIds]);
+	const aiProjectKey = useMemo(() => buildDraftKey(currentPath), [currentPath]);
 	const selectionBounds = useMemo(
 		() => getSelectionBounds(displayDocument, selectionIds, boundsMap),
 		[displayDocument, selectionIds, boundsMap],
@@ -1962,6 +2079,111 @@ export const App: React.FC = () => {
 	const openPropertiesTab = useCallback(() => {
 		setRightPanelTab('properties');
 	}, []);
+
+	const buildAIHistoryScope = useCallback(
+		(mode: AIHistoryMode): AIHistoryScope => ({
+			actorId,
+			projectKey: aiProjectKey,
+			roomId: collabRoomId ?? undefined,
+			pageId: activePageId,
+			mode,
+			selectionKey: aiHistorySelectionKey,
+		}),
+		[activePageId, actorId, aiHistorySelectionKey, aiProjectKey, collabRoomId],
+	);
+
+	const getAIHistoryLocalKey = useCallback((scope: AIHistoryScope): string => {
+		return `${scope.actorId}|${scope.projectKey}|${scope.pageId}|${scope.mode}|${scope.selectionKey}`;
+	}, []);
+
+	const saveLocalAIHistoryContext = useCallback(
+		(
+			scope: AIHistoryScope,
+			userText: string,
+			assistantText: string,
+			threadId?: string,
+		): AIHistoryContext => {
+			const key = getAIHistoryLocalKey(scope);
+			const existing: AIHistoryContext = aiHistoryFallbackRef.current.get(key) ?? { threadId, messages: [] };
+			const messages = existing.messages
+				.concat(
+					{ role: 'user' as const, text: userText },
+					{ role: 'assistant' as const, text: assistantText },
+				)
+				.slice(-12);
+			const next: AIHistoryContext = {
+				threadId: threadId ?? existing.threadId,
+				messages,
+			};
+			aiHistoryFallbackRef.current.set(key, next);
+			return next;
+		},
+		[getAIHistoryLocalKey],
+	);
+
+	const readAIThreadContext = useCallback(
+		async (scope: AIHistoryScope): Promise<AIThreadContext | undefined> => {
+			const localKey = getAIHistoryLocalKey(scope);
+			const localContext = aiHistoryFallbackRef.current.get(localKey);
+			if (!ENABLE_AI_SERVER_HISTORY_V1) {
+				if (!localContext || (localContext.messages.length === 0 && !localContext.threadId)) return undefined;
+				return localContext;
+			}
+
+			const transport = aiHistoryTransportRef.current;
+			if (!transport) {
+				if (!localContext || (localContext.messages.length === 0 && !localContext.threadId)) return undefined;
+				return localContext;
+			}
+
+			try {
+				const serverContext = await transport.resolveContext(scope);
+				if (serverContext.messages.length > 0 || serverContext.threadId) {
+					aiHistoryFallbackRef.current.set(localKey, serverContext);
+					return serverContext;
+				}
+				return localContext && (localContext.messages.length > 0 || localContext.threadId) ? localContext : undefined;
+			} catch (error) {
+				console.warn('ai_history_resolve_failed', { scope, error });
+				return localContext && (localContext.messages.length > 0 || localContext.threadId) ? localContext : undefined;
+			}
+		},
+		[getAIHistoryLocalKey],
+	);
+
+	const appendAIHistoryInteraction = useCallback(
+		async (interaction: AIHistoryInteraction): Promise<void> => {
+			if (!ENABLE_AI_SERVER_HISTORY_V1 || !aiHistoryTransportRef.current) {
+				saveLocalAIHistoryContext(interaction, interaction.prompt, interaction.assistantText);
+				return;
+			}
+			try {
+				const result = await aiHistoryTransportRef.current.appendInteraction(interaction);
+				saveLocalAIHistoryContext(interaction, interaction.prompt, interaction.assistantText, result.threadId);
+			} catch (error) {
+				console.warn('ai_history_append_interaction_failed', { interaction, error });
+				saveLocalAIHistoryContext(interaction, interaction.prompt, interaction.assistantText);
+			}
+		},
+		[saveLocalAIHistoryContext],
+	);
+
+	const appendAIHistoryFailure = useCallback(
+		async (failure: AIHistoryFailure): Promise<void> => {
+			if (!ENABLE_AI_SERVER_HISTORY_V1 || !aiHistoryTransportRef.current) {
+				saveLocalAIHistoryContext(failure, failure.prompt, failure.errorText);
+				return;
+			}
+			try {
+				const result = await aiHistoryTransportRef.current.appendFailure(failure);
+				saveLocalAIHistoryContext(failure, failure.prompt, failure.errorText, result.threadId);
+			} catch (error) {
+				console.warn('ai_history_append_failure_failed', { failure, error });
+				saveLocalAIHistoryContext(failure, failure.prompt, failure.errorText);
+			}
+		},
+		[saveLocalAIHistoryContext],
+	);
 	const handleRunAIEdit = useCallback(
 		async (prompt: string, signal: AbortSignal, modelId?: string) => {
 			if (!ENABLE_AI_ASSISTANT_V1) return;
@@ -1972,13 +2194,20 @@ export const App: React.FC = () => {
 			setAIImagePreviewState(null);
 			setPreviewDocument(null);
 			const requestId = generateId();
+			const historyScope = buildAIHistoryScope('edit');
+			const historyWarning =
+				ENABLE_AI_SERVER_HISTORY_V1 && !aiHistoryTransportRef.current
+					? 'AI history service unavailable; using local session memory only.'
+					: null;
 			try {
 				const aiContext = buildAIEditContext(document, selectionIds, activePageId, canvasSize);
+				const thread = await readAIThreadContext(historyScope);
 				const aiResponse = await requestAIEdit({
 					requestId,
 					prompt,
 					modelId,
 					context: aiContext,
+					thread,
 					signal,
 				});
 
@@ -1994,10 +2223,23 @@ export const App: React.FC = () => {
 					activePageNodeIds,
 					fallbackPosition: viewportCenter,
 				});
-				const combinedWarnings = [...aiResponse.warnings, ...hydrated.warnings];
+				const combinedWarnings = [...aiResponse.warnings, ...hydrated.warnings, ...(historyWarning ? [historyWarning] : [])];
 				setAISummary(aiResponse.summary);
 				setAIWarnings(combinedWarnings);
 				setAITextModelId(aiResponse.modelId);
+				console.info('ai_edit_success', {
+					requestId,
+					modelId: aiResponse.modelId,
+					historyMode: ENABLE_AI_SERVER_HISTORY_V1 ? 'server_or_fallback' : 'local_only',
+				});
+				void appendAIHistoryInteraction({
+					...historyScope,
+					requestId,
+					prompt,
+					assistantText: aiResponse.summary,
+					modelId: aiResponse.modelId,
+					warnings: combinedWarnings,
+				});
 
 				if (hydrated.commands.length === 0) {
 					setAIStatus('error');
@@ -2041,24 +2283,48 @@ export const App: React.FC = () => {
 							: 'Failed to generate AI edit preview.';
 				setAIStatus('error');
 				setAIErrorMessage(message);
+				console.warn('ai_edit_failed', {
+					requestId,
+					modelId: modelId ?? aiTextModelId,
+					message,
+				});
+				void appendAIHistoryFailure({
+					...historyScope,
+					requestId,
+					prompt,
+					errorText: message,
+					modelId,
+				});
 			}
 		},
 		[
 			activePageId,
 			activePageNodeIds,
 			activePageRootId,
+			appendAIHistoryFailure,
+			appendAIHistoryInteraction,
 			aiSelectionKey,
 			aiTextModelId,
+			buildAIHistoryScope,
 			canvasSize,
 			document,
 			panOffset.x,
 			panOffset.y,
+			readAIThreadContext,
 			selectionIds,
 			zoom,
 		],
 	);
 	const handleRunAIImage = useCallback(
-		async (prompt: string, signal: AbortSignal, modelId?: string, size?: AIImageSize) => {
+		async (
+			prompt: string,
+			signal: AbortSignal,
+			options?: {
+				modelId?: string;
+				size?: AIImageSize;
+				intent?: AIImageIntent;
+			},
+		) => {
 			if (!ENABLE_AI_ASSISTANT_V1) return;
 			setAIStatus('generating');
 			setAIErrorMessage(null);
@@ -2067,17 +2333,120 @@ export const App: React.FC = () => {
 			setAIImagePreviewState(null);
 			setPreviewDocument(null);
 			const requestId = generateId();
-			const imageSize = size ?? aiImageSize;
+			const imageSize = options?.size ?? aiImageSize;
+			const requestedIntent = options?.intent ?? aiImageIntent;
+			const intent: AIImageIntent = ENABLE_AI_IMAGE_EDIT_V1 ? requestedIntent : 'generate';
+			const resolvedModelId = options?.modelId;
+			const historyMode: AIHistoryMode = intent === 'edit' ? 'image-edit' : 'image-generate';
+			const historyScope = buildAIHistoryScope(historyMode);
+			const historyWarning =
+				ENABLE_AI_SERVER_HISTORY_V1 && !aiHistoryTransportRef.current
+					? 'AI history service unavailable; using local session memory only.'
+					: null;
 			try {
+				const thread = await readAIThreadContext(historyScope);
+				if (intent === 'edit') {
+					if (!ENABLE_AI_IMAGE_EDIT_V1) {
+						throw new AIClientError('Image edit is currently disabled for this deployment.', 403);
+					}
+					if (selectionIds.length !== 1) {
+						throw new AIClientError('Select exactly one image layer to edit.', 422);
+					}
+					const node = document.nodes[selectionIds[0]];
+					if (!node || node.type !== 'image') {
+						throw new AIClientError('Selected layer must be an image.', 422);
+					}
+
+					const source = await resolveImageBytesForNode(document, node);
+					const prepared = await downscaleImageForAIEdit({
+						mimeType: source.mime ?? 'image/png',
+						base64: source.dataBase64,
+					});
+					const response = await requestAIImageEdit({
+						requestId,
+						prompt,
+						modelId: resolvedModelId,
+						context: {
+							activePageId,
+							selectionSummary: selectionIds.length > 0 ? `Selected: ${selectionIds.length} nodes` : 'No selection',
+							canvas: canvasSize,
+						},
+						thread,
+						sourceImage: {
+							nodeId: node.id,
+							mimeType: prepared.mimeType,
+							base64: prepared.base64,
+							width: prepared.width,
+							height: prepared.height,
+						},
+						image: {
+							size: imageSize,
+							count: 1,
+						},
+						signal,
+					});
+					const enrichedImages = await Promise.all(
+						response.images.map(async (image) => {
+							const dataUrl = buildDataUrl(image.mimeType, image.base64);
+							try {
+								const dimensions = await getImageSize(dataUrl);
+								return { ...image, width: dimensions.width, height: dimensions.height };
+							} catch {
+								return { ...image, width: prepared.width, height: prepared.height };
+							}
+						}),
+					);
+					const normalizedModelId = normalizeImageModelId(response.modelId);
+					const combinedWarnings = [...response.warnings, ...(historyWarning ? [historyWarning] : [])];
+					setAISummary(response.summary);
+					setAIWarnings(combinedWarnings);
+					setAIImageModelId(
+						IMAGE_MODEL_OPTIONS.some((option) => option.id === normalizedModelId)
+							? normalizedModelId
+							: DEFAULT_IMAGE_MODEL_ID,
+					);
+					setAIImagePreviewState({
+						requestId: response.requestId,
+						modelId: normalizedModelId,
+						size: imageSize,
+						intent: 'edit',
+						sourceNodeId: node.id,
+						sourceImage: {
+							mimeType: prepared.mimeType,
+							base64: prepared.base64,
+							width: prepared.width,
+							height: prepared.height,
+						},
+						images: enrichedImages,
+					});
+					setAIStatus('preview-ready');
+					setAIErrorMessage(null);
+					console.info('ai_image_edit_success', {
+						requestId,
+						modelId: normalizedModelId,
+						historyMode: ENABLE_AI_SERVER_HISTORY_V1 ? 'server_or_fallback' : 'local_only',
+					});
+					void appendAIHistoryInteraction({
+						...historyScope,
+						requestId,
+						prompt,
+						assistantText: response.summary,
+						modelId: normalizedModelId,
+						warnings: combinedWarnings,
+					});
+					return;
+				}
+
 				const response = await requestAIImageGenerate({
 					requestId,
 					prompt,
-					modelId,
+					modelId: resolvedModelId,
 					context: {
 						activePageId,
 						selectionSummary: selectionIds.length > 0 ? `Selected: ${selectionIds.length} nodes` : 'No selection',
 						canvas: canvasSize,
 					},
+					thread,
 					image: {
 						size: imageSize,
 						count: 1,
@@ -2095,17 +2464,37 @@ export const App: React.FC = () => {
 						}
 					}),
 				);
+				const normalizedModelId = normalizeImageModelId(response.modelId);
+				const combinedWarnings = [...response.warnings, ...(historyWarning ? [historyWarning] : [])];
 				setAISummary(response.summary);
-				setAIWarnings(response.warnings);
-				setAIImageModelId(response.modelId);
+				setAIWarnings(combinedWarnings);
+				setAIImageModelId(
+					IMAGE_MODEL_OPTIONS.some((option) => option.id === normalizedModelId)
+						? normalizedModelId
+						: DEFAULT_IMAGE_MODEL_ID,
+				);
 				setAIImagePreviewState({
 					requestId: response.requestId,
-					modelId: response.modelId,
+					modelId: normalizedModelId,
 					size: imageSize,
+					intent: 'generate',
 					images: enrichedImages,
 				});
 				setAIStatus('preview-ready');
 				setAIErrorMessage(null);
+				console.info('ai_image_generate_success', {
+					requestId,
+					modelId: normalizedModelId,
+					historyMode: ENABLE_AI_SERVER_HISTORY_V1 ? 'server_or_fallback' : 'local_only',
+				});
+				void appendAIHistoryInteraction({
+					...historyScope,
+					requestId,
+					prompt,
+					assistantText: response.summary,
+					modelId: normalizedModelId,
+					warnings: combinedWarnings,
+				});
 			} catch (error) {
 				if (signal.aborted) {
 					setAIStatus('idle');
@@ -2130,9 +2519,34 @@ export const App: React.FC = () => {
 							: 'Failed to generate AI image preview.';
 				setAIStatus('error');
 				setAIErrorMessage(message);
+				console.warn('ai_image_request_failed', {
+					requestId,
+					intent,
+					modelId: resolvedModelId ?? aiImageModelId,
+					message,
+				});
+				void appendAIHistoryFailure({
+					...historyScope,
+					requestId,
+					prompt,
+					errorText: message,
+					modelId: resolvedModelId,
+				});
 			}
 		},
-		[activePageId, aiImageModelId, aiImageSize, canvasSize, selectionIds.length],
+		[
+			activePageId,
+			aiImageIntent,
+			aiImageModelId,
+			aiImageSize,
+			appendAIHistoryFailure,
+			appendAIHistoryInteraction,
+			buildAIHistoryScope,
+			canvasSize,
+			document,
+			readAIThreadContext,
+			selectionIds,
+		],
 	);
 	const handleApplyAIPreview = useCallback(() => {
 		if (aiMode === 'edit') {
@@ -2158,6 +2572,68 @@ export const App: React.FC = () => {
 			return;
 		}
 		if (!aiImagePreviewState) return;
+		if (aiImagePreviewState.intent === 'edit' && aiImagePreviewState.sourceNodeId) {
+			const targetNode = document.nodes[aiImagePreviewState.sourceNodeId];
+			const image = aiImagePreviewState.images[0];
+			if (!targetNode || targetNode.type !== 'image' || !image) {
+				setAIStatus('error');
+				setAIErrorMessage('Edited image preview is no longer valid. Re-run AI image edit.');
+				return;
+			}
+			const assetId = generateId();
+			executeCommand({
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'ai',
+				description: 'Apply AI image edit',
+				type: 'batch',
+				payload: {
+					commands: [
+						{
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'ai',
+							description: 'Create AI image asset',
+							type: 'createAsset',
+							payload: {
+								id: assetId,
+								asset: {
+									type: 'image',
+									mime: image.mimeType,
+									dataBase64: image.base64,
+									width: image.width,
+									height: image.height,
+								},
+							},
+						} as Command,
+						{
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'ai',
+							description: 'Update image with AI edit',
+							type: 'setProps',
+							payload: {
+								id: targetNode.id,
+								props: {
+									image: {
+										...(targetNode.image ?? {}),
+										mime: image.mimeType,
+										assetId,
+										maskAssetId: undefined,
+										bgRemoveMeta: undefined,
+										outline: undefined,
+									},
+								},
+							},
+						} as Command,
+					],
+				},
+			} as Command);
+			setAIImagePreviewState(null);
+			setAIStatus('applied');
+			setAIErrorMessage(null);
+			return;
+		}
 		const centerWorld = {
 			x: (canvasSize.width / 2 - panOffset.x) / Math.max(zoom, 0.0001),
 			y: (canvasSize.height / 2 - panOffset.y) / Math.max(zoom, 0.0001),
@@ -2231,18 +2707,19 @@ export const App: React.FC = () => {
 		setAIImagePreviewState(null);
 		setAIStatus('applied');
 		setAIErrorMessage(null);
-	}, [
-		activePageRootId,
-		aiEditPreviewState,
-		aiImagePreviewState,
-		aiMode,
-		canvasSize.height,
-		canvasSize.width,
-		executeCommand,
-		panOffset.x,
-		panOffset.y,
-		zoom,
-	]);
+		}, [
+			activePageRootId,
+			aiEditPreviewState,
+			aiImagePreviewState,
+			aiMode,
+			canvasSize.height,
+			canvasSize.width,
+			document,
+			executeCommand,
+			panOffset.x,
+			panOffset.y,
+			zoom,
+		]);
 	const handleRejectAIPreview = useCallback(() => {
 		setAIEditPreviewState(null);
 		setAIImagePreviewState(null);
@@ -2265,6 +2742,13 @@ export const App: React.FC = () => {
 		setAIStatus('error');
 		setAIErrorMessage('Selection changed. Re-run AI to generate a fresh preview.');
 	}, [aiEditPreviewState, aiSelectionKey]);
+	useEffect(() => {
+		if (!aiImagePreviewState || aiImagePreviewState.intent !== 'edit' || !aiImagePreviewState.sourceNodeId) return;
+		if (selectionIds.length === 1 && selectionIds[0] === aiImagePreviewState.sourceNodeId) return;
+		setAIImagePreviewState(null);
+		setAIStatus('error');
+		setAIErrorMessage('Selection changed. Re-run AI image edit to continue.');
+	}, [aiImagePreviewState, selectionIds]);
 	useEffect(() => {
 		if (aiMode === 'edit') return;
 		if (!previewDocument) return;
@@ -4236,7 +4720,7 @@ export const App: React.FC = () => {
 							ok: true,
 							result: {
 								apiVersion: '1.0',
-								appVersion: '0.1.0',
+								appVersion,
 							},
 						};
 					}
@@ -4994,7 +5478,7 @@ export const App: React.FC = () => {
 				return fail('internal_error', error instanceof Error ? error.message : 'Unknown error');
 			}
 		},
-		[activePageId, document, executeCommand, getDefaultInsertPosition, insertImageNode, isDev, selectionIds, setActivePlugin],
+		[activePageId, appVersion, document, executeCommand, getDefaultInsertPosition, insertImageNode, isDev, selectionIds, setActivePlugin],
 	);
 
 	useEffect(() => {
@@ -9783,6 +10267,18 @@ export const App: React.FC = () => {
 			},
 		];
 
+		if (isPackagedDesktopApp) {
+			items.push({
+				id: 'command-check-updates',
+				label: 'Check for Updates',
+				section: 'Commands',
+				disabled: isCheckingForUpdate || isInstallingUpdate,
+				action: () => {
+					void checkForUpdates();
+				},
+			});
+		}
+
 		if (appView === 'editor') {
 			items.push({
 				id: 'command-back-projects',
@@ -9908,6 +10404,7 @@ export const App: React.FC = () => {
 		appView,
 		currentPath,
 		fileName,
+		checkForUpdates,
 		handleBackToProjects,
 		openAIAssistant,
 		handleCreateProject,
@@ -9921,6 +10418,9 @@ export const App: React.FC = () => {
 		handleZoomTo,
 		handleZoomToFit,
 		handleZoomToSelection,
+		isCheckingForUpdate,
+		isInstallingUpdate,
+		isPackagedDesktopApp,
 	]);
 
 	return (
@@ -10324,7 +10824,13 @@ export const App: React.FC = () => {
 								) : ENABLE_AI_ASSISTANT_V1 && rightPanelTab === 'ai' ? (
 									<AIPanel
 										mode={aiMode}
-										onModeChange={setAIMode}
+										onModeChange={(mode) => {
+											setAIMode(mode);
+											if (mode !== 'image') return;
+											if (!ENABLE_AI_IMAGE_EDIT_V1 && aiImageIntent !== 'generate') {
+												setAIImageIntent('generate');
+											}
+										}}
 										status={aiStatus}
 										selectionCount={selectionIds.length}
 										summary={aiSummary}
@@ -10337,6 +10843,14 @@ export const App: React.FC = () => {
 														(image, index) => `Image ${index + 1}: ${image.mimeType} (${image.width}x${image.height})`,
 													) ?? []
 										}
+										imageIntent={aiImageIntent}
+										onImageIntentChange={(intent) => {
+											if (intent === 'edit' && !canEditSelectedImage) return;
+											setAIImageIntent(intent);
+										}}
+										enableImageEditFeature={ENABLE_AI_IMAGE_EDIT_V1}
+										enableImageEdit={canEditSelectedImage}
+										imagePreview={aiPanelImagePreview}
 										textModels={TEXT_MODEL_OPTIONS}
 										imageModels={IMAGE_MODEL_OPTIONS}
 										selectedTextModelId={aiTextModelId}
@@ -10344,7 +10858,7 @@ export const App: React.FC = () => {
 										selectedImageSize={aiImageSize}
 										enableModelPicker={ENABLE_AI_MODEL_PICKER_V1}
 										onSelectTextModel={setAITextModelId}
-										onSelectImageModel={setAIImageModelId}
+										onSelectImageModel={handleSelectAIImageModel}
 										onSelectImageSize={setAIImageSize}
 										onRunEdit={handleRunAIEdit}
 										onRunImage={handleRunAIImage}
@@ -10427,6 +10941,16 @@ export const App: React.FC = () => {
 					showDev={isDev}
 				/>
 			)}
+
+			<UpdateModal
+				open={isUpdateModalOpen}
+				update={availableUpdate}
+				isInstalling={isInstallingUpdate}
+				onClose={clearUpdatePrompt}
+				onInstall={() => {
+					void installAvailableUpdate();
+				}}
+			/>
 
 			{ENABLE_FIGMA_INTEROP_V1 && (
 				<FigmaImportModal

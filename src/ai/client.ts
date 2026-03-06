@@ -2,11 +2,15 @@ import {
 	AI_CONTRACT_VERSION,
 	aiEditRequestSchema,
 	aiEditResponseSchema,
+	aiImageEditRequestSchema,
+	aiImageEditResponseSchema,
 	aiImageGenerateRequestSchema,
 	aiImageGenerateResponseSchema,
 	type AIEditResponse,
+	type AIImageEditResponse,
 	type AIImageGenerateResponse,
 	type AIImageSize,
+	type AIThreadContext,
 	type SelectedNodeContext,
 } from './contracts';
 
@@ -34,6 +38,7 @@ type RequestAIEditArgs = {
 		selectedNodes: SelectedNodeContext[];
 		canvas: { width: number; height: number };
 	};
+	thread?: AIThreadContext;
 	signal?: AbortSignal;
 	timeoutMs?: number;
 };
@@ -50,6 +55,32 @@ type RequestAIImageGenerateArgs = {
 	image: {
 		size: AIImageSize;
 		count: number;
+	};
+	thread?: AIThreadContext;
+	signal?: AbortSignal;
+	timeoutMs?: number;
+};
+
+type RequestAIImageEditArgs = {
+	requestId: string;
+	prompt: string;
+	modelId?: string;
+	context: {
+		activePageId: string;
+		selectionSummary: string;
+		canvas: { width: number; height: number };
+	};
+	thread?: AIThreadContext;
+	sourceImage: {
+		nodeId: string;
+		mimeType: string;
+		base64: string;
+		width: number;
+		height: number;
+	};
+	image: {
+		size: AIImageSize;
+		count: 1;
 	};
 	signal?: AbortSignal;
 	timeoutMs?: number;
@@ -94,6 +125,7 @@ export const requestAIEdit = async (args: RequestAIEditArgs): Promise<AIEditResp
 			prompt: args.prompt,
 			modelId: args.modelId,
 			context: args.context,
+			thread: args.thread,
 		};
 		const parsedRequest = aiEditRequestSchema.safeParse(requestBody);
 		if (!parsedRequest.success) {
@@ -162,6 +194,7 @@ export const requestAIImageGenerate = async (args: RequestAIImageGenerateArgs): 
 			modelId: args.modelId,
 			context: args.context,
 			image: args.image,
+			thread: args.thread,
 		};
 		const parsedRequest = aiImageGenerateRequestSchema.safeParse(requestBody);
 		if (!parsedRequest.success) {
@@ -210,6 +243,76 @@ export const requestAIImageGenerate = async (args: RequestAIImageGenerateArgs): 
 			throw new AIClientError('AI image request canceled.', 499);
 		}
 		throw new AIClientError(error instanceof Error ? error.message : 'Unknown AI image request error');
+	} finally {
+		window.clearTimeout(timeoutId);
+	}
+};
+
+export const requestAIImageEdit = async (args: RequestAIImageEditArgs): Promise<AIImageEditResponse> => {
+	const timeoutMs = Math.max(1000, Math.floor(args.timeoutMs ?? DEFAULT_TIMEOUT_MS));
+	const timeoutController = new AbortController();
+	const timeoutId = window.setTimeout(() => {
+		timeoutController.abort(new Error('AI image edit request timed out'));
+	}, timeoutMs);
+
+	try {
+		const requestBody = {
+			contractVersion: AI_CONTRACT_VERSION,
+			requestId: args.requestId,
+			prompt: args.prompt,
+			modelId: args.modelId,
+			context: args.context,
+			thread: args.thread,
+			sourceImage: args.sourceImage,
+			image: args.image,
+		};
+		const parsedRequest = aiImageEditRequestSchema.safeParse(requestBody);
+		if (!parsedRequest.success) {
+			throw new AIClientError('Invalid AI image edit request payload.', 400, parsedRequest.error.flatten());
+		}
+
+		const headers: Record<string, string> = {
+			'Content-Type': 'application/json',
+		};
+		const clientKey = import.meta.env.VITE_GALILEO_AI_CLIENT_KEY;
+		if (typeof clientKey === 'string' && clientKey.trim().length > 0) {
+			headers['X-Galileo-Client-Key'] = clientKey;
+		}
+
+		const response = await fetch(resolveApiUrl('/api/image/edit'), {
+			method: 'POST',
+			headers,
+			body: JSON.stringify(parsedRequest.data),
+			signal: combineSignals([args.signal, timeoutController.signal]),
+		});
+
+		const responseText = await response.text();
+		const parsedJson = responseText.length > 0 ? (JSON.parse(responseText) as unknown) : null;
+		if (!response.ok) {
+			const message =
+				typeof parsedJson === 'object' && parsedJson !== null && 'error' in parsedJson
+					? String((parsedJson as { error: unknown }).error)
+					: `AI image edit API request failed (${response.status})`;
+			throw new AIClientError(message, response.status, parsedJson);
+		}
+
+		const parsedResponse = aiImageEditResponseSchema.safeParse(parsedJson);
+		if (!parsedResponse.success) {
+			throw new AIClientError('Invalid AI image edit response schema.', response.status, parsedResponse.error.flatten());
+		}
+
+		return parsedResponse.data;
+	} catch (error) {
+		if (error instanceof AIClientError) {
+			throw error;
+		}
+		if (timeoutController.signal.aborted && !args.signal?.aborted) {
+			throw new AIClientError('AI image edit request timed out.', 408);
+		}
+		if (error instanceof Error && error.name === 'AbortError') {
+			throw new AIClientError('AI image edit request canceled.', 499);
+		}
+		throw new AIClientError(error instanceof Error ? error.message : 'Unknown AI image edit request error');
 	} finally {
 		window.clearTimeout(timeoutId);
 	}

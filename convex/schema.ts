@@ -93,4 +93,39 @@ export default defineSchema({
 	})
 		.index('by_room_node', ['roomId', 'nodeId'])
 		.index('by_room_actor', ['roomId', 'actorId']),
+
+	aiThreads: defineTable({
+		actorId: v.string(),
+		projectKey: v.string(),
+		roomId: v.optional(v.string()),
+		pageId: v.string(),
+		mode: v.string(),
+		selectionKey: v.string(),
+		updatedAt: v.number(),
+		createdAt: v.number(),
+		expiresAt: v.number(),
+	})
+		.index('by_actor_project_room_page_mode_selection', [
+			'actorId',
+			'projectKey',
+			'roomId',
+			'pageId',
+			'mode',
+			'selectionKey',
+		])
+		.index('by_expires_at', ['expiresAt']),
+
+	aiMessages: defineTable({
+		threadId: v.id('aiThreads'),
+		role: v.union(v.literal('user'), v.literal('assistant')),
+		text: v.string(),
+		modelId: v.optional(v.string()),
+		requestId: v.optional(v.string()),
+		status: v.union(v.literal('success'), v.literal('error')),
+		warnings: v.array(v.string()),
+		createdAt: v.number(),
+		expiresAt: v.number(),
+	})
+		.index('by_thread_created', ['threadId', 'createdAt'])
+		.index('by_expires_at', ['expiresAt']),
 });

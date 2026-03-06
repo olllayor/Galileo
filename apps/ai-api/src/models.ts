@@ -10,10 +10,30 @@ const CURATED_TEXT_MODELS = [
 ] as const;
 
 const CURATED_IMAGE_MODELS = [
+	'openai/gpt-image-1.5',
+	'openai/gpt-image-1-mini',
 	'google/imagen-4.0-generate-001',
 	'google/imagen-4.0-fast-generate-001',
-	'google/gemini-2.5-flash-image-preview',
-	'black-forest-labs/flux-kontext-max',
+	'google/imagen-4.0-ultra-generate-001',
+	'google/gemini-3-pro-image',
+	'bfl/flux-kontext-max',
+] as const;
+
+const MODEL_ID_ALIASES: Record<string, string> = {
+	'google/gemini-2.5-flash-image-preview': 'google/gemini-3-pro-image',
+	'google/gemini-3-pro-image-preview': 'google/gemini-3-pro-image',
+	'google/imagen-4.0-generate': 'google/imagen-4.0-generate-001',
+	'black-forest-labs/flux-kontext-max': 'bfl/flux-kontext-max',
+};
+
+const IMAGE_EDIT_MODEL_PREFERENCE = [
+	'openai/gpt-image-1.5',
+	'openai/gpt-image-1-mini',
+	'bfl/flux-kontext-max',
+	'google/imagen-4.0-fast-generate-001',
+	'google/imagen-4.0-generate-001',
+	'google/imagen-4.0-ultra-generate-001',
+	'google/gemini-3-pro-image',
 ] as const;
 
 const CURATED_TEXT_SET = new Set<string>(CURATED_TEXT_MODELS);
@@ -39,7 +59,7 @@ export class ModelResolverError extends Error {
 	}
 }
 
-type ModelConfig = {
+export type ModelConfig = {
 	allowedTextModels: Set<string>;
 	allowedImageModels: Set<string>;
 	defaultTextModel: string;
@@ -47,12 +67,17 @@ type ModelConfig = {
 	startupWarnings: string[];
 };
 
+export const normalizeModelId = (modelId: string): string => {
+	const trimmed = modelId.trim();
+	return MODEL_ID_ALIASES[trimmed] ?? trimmed;
+};
+
 const parseModelList = (value: string | undefined): Set<string> => {
 	if (!value) return new Set();
 	return new Set(
 		value
 			.split(',')
-			.map((item) => item.trim())
+			.map((item) => normalizeModelId(item))
 			.filter((item) => item.length > 0),
 	);
 };
@@ -86,10 +111,10 @@ const resolveDefaultModel = (
 	startupWarnings: string[],
 ): string => {
 	const candidate = defaultModel?.trim();
-	if (candidate) return candidate;
+	if (candidate) return normalizeModelId(candidate);
 	if (modality === 'text' && legacyAiModel?.trim()) {
 		startupWarnings.push('DEFAULT_TEXT_MODEL missing; using deprecated AI_MODEL fallback.');
-		return legacyAiModel.trim();
+		return normalizeModelId(legacyAiModel.trim());
 	}
 	assertConfigured(false, `DEFAULT_${modality.toUpperCase()}_MODEL is required.`);
 	return '';
@@ -132,22 +157,23 @@ export const loadModelConfig = (): ModelConfig => {
 	};
 };
 
-const ensureModelAllowed = (requested: string, modality: ModelModality, config: ModelConfig): void => {
+const ensureModelAllowed = (requested: string, modality: ModelModality, config: ModelConfig): string => {
 	const trimmed = requested.trim();
 	if (trimmed.length === 0) {
 		throw new ModelResolverError('unsupported_model', 'modelId must not be empty.');
 	}
+	const normalized = normalizeModelId(trimmed);
 
 	const allowlist = modality === 'text' ? config.allowedTextModels : config.allowedImageModels;
 	const oppositeAllowlist = modality === 'text' ? config.allowedImageModels : config.allowedTextModels;
 	const curatedSet = modality === 'text' ? CURATED_TEXT_SET : CURATED_IMAGE_SET;
 	const oppositeCuratedSet = modality === 'text' ? CURATED_IMAGE_SET : CURATED_TEXT_SET;
 
-	if (allowlist.has(trimmed)) return;
-	if (oppositeAllowlist.has(trimmed) || oppositeCuratedSet.has(trimmed)) {
+	if (allowlist.has(normalized)) return normalized;
+	if (oppositeAllowlist.has(normalized) || oppositeCuratedSet.has(normalized)) {
 		throw new ModelResolverError('modality_mismatch', `${trimmed} cannot be used for ${modality} requests.`);
 	}
-	if (curatedSet.has(trimmed)) {
+	if (curatedSet.has(normalized)) {
 		throw new ModelResolverError('model_not_allowed', `${trimmed} is not enabled for this deployment.`);
 	}
 	throw new ModelResolverError('unsupported_model', `${trimmed} is not a supported model.`);
@@ -161,8 +187,7 @@ export const resolveTextModel = (
 	if (!requestedModelId) {
 		return { modelId: config.defaultTextModel, warnings };
 	}
-	ensureModelAllowed(requestedModelId, 'text', config);
-	return { modelId: requestedModelId.trim(), warnings };
+	return { modelId: ensureModelAllowed(requestedModelId, 'text', config), warnings };
 };
 
 export const resolveImageModel = (
@@ -173,6 +198,26 @@ export const resolveImageModel = (
 	if (!requestedModelId) {
 		return { modelId: config.defaultImageModel, warnings };
 	}
-	ensureModelAllowed(requestedModelId, 'image', config);
-	return { modelId: requestedModelId.trim(), warnings };
+	return { modelId: ensureModelAllowed(requestedModelId, 'image', config), warnings };
+};
+
+export const resolveImageEditModel = (
+	config: ModelConfig,
+	requestedModelId: string | undefined,
+): { modelId: string; warnings: string[] } => {
+	if (requestedModelId) {
+		return resolveImageModel(config, requestedModelId);
+	}
+
+	const warnings = [...config.startupWarnings];
+	for (const candidate of IMAGE_EDIT_MODEL_PREFERENCE) {
+		if (config.allowedImageModels.has(candidate)) {
+			if (candidate !== config.defaultImageModel) {
+				warnings.push(`Using preferred image edit model: ${candidate}.`);
+			}
+			return { modelId: candidate, warnings };
+		}
+	}
+
+	return { modelId: config.defaultImageModel, warnings };
 };

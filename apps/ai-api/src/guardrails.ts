@@ -3,6 +3,8 @@ import type { CommandDraft } from './contracts';
 import { MAX_COMMAND_DRAFTS, countDraftCommands } from './contracts';
 
 export const MAX_REQUEST_BYTES = 250_000;
+export const MAX_IMAGE_EDIT_REQUEST_BYTES = 8_000_000;
+export const MAX_IMAGE_EDIT_SOURCE_BYTES = 6_000_000;
 
 const FORBIDDEN_SET_PROPS_KEYS = new Set([
 	'id',

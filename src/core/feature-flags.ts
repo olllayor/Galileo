@@ -9,3 +9,6 @@ export const ENABLE_COLLAB_V1 = true;
 export const ENABLE_COLLAB_TEXT_LOCKS_V1 = true;
 export const ENABLE_AI_ASSISTANT_V1 = true;
 export const ENABLE_AI_MODEL_PICKER_V1 = true;
+export const ENABLE_AI_IMAGE_EDIT_V1 = true;
+export const ENABLE_AI_SERVER_HISTORY_V1 = true;
+export const ENABLE_AI_NATIVE_IMAGE_PREVIEW_V1 = true;

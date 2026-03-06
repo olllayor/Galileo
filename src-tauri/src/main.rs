@@ -420,6 +420,9 @@ fn main() {
             figma::figma_fetch_local_variables,
         ])
         .setup(|_app| {
+            #[cfg(desktop)]
+            _app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+
             log_env_diagnostics();
 
             #[cfg(debug_assertions)]

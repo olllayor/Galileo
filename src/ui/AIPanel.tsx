@@ -4,6 +4,13 @@ import type { AIAssistantStatus, AIImageSize } from '../ai/contracts';
 import type { ImageModelOption, TextModelOption } from '../ai/model-catalog';
 
 export type AIPanelMode = 'edit' | 'image';
+export type AIImageIntent = 'generate' | 'edit';
+
+type AIImagePreview = {
+	intent: AIImageIntent;
+	beforeImage?: { mimeType: string; base64: string; width: number; height: number };
+	afterImages: Array<{ mimeType: string; base64: string; width: number; height: number }>;
+};
 
 interface AIPanelProps {
 	mode: AIPanelMode;
@@ -14,6 +21,11 @@ interface AIPanelProps {
 	warnings: string[];
 	errorMessage: string | null;
 	proposedChanges: string[];
+	imageIntent: AIImageIntent;
+	onImageIntentChange: (intent: AIImageIntent) => void;
+	enableImageEditFeature: boolean;
+	enableImageEdit: boolean;
+	imagePreview: AIImagePreview | null;
 	textModels: TextModelOption[];
 	imageModels: ImageModelOption[];
 	selectedTextModelId: string;
@@ -24,7 +36,11 @@ interface AIPanelProps {
 	onSelectImageModel: (modelId: string) => void;
 	onSelectImageSize: (size: AIImageSize) => void;
 	onRunEdit: (prompt: string, signal: AbortSignal, modelId?: string) => Promise<void>;
-	onRunImage: (prompt: string, signal: AbortSignal, modelId?: string, size?: AIImageSize) => Promise<void>;
+	onRunImage: (
+		prompt: string,
+		signal: AbortSignal,
+		options?: { modelId?: string; size?: AIImageSize; intent?: AIImageIntent },
+	) => Promise<void>;
 	onPreview: () => void;
 	onApply: () => void;
 	onReject: () => void;
@@ -66,6 +82,11 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 	warnings,
 	errorMessage,
 	proposedChanges,
+	imageIntent,
+	onImageIntentChange,
+	enableImageEditFeature,
+	enableImageEdit,
+	imagePreview,
 	textModels,
 	imageModels,
 	selectedTextModelId,
@@ -84,6 +105,8 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 }) => {
 	const [prompt, setPrompt] = useState('');
 	const abortRef = useRef<AbortController | null>(null);
+	const activeImageIntent: AIImageIntent = enableImageEditFeature ? imageIntent : 'generate';
+	const canRunImageEdit = mode !== 'image' || activeImageIntent !== 'edit' || enableImageEdit;
 
 	useEffect(() => {
 		if (status !== 'generating') {
@@ -105,8 +128,11 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 			await onRunImage(
 				trimmed,
 				controller.signal,
-				enableModelPicker ? selectedImageModelId : undefined,
-				selectedImageSize,
+				{
+					modelId: enableModelPicker ? selectedImageModelId : undefined,
+					size: selectedImageSize,
+					intent: activeImageIntent,
+				},
 			);
 		} catch {
 			// App-level state handles errors.
@@ -181,46 +207,85 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 				</label>
 			)}
 
-			{enableModelPicker && mode === 'image' && (
+			{mode === 'image' && enableImageEditFeature && (
 				<>
-					<label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs }}>
-						<span style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary }}>Image Model</span>
-						<select
-							value={selectedImageModelId}
-							onChange={(event) => onSelectImageModel(event.target.value)}
+					<div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs }}>
+						<button
+							type="button"
+							onClick={() => onImageIntentChange('generate')}
+							style={modeButtonStyle(imageIntent === 'generate')}
+						>
+							Generate
+						</button>
+						<button
+							type="button"
+							onClick={() => onImageIntentChange('edit')}
+							disabled={!enableImageEdit}
 							style={{
-								padding: `${spacing.xs} ${spacing.sm}`,
-								borderRadius: radii.md,
-								border: `1px solid ${colors.border.default}`,
-								backgroundColor: colors.bg.primary,
-								color: colors.text.primary,
+								...modeButtonStyle(imageIntent === 'edit'),
+								opacity: enableImageEdit ? 1 : 0.45,
+								cursor: enableImageEdit ? 'pointer' : 'not-allowed',
 							}}
 						>
-							{imageModels.map((model) => (
-								<option key={model.id} value={model.id}>
-									{model.label}
-								</option>
-							))}
-						</select>
-					</label>
-					<label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs }}>
-						<span style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary }}>Image Size</span>
-						<select
-							value={selectedImageSize}
-							onChange={(event) => onSelectImageSize(event.target.value as AIImageSize)}
+							Edit Selected
+						</button>
+					</div>
+					{enableModelPicker && (
+						<>
+							<label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs }}>
+								<span style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary }}>Image Model</span>
+								<select
+									value={selectedImageModelId}
+									onChange={(event) => onSelectImageModel(event.target.value)}
+									style={{
+										padding: `${spacing.xs} ${spacing.sm}`,
+										borderRadius: radii.md,
+										border: `1px solid ${colors.border.default}`,
+										backgroundColor: colors.bg.primary,
+										color: colors.text.primary,
+									}}
+								>
+									{imageModels.map((model) => (
+										<option key={model.id} value={model.id}>
+											{model.label}
+										</option>
+									))}
+								</select>
+							</label>
+							<label style={{ display: 'flex', flexDirection: 'column', gap: spacing.xs }}>
+								<span style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary }}>Image Size</span>
+								<select
+									value={selectedImageSize}
+									onChange={(event) => onSelectImageSize(event.target.value as AIImageSize)}
+									style={{
+										padding: `${spacing.xs} ${spacing.sm}`,
+										borderRadius: radii.md,
+										border: `1px solid ${colors.border.default}`,
+										backgroundColor: colors.bg.primary,
+										color: colors.text.primary,
+									}}
+								>
+									<option value="1024x1024">1024x1024</option>
+									<option value="1536x1024">1536x1024</option>
+									<option value="1024x1536">1024x1536</option>
+								</select>
+							</label>
+						</>
+					)}
+					{activeImageIntent === 'edit' && !enableImageEdit && (
+						<div
 							style={{
-								padding: `${spacing.xs} ${spacing.sm}`,
+								padding: spacing.sm,
 								borderRadius: radii.md,
-								border: `1px solid ${colors.border.default}`,
-								backgroundColor: colors.bg.primary,
-								color: colors.text.primary,
+								backgroundColor: 'rgba(255, 159, 10, 0.08)',
+								border: `1px solid rgba(255, 159, 10, 0.35)`,
+								color: colors.text.secondary,
+								fontSize: typography.fontSize.sm,
 							}}
 						>
-							<option value="1024x1024">1024x1024</option>
-							<option value="1536x1024">1536x1024</option>
-							<option value="1024x1536">1024x1536</option>
-						</select>
-					</label>
+							Select exactly one image layer to enable edit mode.
+						</div>
+					)}
 				</>
 			)}
 
@@ -230,7 +295,9 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 				placeholder={
 					mode === 'edit'
 						? 'Describe what to edit. Example: Make this title bold and move it 24px up.'
-						: 'Describe image to generate. Example: Soft gradient mesh background with abstract blobs.'
+						: activeImageIntent === 'edit'
+							? 'Describe how to edit the selected image. Example: Keep subject, replace background with warm sunset.'
+							: 'Describe image to generate. Example: Soft gradient mesh background with abstract blobs.'
 				}
 				style={{
 					minHeight: '116px',
@@ -252,7 +319,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 					onClick={() => {
 						void handleRun();
 					}}
-					disabled={status === 'generating' || prompt.trim().length === 0}
+					disabled={status === 'generating' || prompt.trim().length === 0 || !canRunImageEdit}
 					style={{
 						flex: 1,
 						padding: `${spacing.xs} ${spacing.sm}`,
@@ -263,10 +330,16 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 						color: colors.text.primary,
 						fontSize: typography.fontSize.md,
 						transition: `opacity ${transitions.fast}`,
-						opacity: status === 'generating' || prompt.trim().length === 0 ? 0.55 : 1,
+						opacity: status === 'generating' || prompt.trim().length === 0 || !canRunImageEdit ? 0.55 : 1,
 					}}
 				>
-					{status === 'generating' ? 'Running...' : mode === 'edit' ? 'Run Edit' : 'Generate Image'}
+					{status === 'generating'
+						? 'Running...'
+						: mode === 'edit'
+							? 'Run Edit'
+							: activeImageIntent === 'edit'
+								? 'Edit Selected Image'
+								: 'Generate Image'}
 				</button>
 				{status === 'generating' && (
 					<button
@@ -358,6 +431,58 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 				</div>
 			)}
 
+			{mode === 'image' && imagePreview && (
+				<div
+					style={{
+						padding: spacing.sm,
+						borderRadius: radii.md,
+						backgroundColor: colors.bg.tertiary,
+						border: `1px solid ${colors.border.subtle}`,
+					}}
+				>
+					<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: spacing.xs }}>
+						Image Preview
+					</div>
+					{imagePreview.intent === 'edit' && imagePreview.beforeImage && imagePreview.afterImages[0] && (
+						<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.xs, marginBottom: spacing.sm }}>
+							<div>
+								<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: 4 }}>Before</div>
+								<img
+									alt="AI edit before"
+									src={`data:${imagePreview.beforeImage.mimeType};base64,${imagePreview.beforeImage.base64}`}
+									style={{ width: '100%', borderRadius: radii.sm, border: `1px solid ${colors.border.default}` }}
+								/>
+							</div>
+							<div>
+								<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: 4 }}>After</div>
+								<img
+									alt="AI edit after"
+									src={`data:${imagePreview.afterImages[0].mimeType};base64,${imagePreview.afterImages[0].base64}`}
+									style={{ width: '100%', borderRadius: radii.sm, border: `1px solid ${colors.border.focus}` }}
+								/>
+							</div>
+						</div>
+					)}
+					{imagePreview.afterImages.length > 0 &&
+						(imagePreview.intent === 'generate' || imagePreview.afterImages.length > 1) && (
+						<div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: spacing.xs }}>
+							{imagePreview.afterImages.map((image, index) => (
+								<div key={`preview-${index}`}>
+									<div style={{ fontSize: typography.fontSize.xs, color: colors.text.tertiary, marginBottom: 4 }}>
+										Candidate {index + 1}
+									</div>
+									<img
+										alt={`AI image candidate ${index + 1}`}
+										src={`data:${image.mimeType};base64,${image.base64}`}
+										style={{ width: '100%', borderRadius: radii.sm, border: `1px solid ${colors.border.default}` }}
+									/>
+								</div>
+							))}
+						</div>
+					)}
+				</div>
+			)}
+
 			{hasPreview && (
 				<div style={{ display: 'flex', gap: spacing.xs }}>
 					{mode === 'edit' && (
@@ -433,4 +558,3 @@ export const AIPanel: React.FC<AIPanelProps> = ({
 		</div>
 	);
 };
-
